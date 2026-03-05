@@ -1,10 +1,11 @@
 use anyhow::{bail, Context, Result};
 use archelon_core::{
     entry::{Entry, EventMeta, Frontmatter, TaskMeta},
-    journal::{is_managed_filename, Journal, WeekStart, new_entry_path},
+    journal::{is_managed_filename, Journal, new_entry_path},
     parser::{read_entry, render_entry, write_entry},
+    period::{parse_datetime, parse_datetime_end, parse_period, Period},
 };
-use chrono::{Datelike as _, Duration, NaiveDate, NaiveDateTime};
+use chrono::NaiveDateTime;
 use clap::{Args, Subcommand};
 use std::{
     io::Write as _,
@@ -14,40 +15,44 @@ use std::{
 
 #[derive(Subcommand)]
 pub enum EntryCommand {
-    /// List all entries; optionally filter by date range
+    /// List entries; optionally filter by per-field period conditions and/or task status
     List {
         /// Directory to search (defaults to journal root, then current directory)
         path: Option<PathBuf>,
 
-        /// Start of the date range, inclusive (YYYY-MM-DD)
-        #[arg(long, value_name = "YYYY-MM-DD",
-              conflicts_with_all = ["date", "today", "this_week", "this_month"])]
-        date_start: Option<NaiveDate>,
+        /// Convenience filter applied to all timestamp fields simultaneously (OR across fields).
+        /// Equivalent to setting --task-due, --event-start, --event-end, --created-at, --updated-at
+        /// to the same period.
+        ///
+        /// PERIOD formats: today | this_week | this_month | none |
+        /// YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
+        #[arg(long, value_name = "PERIOD")]
+        period: Option<String>,
 
-        /// End of the date range, inclusive (YYYY-MM-DD)
-        #[arg(long, value_name = "YYYY-MM-DD",
-              conflicts_with_all = ["date", "today", "this_week", "this_month"])]
-        date_end: Option<NaiveDate>,
+        /// Filter by task due date (PERIOD format, see --period)
+        #[arg(long, value_name = "PERIOD")]
+        task_due: Option<String>,
 
-        /// Alias for --date-start DATE --date-end DATE
-        #[arg(long, value_name = "YYYY-MM-DD",
-              conflicts_with_all = ["date_start", "date_end", "today", "this_week", "this_month"])]
-        date: Option<NaiveDate>,
+        /// Filter by event start date (PERIOD format, see --period)
+        #[arg(long, value_name = "PERIOD")]
+        event_start: Option<String>,
 
-        /// Alias for today's date range
-        #[arg(long,
-              conflicts_with_all = ["date_start", "date_end", "date", "this_week", "this_month"])]
-        today: bool,
+        /// Filter by event end date (PERIOD format, see --period)
+        #[arg(long, value_name = "PERIOD")]
+        event_end: Option<String>,
 
-        /// Alias for the current week (start determined by journal config, default Monday)
-        #[arg(long,
-              conflicts_with_all = ["date_start", "date_end", "date", "today", "this_month"])]
-        this_week: bool,
+        /// Filter by created_at timestamp (PERIOD format, see --period)
+        #[arg(long, value_name = "PERIOD")]
+        created_at: Option<String>,
 
-        /// Alias for the current calendar month
-        #[arg(long,
-              conflicts_with_all = ["date_start", "date_end", "date", "today", "this_week"])]
-        this_month: bool,
+        /// Filter by updated_at timestamp (PERIOD format, see --period)
+        #[arg(long, value_name = "PERIOD")]
+        updated_at: Option<String>,
+
+        /// Filter by task status (AND with timestamp filters).
+        /// Comma-separated for multiple values, e.g. open,in_progress
+        #[arg(long, value_name = "STATUS[,...]", value_delimiter = ',', num_args = 1..)]
+        task_status: Option<Vec<String>>,
 
         /// Output all matching entries as JSON (metadata + body) for AI/machine consumption
         #[arg(long)]
@@ -124,18 +129,26 @@ pub struct EntryFields {
 
 pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
     match cmd {
-        EntryCommand::List { path, date_start, date_end, date, today, this_week, this_month, json } => {
-            let week_start = if this_week {
-                open_journal(journal_dir)
-                    .and_then(|j| Ok(j.config()?))
-                    .map(|c| c.journal.week_start)
-                    .unwrap_or_default()
-            } else {
-                WeekStart::default()
+        EntryCommand::List { path, period, task_due, event_start, event_end, created_at, updated_at, task_status, json } => {
+            // Resolve week_start from journal config (needed for this_week parsing)
+            let week_start = open_journal(journal_dir)
+                .and_then(|j| j.config().map_err(Into::into))
+                .map(|c| c.journal.week_start)
+                .unwrap_or_default();
+
+            let parse = |s: &str| parse_period(s, week_start).map_err(anyhow::Error::msg);
+
+            let filter = EntryFilter {
+                period: period.as_deref().map(parse).transpose()?,
+                task_due: task_due.as_deref().map(parse).transpose()?,
+                event_start: event_start.as_deref().map(parse).transpose()?,
+                event_end: event_end.as_deref().map(parse).transpose()?,
+                created_at: created_at.as_deref().map(parse).transpose()?,
+                updated_at: updated_at.as_deref().map(parse).transpose()?,
+                task_status: task_status.unwrap_or_default(),
             };
-            let (filter_start, filter_end) =
-                resolve_date_filter(date, date_start, date_end, today, this_week, this_month, week_start);
-            list(journal_dir, path.as_deref(), filter_start, filter_end, json)
+
+            list(journal_dir, path.as_deref(), filter, json)
         }
         EntryCommand::Show { entry } => show(&resolve_entry(journal_dir, &entry)?),
         EntryCommand::New { name, body, fields } => new(journal_dir, &name, body, fields),
@@ -153,25 +166,118 @@ fn open_journal(journal_dir: Option<&Path>) -> Result<Journal> {
     }
 }
 
+// ── filter ────────────────────────────────────────────────────────────────────
+
+struct EntryFilter {
+    /// Shortcut: applies the same period to all timestamp fields simultaneously (OR across fields)
+    period: Option<Period>,
+    task_due: Option<Period>,
+    event_start: Option<Period>,
+    event_end: Option<Period>,
+    created_at: Option<Period>,
+    updated_at: Option<Period>,
+    /// AND condition: entry must have a task whose status is one of these values
+    task_status: Vec<String>,
+}
+
+impl EntryFilter {
+    fn has_timestamp_filter(&self) -> bool {
+        self.period.is_some()
+            || self.task_due.is_some()
+            || self.event_start.is_some()
+            || self.event_end.is_some()
+            || self.created_at.is_some()
+            || self.updated_at.is_some()
+    }
+
+    /// Returns `(include, labels)`.
+    ///
+    /// Timestamp filters are ORed: any one matching field is sufficient.
+    /// `task_status` is ANDed on top: the entry must also satisfy the status filter.
+    fn matches(&self, entry: &Entry) -> (bool, Vec<MatchLabel>) {
+        let mut labels = Vec::new();
+
+        let timestamp_ok = if self.has_timestamp_filter() {
+            let task_due_val = entry.frontmatter.task.as_ref().and_then(|t| t.due);
+            let event_start_val = entry.frontmatter.event.as_ref().and_then(|e| e.start);
+            let event_end_val = entry.frontmatter.event.as_ref().and_then(|e| e.end);
+            let created_val = entry.frontmatter.created_at;
+            let updated_val = entry.frontmatter.updated_at;
+
+            macro_rules! check {
+                ($filter:expr, $val:expr, $label:expr) => {
+                    if let Some(p) = &$filter {
+                        if p.matches($val) {
+                            labels.push($label);
+                        }
+                    }
+                };
+            }
+
+            // --period applies to all fields
+            if let Some(p) = &self.period {
+                if p.matches(task_due_val) {
+                    labels.push(MatchLabel::TaskDue);
+                }
+                if p.matches(event_start_val) {
+                    labels.push(MatchLabel::EventStart);
+                }
+                if p.matches(event_end_val) {
+                    labels.push(MatchLabel::EventEnd);
+                }
+                if p.matches(created_val) {
+                    labels.push(MatchLabel::CreatedAt);
+                }
+                if p.matches(updated_val) {
+                    labels.push(MatchLabel::UpdatedAt);
+                }
+            }
+
+            // per-field filters (may add duplicate labels; dedup below)
+            check!(self.task_due, task_due_val, MatchLabel::TaskDue);
+            check!(self.event_start, event_start_val, MatchLabel::EventStart);
+            check!(self.event_end, event_end_val, MatchLabel::EventEnd);
+            check!(self.created_at, created_val, MatchLabel::CreatedAt);
+            check!(self.updated_at, updated_val, MatchLabel::UpdatedAt);
+
+            labels.dedup();
+            !labels.is_empty()
+        } else {
+            true
+        };
+
+        let status_ok = if !self.task_status.is_empty() {
+            entry.frontmatter.task.as_ref().is_some_and(|t| {
+                let s = t.status.as_deref().unwrap_or("open");
+                self.task_status.iter().any(|ts| ts == s)
+            })
+        } else {
+            true
+        };
+
+        (timestamp_ok && status_ok, labels)
+    }
+}
+
 // ── list ──────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MatchLabel {
-    Todo,
-    Closed,
-    Event,
-    Created,
-    Updated,
+    TaskDue,
+    EventStart,
+    EventEnd,
+    CreatedAt,
+    UpdatedAt,
 }
 
 impl MatchLabel {
     fn as_str(self) -> &'static str {
         match self {
-            MatchLabel::Todo => "TODO",
-            MatchLabel::Closed => "CLOSED",
-            MatchLabel::Event => "EVENT",
-            MatchLabel::Created => "CREATED",
-            MatchLabel::Updated => "UPDATED",
+            MatchLabel::TaskDue => "TASK_DUE",
+            MatchLabel::EventStart => "EVENT_START",
+            MatchLabel::EventEnd => "EVENT_END",
+            MatchLabel::CreatedAt => "CREATED",
+            MatchLabel::UpdatedAt => "UPDATED",
         }
     }
 }
@@ -179,12 +285,11 @@ impl MatchLabel {
 fn list(
     journal_dir: Option<&Path>,
     path: Option<&Path>,
-    date_start: Option<NaiveDate>,
-    date_end: Option<NaiveDate>,
+    filter: EntryFilter,
     json: bool,
 ) -> Result<()> {
     let paths = collect_entries(journal_dir, path)?;
-    let has_filter = date_start.is_some() || date_end.is_some();
+    let has_filter = filter.has_timestamp_filter() || !filter.task_status.is_empty();
 
     let mut filtered: Vec<(Entry, Vec<MatchLabel>)> = Vec::new();
 
@@ -200,15 +305,10 @@ fn list(
             }
         };
 
-        let labels = if has_filter {
-            let l = compute_labels(&entry, date_start, date_end);
-            if l.is_empty() {
-                continue;
-            }
-            l
-        } else {
-            vec![]
-        };
+        let (include, labels) = filter.matches(&entry);
+        if has_filter && !include {
+            continue;
+        }
 
         filtered.push((entry, labels));
     }
@@ -246,7 +346,7 @@ fn list(
         .iter()
         .map(|(entry, labels)| {
             let id = entry.id().map(|id| id.to_string()).unwrap_or_default();
-            let status = if has_filter {
+            let status = if has_filter && !labels.is_empty() {
                 labels.iter().map(|l| l.as_str()).collect::<Vec<_>>().join(",")
             } else {
                 entry
@@ -274,62 +374,6 @@ fn list(
     }
 
     Ok(())
-}
-
-/// Compute the labels that explain why `entry` matches the given date range.
-///
-/// - Active task (not done/cancelled/archived) → TODO
-/// - Inactive task with due in range → TODO
-/// - Inactive task with closed_at in range → CLOSED
-/// - Event overlapping with range → EVENT
-/// - created_at in range → CREATED
-/// - updated_at in range → UPDATED
-fn compute_labels(
-    entry: &Entry,
-    start: Option<NaiveDate>,
-    end: Option<NaiveDate>,
-) -> Vec<MatchLabel> {
-    let mut labels = Vec::new();
-
-    if let Some(task) = &entry.frontmatter.task {
-        let inactive = matches!(
-            task.status.as_deref().unwrap_or("open"),
-            "done" | "cancelled" | "archived"
-        );
-        if !inactive {
-            labels.push(MatchLabel::Todo);
-        } else {
-            if task.due.is_some_and(|d| date_in_range(d.date(), start, end)) {
-                labels.push(MatchLabel::Todo);
-            }
-            if task.closed_at.is_some_and(|c| date_in_range(c.date(), start, end)) {
-                labels.push(MatchLabel::Closed);
-            }
-        }
-    }
-
-    if let Some(event) = &entry.frontmatter.event {
-        let event_start = event.start.map(|s| s.date());
-        let event_end = event.end.map(|e| e.date());
-        let overlaps_end = end.map_or(true, |re| event_start.map_or(true, |es| es <= re));
-        let overlaps_start = start.map_or(true, |rs| event_end.map_or(true, |ee| ee >= rs));
-        if overlaps_end && overlaps_start {
-            labels.push(MatchLabel::Event);
-        }
-    }
-
-    if entry.frontmatter.created_at.is_some_and(|c| date_in_range(c.date(), start, end)) {
-        labels.push(MatchLabel::Created);
-    }
-    if entry.frontmatter.updated_at.is_some_and(|u| date_in_range(u.date(), start, end)) {
-        labels.push(MatchLabel::Updated);
-    }
-
-    labels
-}
-
-fn date_in_range(date: NaiveDate, start: Option<NaiveDate>, end: Option<NaiveDate>) -> bool {
-    start.map_or(true, |s| date >= s) && end.map_or(true, |e| date <= e)
 }
 
 // ── show ──────────────────────────────────────────────────────────────────────
@@ -521,35 +565,6 @@ fn set(path: &Path, fields: EntryFields) -> Result<()> {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/// Parse a datetime from `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` (or `YYYY-MM-DDTHH:MM:SS`).
-/// Date-only input is treated as midnight.
-fn parse_datetime(s: &str) -> std::result::Result<NaiveDateTime, String> {
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Ok(dt);
-    }
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M") {
-        return Ok(dt);
-    }
-    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return Ok(d.and_hms_opt(0, 0, 0).unwrap());
-    }
-    Err(format!("`{s}` is not a valid date/datetime — expected YYYY-MM-DD or YYYY-MM-DDTHH:MM"))
-}
-
-/// Like [`parse_datetime`] but date-only input is treated as end-of-day (23:59:59).
-fn parse_datetime_end(s: &str) -> std::result::Result<NaiveDateTime, String> {
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Ok(dt);
-    }
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M") {
-        return Ok(dt);
-    }
-    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return Ok(d.and_hms_opt(23, 59, 59).unwrap());
-    }
-    Err(format!("`{s}` is not a valid date/datetime — expected YYYY-MM-DD or YYYY-MM-DDTHH:MM"))
-}
-
 /// Resolve a user-supplied `entry` argument to a concrete file path.
 ///
 /// Resolution order:
@@ -563,47 +578,6 @@ fn resolve_entry(journal_dir: Option<&Path>, entry: &str) -> Result<PathBuf> {
 
     let journal = open_journal(journal_dir)?;
     journal.find_entry_by_id(entry).map_err(Into::into)
-}
-
-fn resolve_date_filter(
-    date: Option<NaiveDate>,
-    date_start: Option<NaiveDate>,
-    date_end: Option<NaiveDate>,
-    today: bool,
-    this_week: bool,
-    this_month: bool,
-    week_start: WeekStart,
-) -> (Option<NaiveDate>, Option<NaiveDate>) {
-    if let Some(d) = date {
-        return (Some(d), Some(d));
-    }
-    if today {
-        let d = chrono::Local::now().date_naive();
-        return (Some(d), Some(d));
-    }
-    if this_week {
-        let today = chrono::Local::now().date_naive();
-        let days_back = match week_start {
-            WeekStart::Monday => today.weekday().num_days_from_monday(),
-            WeekStart::Sunday => today.weekday().num_days_from_sunday(),
-        };
-        let start = today - Duration::days(days_back as i64);
-        let end = start + Duration::days(6);
-        return (Some(start), Some(end));
-    }
-    if this_month {
-        let today = chrono::Local::now().date_naive();
-        let start = today.with_day(1).unwrap();
-        let end = NaiveDate::from_ymd_opt(
-            if today.month() == 12 { today.year() + 1 } else { today.year() },
-            if today.month() == 12 { 1 } else { today.month() + 1 },
-            1,
-        )
-        .unwrap()
-            - Duration::days(1);
-        return (Some(start), Some(end));
-    }
-    (date_start, date_end)
 }
 
 /// Collect `.md` files for the list command.
