@@ -2,11 +2,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use archelon_core::{
-    entry::{Entry, EventMeta, Frontmatter, TaskMeta},
-    journal::{is_managed_filename, Journal, WeekStart, new_entry_path},
-    parser::{read_entry, render_entry, write_entry},
+    journal::{Journal, WeekStart},
+    ops::{self, EntryFields, EntryFilter},
+    parser::read_entry,
+    period::{parse_datetime, parse_datetime_end, parse_period},
 };
-use chrono::{Datelike as _, Duration, NaiveDate, NaiveDateTime};
 use rmcp::{
     ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -49,6 +49,13 @@ impl ArchelonServer {
         let journal = self.open_journal()?;
         journal.find_entry_by_id(entry).map_err(Into::into)
     }
+
+    fn week_start(&self) -> WeekStart {
+        self.open_journal()
+            .and_then(|j| j.config().map_err(Into::into))
+            .map(|c| c.journal.week_start)
+            .unwrap_or_default()
+    }
 }
 
 // ── parameter structs ─────────────────────────────────────────────────────────
@@ -61,18 +68,31 @@ struct InitParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct EntryListParams {
-    /// Start of the date range, inclusive (YYYY-MM-DD)
-    date_start: Option<String>,
-    /// End of the date range, inclusive (YYYY-MM-DD)
-    date_end: Option<String>,
-    /// Alias for date_start + date_end set to the same day (YYYY-MM-DD)
-    date: Option<String>,
-    /// Filter to today's entries
-    today: Option<bool>,
-    /// Filter to the current week
-    this_week: Option<bool>,
-    /// Filter to the current calendar month
-    this_month: Option<bool>,
+    /// Convenience filter applied to all timestamp fields simultaneously (OR across fields).
+    /// Equivalent to setting task_due, event_start, event_end, created_at, updated_at to the same period.
+    ///
+    /// Accepted formats: today | this_week | this_month | none |
+    /// YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
+    period: Option<String>,
+
+    /// Filter by task due date (same PERIOD format as `period`)
+    task_due: Option<String>,
+
+    /// Filter by event start date (same PERIOD format as `period`)
+    event_start: Option<String>,
+
+    /// Filter by event end date (same PERIOD format as `period`)
+    event_end: Option<String>,
+
+    /// Filter by created_at timestamp (same PERIOD format as `period`)
+    created_at: Option<String>,
+
+    /// Filter by updated_at timestamp (same PERIOD format as `period`)
+    updated_at: Option<String>,
+
+    /// AND filter: include only entries whose task status matches one of these values.
+    /// Provide as an array, e.g. ["open", "in_progress"]
+    task_status: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -127,6 +147,43 @@ struct EntrySetParams {
     event_end: Option<String>,
 }
 
+// ── helpers for parameter parsing ─────────────────────────────────────────────
+
+fn parse_entry_fields(
+    title: Option<String>,
+    slug: Option<String>,
+    tags: Option<String>,
+    task_due: Option<&str>,
+    task_status: Option<String>,
+    task_closed_at: Option<&str>,
+    event_start: Option<&str>,
+    event_end: Option<&str>,
+) -> anyhow::Result<EntryFields> {
+    Ok(EntryFields {
+        title,
+        slug,
+        tags: tags.as_deref().map(|s| {
+            s.split(',')
+                .map(|t| t.trim().to_owned())
+                .filter(|t| !t.is_empty())
+                .collect()
+        }),
+        task_due: task_due
+            .map(|s| parse_datetime_end(s).map_err(anyhow::Error::msg))
+            .transpose()?,
+        task_status,
+        task_closed_at: task_closed_at
+            .map(|s| parse_datetime(s).map_err(anyhow::Error::msg))
+            .transpose()?,
+        event_start: event_start
+            .map(|s| parse_datetime(s).map_err(anyhow::Error::msg))
+            .transpose()?,
+        event_end: event_end
+            .map(|s| parse_datetime_end(s).map_err(anyhow::Error::msg))
+            .transpose()?,
+    })
+}
+
 // ── tool implementations ──────────────────────────────────────────────────────
 
 #[tool_router]
@@ -169,75 +226,51 @@ impl ArchelonServer {
         .map_err(|e| e.to_string())
     }
 
-    #[tool(description = "List journal entries as JSON, optionally filtered by date range")]
+    #[tool(description = "List journal entries as JSON. \
+        Timestamp filters (period, task_due, event_start, event_end, created_at, updated_at) are ORed: \
+        an entry matches if any specified timestamp field falls within the given period. \
+        task_status is ANDed on top: if provided, the entry must also have a matching task status.")]
     fn entry_list(&self, Parameters(p): Parameters<EntryListParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let week_start = if p.this_week.unwrap_or(false) {
-                self.open_journal()
-                    .and_then(|j| j.config().map_err(Into::into))
-                    .map(|c| c.journal.week_start)
-                    .unwrap_or_default()
-            } else {
-                WeekStart::default()
+            let week_start = self.week_start();
+            let parse = |s: &str| parse_period(s, week_start).map_err(anyhow::Error::msg);
+
+            let filter = EntryFilter {
+                period: p.period.as_deref().map(parse).transpose()?,
+                task_due: p.task_due.as_deref().map(parse).transpose()?,
+                event_start: p.event_start.as_deref().map(parse).transpose()?,
+                event_end: p.event_end.as_deref().map(parse).transpose()?,
+                created_at: p.created_at.as_deref().map(parse).transpose()?,
+                updated_at: p.updated_at.as_deref().map(parse).transpose()?,
+                task_status: p.task_status.unwrap_or_default(),
             };
 
-            let date = p.date.as_deref().map(parse_date).transpose()?;
-            let date_start = p.date_start.as_deref().map(parse_date).transpose()?;
-            let date_end = p.date_end.as_deref().map(parse_date).transpose()?;
+            let has_filter = filter.has_any_filter();
+            let entries = ops::list_entries(self.journal_dir.as_deref(), None, &filter)?;
 
-            let (filter_start, filter_end) = resolve_date_filter(
-                date,
-                date_start,
-                date_end,
-                p.today.unwrap_or(false),
-                p.this_week.unwrap_or(false),
-                p.this_month.unwrap_or(false),
-                week_start,
-            );
-
-            let paths = collect_entries(self.journal_dir.as_deref())?;
-            let has_filter = filter_start.is_some() || filter_end.is_some();
-            let mut records: Vec<serde_json::Value> = Vec::new();
-
-            for path in &paths {
-                if !is_managed_filename(path) {
-                    continue;
-                }
-                let entry = match read_entry(path) {
-                    Ok(e) => e,
-                    Err(e) => {
-                        eprintln!("warn: {} — {e}", path.display());
-                        continue;
+            let records: Vec<serde_json::Value> = entries
+                .iter()
+                .map(|(entry, labels)| {
+                    let mut v = serde_json::json!({
+                        "id": entry.id().map(|id| id.to_string()),
+                        "path": entry.path.display().to_string(),
+                        "title": entry.title(),
+                        "slug": entry.frontmatter.slug,
+                        "created_at": entry.frontmatter.created_at,
+                        "updated_at": entry.frontmatter.updated_at,
+                        "tags": entry.frontmatter.tags,
+                        "task": entry.frontmatter.task,
+                        "event": entry.frontmatter.event,
+                        "body": entry.body,
+                    });
+                    if has_filter {
+                        v["match_labels"] = serde_json::json!(
+                            labels.iter().map(|l| l.as_str()).collect::<Vec<_>>()
+                        );
                     }
-                };
-
-                let match_labels: Vec<&str> = if has_filter {
-                    let labels = compute_labels(&entry, filter_start, filter_end);
-                    if labels.is_empty() {
-                        continue;
-                    }
-                    labels.into_iter().map(|l| l.as_str()).collect()
-                } else {
-                    vec![]
-                };
-
-                let mut v = serde_json::json!({
-                    "id": entry.id().map(|id| id.to_string()),
-                    "path": entry.path.display().to_string(),
-                    "title": entry.title(),
-                    "slug": entry.frontmatter.slug,
-                    "created_at": entry.frontmatter.created_at,
-                    "updated_at": entry.frontmatter.updated_at,
-                    "tags": entry.frontmatter.tags,
-                    "task": entry.frontmatter.task,
-                    "event": entry.frontmatter.event,
-                    "body": entry.body,
-                });
-                if has_filter {
-                    v["match_labels"] = serde_json::json!(match_labels);
-                }
-                records.push(v);
-            }
+                    v
+                })
+                .collect();
 
             Ok(serde_json::to_string_pretty(&records)?)
         })()
@@ -252,7 +285,6 @@ impl ArchelonServer {
             let fm = &entry.frontmatter;
 
             let mut out = format!("# {}\n", entry.title());
-
             if let Some(ts) = fm.created_at {
                 out.push_str(&format!("created:  {}\n", ts.format("%Y-%m-%dT%H:%M")));
             }
@@ -265,11 +297,8 @@ impl ArchelonServer {
             if let Some(task) = &fm.task {
                 let status = task.status.as_deref().unwrap_or("open");
                 match task.due {
-                    Some(d) => out.push_str(&format!(
-                        "task:     {status} (due {})\n",
-                        d.format("%Y-%m-%d")
-                    )),
-                    None => out.push_str(&format!("task:     {status}\n")),
+                    Some(d) => out.push_str(&format!("task:     {status} (due {})\n", d.format("%Y-%m-%d"))),
+                    None    => out.push_str(&format!("task:     {status}\n")),
                 }
                 if let Some(ca) = task.closed_at {
                     out.push_str(&format!("closed:   {}\n", ca.format("%Y-%m-%dT%H:%M")));
@@ -277,21 +306,12 @@ impl ArchelonServer {
             }
             if let Some(event) = &fm.event {
                 match (event.start, event.end) {
-                    (Some(s), Some(e)) => out.push_str(&format!(
-                        "event:    {} – {}\n",
-                        s.format("%Y-%m-%d"),
-                        e.format("%Y-%m-%d")
-                    )),
-                    (Some(s), None) => {
-                        out.push_str(&format!("event:    from {}\n", s.format("%Y-%m-%d")))
-                    }
-                    (None, Some(e)) => {
-                        out.push_str(&format!("event:    until {}\n", e.format("%Y-%m-%d")))
-                    }
-                    (None, None) => out.push_str("event:    (no dates)\n"),
+                    (Some(s), Some(e)) => out.push_str(&format!("event:    {} – {}\n", s.format("%Y-%m-%d"), e.format("%Y-%m-%d"))),
+                    (Some(s), None)    => out.push_str(&format!("event:    from {}\n", s.format("%Y-%m-%d"))),
+                    (None, Some(e))    => out.push_str(&format!("event:    until {}\n", e.format("%Y-%m-%d"))),
+                    (None, None)       => out.push_str("event:    (no dates)\n"),
                 }
             }
-
             out.push('\n');
             out.push_str(&entry.body);
             Ok(out)
@@ -303,70 +323,17 @@ impl ArchelonServer {
     fn entry_new(&self, Parameters(p): Parameters<EntryNewParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let journal = self.open_journal()?;
-            let dest = journal.root.join(new_entry_path(&p.name));
-
-            if dest.exists() {
-                anyhow::bail!("{} already exists", dest.display());
-            }
-
-            let tags = p
-                .tags
-                .as_deref()
-                .map(|s| {
-                    s.split(',')
-                        .map(|t| t.trim().to_owned())
-                        .filter(|t| !t.is_empty())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-
-            let task = if p.task_due.is_some()
-                || p.task_status.is_some()
-                || p.task_closed_at.is_some()
-            {
-                let due = p.task_due.as_deref().map(parse_datetime_end).transpose()?;
-                let status = p.task_status.clone();
-                let inactive =
-                    matches!(status.as_deref(), Some("done" | "cancelled" | "archived"));
-                let closed_at = p
-                    .task_closed_at
-                    .as_deref()
-                    .map(parse_datetime)
-                    .transpose()?
-                    .or_else(|| inactive.then(|| chrono::Local::now().naive_local()));
-                Some(TaskMeta { due, status, closed_at })
-            } else {
-                None
-            };
-
-            let event = if p.event_start.is_some() || p.event_end.is_some() {
-                let start = p.event_start.as_deref().map(parse_datetime).transpose()?;
-                let end = p.event_end.as_deref().map(parse_datetime_end).transpose()?;
-                Some(EventMeta { start, end })
-            } else {
-                None
-            };
-
-            let now = chrono::Local::now().naive_local();
-            let entry = Entry {
-                path: dest.clone(),
-                frontmatter: Frontmatter {
-                    title: p.title.or_else(|| Some(p.name.clone())),
-                    slug: p.slug,
-                    tags,
-                    created_at: Some(now),
-                    updated_at: Some(now),
-                    task,
-                    event,
-                },
-                body: p.body,
-            };
-
-            std::fs::create_dir_all(dest.parent().unwrap())
-                .with_context(|| format!("failed to create directory for {}", dest.display()))?;
-            std::fs::write(&dest, render_entry(&entry))
-                .with_context(|| format!("failed to write {}", dest.display()))?;
-
+            let fields = parse_entry_fields(
+                p.title,
+                p.slug,
+                p.tags,
+                p.task_due.as_deref(),
+                p.task_status,
+                p.task_closed_at.as_deref(),
+                p.event_start.as_deref(),
+                p.event_end.as_deref(),
+            )?;
+            let dest = ops::create_entry(&journal, &p.name, p.body, fields)?;
             Ok(format!("created: {}", dest.display()))
         })()
         .map_err(|e| e.to_string())
@@ -388,50 +355,17 @@ impl ArchelonServer {
             }
 
             let path = self.resolve_entry(&p.entry)?;
-            let mut entry = read_entry(&path)?;
-
-            if let Some(t) = p.title {
-                entry.frontmatter.title = Some(t);
-            }
-            if let Some(s) = p.slug {
-                entry.frontmatter.slug = Some(s);
-            }
-            if let Some(tags_str) = p.tags {
-                entry.frontmatter.tags = tags_str
-                    .split(',')
-                    .map(|t| t.trim().to_owned())
-                    .filter(|t| !t.is_empty())
-                    .collect();
-            }
-
-            if p.task_due.is_some() || p.task_status.is_some() || p.task_closed_at.is_some() {
-                let task = entry.frontmatter.task.get_or_insert_with(Default::default);
-                if let Some(d) = p.task_due.as_deref() {
-                    task.due = Some(parse_datetime_end(d)?);
-                }
-                if let Some(s) = p.task_status {
-                    let inactive = matches!(s.as_str(), "done" | "cancelled" | "archived");
-                    task.status = Some(s);
-                    if inactive && task.closed_at.is_none() && p.task_closed_at.is_none() {
-                        task.closed_at = Some(chrono::Local::now().naive_local());
-                    }
-                }
-                if let Some(ca) = p.task_closed_at.as_deref() {
-                    task.closed_at = Some(parse_datetime(ca)?);
-                }
-            }
-
-            if p.event_start.is_some() || p.event_end.is_some() {
-                let event = entry.frontmatter.event.get_or_insert_with(Default::default);
-                if let Some(s) = p.event_start.as_deref() {
-                    event.start = Some(parse_datetime(s)?);
-                }
-                if let Some(e) = p.event_end.as_deref() {
-                    event.end = Some(parse_datetime_end(e)?);
-                }
-            }
-
-            write_entry(&mut entry)?;
+            let fields = parse_entry_fields(
+                p.title,
+                p.slug,
+                p.tags,
+                p.task_due.as_deref(),
+                p.task_status,
+                p.task_closed_at.as_deref(),
+                p.event_start.as_deref(),
+                p.event_end.as_deref(),
+            )?;
+            ops::update_entry(&path, fields)?;
             Ok(format!("updated: {}", path.display()))
         })()
         .map_err(|e| e.to_string())
@@ -452,166 +386,6 @@ impl ServerHandler for ArchelonServer {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-fn parse_date(s: &str) -> anyhow::Result<NaiveDate> {
-    NaiveDate::parse_from_str(s, "%Y-%m-%d")
-        .with_context(|| format!("`{s}` is not a valid date — expected YYYY-MM-DD"))
-}
-
-fn parse_datetime(s: &str) -> anyhow::Result<NaiveDateTime> {
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Ok(dt);
-    }
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M") {
-        return Ok(dt);
-    }
-    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return Ok(d.and_hms_opt(0, 0, 0).unwrap());
-    }
-    anyhow::bail!("`{s}` is not a valid date/datetime — expected YYYY-MM-DD or YYYY-MM-DDTHH:MM")
-}
-
-fn parse_datetime_end(s: &str) -> anyhow::Result<NaiveDateTime> {
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Ok(dt);
-    }
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M") {
-        return Ok(dt);
-    }
-    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return Ok(d.and_hms_opt(23, 59, 59).unwrap());
-    }
-    anyhow::bail!("`{s}` is not a valid date/datetime — expected YYYY-MM-DD or YYYY-MM-DDTHH:MM")
-}
-
-fn resolve_date_filter(
-    date: Option<NaiveDate>,
-    date_start: Option<NaiveDate>,
-    date_end: Option<NaiveDate>,
-    today: bool,
-    this_week: bool,
-    this_month: bool,
-    week_start: WeekStart,
-) -> (Option<NaiveDate>, Option<NaiveDate>) {
-    if let Some(d) = date {
-        return (Some(d), Some(d));
-    }
-    if today {
-        let d = chrono::Local::now().date_naive();
-        return (Some(d), Some(d));
-    }
-    if this_week {
-        let today = chrono::Local::now().date_naive();
-        let days_back = match week_start {
-            WeekStart::Monday => today.weekday().num_days_from_monday(),
-            WeekStart::Sunday => today.weekday().num_days_from_sunday(),
-        };
-        let start = today - Duration::days(days_back as i64);
-        let end = start + Duration::days(6);
-        return (Some(start), Some(end));
-    }
-    if this_month {
-        let today = chrono::Local::now().date_naive();
-        let start = today.with_day(1).unwrap();
-        let end = NaiveDate::from_ymd_opt(
-            if today.month() == 12 { today.year() + 1 } else { today.year() },
-            if today.month() == 12 { 1 } else { today.month() + 1 },
-            1,
-        )
-        .unwrap()
-            - Duration::days(1);
-        return (Some(start), Some(end));
-    }
-    (date_start, date_end)
-}
-
-fn collect_entries(journal_dir: Option<&Path>) -> anyhow::Result<Vec<PathBuf>> {
-    if let Some(dir) = journal_dir {
-        return Journal::from_root(dir.to_path_buf())
-            .context("not an archelon journal")?
-            .collect_entries()
-            .map_err(Into::into);
-    }
-    if let Ok(journal) = Journal::find() {
-        return journal.collect_entries().map_err(Into::into);
-    }
-    let mut paths: Vec<_> = std::fs::read_dir(".")?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
-        .collect();
-    paths.sort();
-    Ok(paths)
-}
-
-#[derive(Debug, Clone, Copy)]
-enum MatchLabel {
-    Todo,
-    Closed,
-    Event,
-    Created,
-    Updated,
-}
-
-impl MatchLabel {
-    fn as_str(self) -> &'static str {
-        match self {
-            MatchLabel::Todo => "TODO",
-            MatchLabel::Closed => "CLOSED",
-            MatchLabel::Event => "EVENT",
-            MatchLabel::Created => "CREATED",
-            MatchLabel::Updated => "UPDATED",
-        }
-    }
-}
-
-fn compute_labels(
-    entry: &Entry,
-    start: Option<NaiveDate>,
-    end: Option<NaiveDate>,
-) -> Vec<MatchLabel> {
-    let mut labels = Vec::new();
-
-    if let Some(task) = &entry.frontmatter.task {
-        let inactive = matches!(
-            task.status.as_deref().unwrap_or("open"),
-            "done" | "cancelled" | "archived"
-        );
-        if !inactive {
-            labels.push(MatchLabel::Todo);
-        } else {
-            if task.due.is_some_and(|d| date_in_range(d.date(), start, end)) {
-                labels.push(MatchLabel::Todo);
-            }
-            if task.closed_at.is_some_and(|c| date_in_range(c.date(), start, end)) {
-                labels.push(MatchLabel::Closed);
-            }
-        }
-    }
-
-    if let Some(event) = &entry.frontmatter.event {
-        let event_start = event.start.map(|s| s.date());
-        let event_end = event.end.map(|e| e.date());
-        let overlaps_end = end.map_or(true, |re| event_start.map_or(true, |es| es <= re));
-        let overlaps_start = start.map_or(true, |rs| event_end.map_or(true, |ee| ee >= rs));
-        if overlaps_end && overlaps_start {
-            labels.push(MatchLabel::Event);
-        }
-    }
-
-    if entry.frontmatter.created_at.is_some_and(|c| date_in_range(c.date(), start, end)) {
-        labels.push(MatchLabel::Created);
-    }
-    if entry.frontmatter.updated_at.is_some_and(|u| date_in_range(u.date(), start, end)) {
-        labels.push(MatchLabel::Updated);
-    }
-
-    labels
-}
-
-fn date_in_range(date: NaiveDate, start: Option<NaiveDate>, end: Option<NaiveDate>) -> bool {
-    start.map_or(true, |s| date >= s) && end.map_or(true, |e| date <= e)
-}
 
 fn detect_timezone() -> String {
     if let Ok(tz) = std::env::var("TZ") {
