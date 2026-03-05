@@ -6,12 +6,14 @@
 
 use std::path::{Path, PathBuf};
 
+use caretta_id::CarettaId;
 use chrono::NaiveDateTime;
 
 use crate::{
     entry::{Entry, EventMeta, Frontmatter, TaskMeta},
+    entry_ref::EntryRef,
     error::{Error, Result},
-    journal::{is_managed_filename, Journal, new_entry_path},
+    journal::{is_managed_filename, Journal, new_entry_path, slugify},
     parser::{read_entry, render_entry, write_entry},
     period::Period,
 };
@@ -339,4 +341,126 @@ pub fn update_entry(path: &Path, fields: EntryFields) -> Result<()> {
 
     write_entry(&mut entry)?;
     Ok(())
+}
+
+// ── EntryRef resolution ───────────────────────────────────────────────────────
+
+/// Resolve an [`EntryRef`] to a concrete path, opening the journal when needed.
+///
+/// - `Path` variant: returned as-is.
+/// - `Id` variant: searches the journal found via `journal_dir` (or auto-detected).
+pub fn resolve_entry(entry_ref: &EntryRef, journal_dir: Option<&Path>) -> Result<PathBuf> {
+    match entry_ref {
+        EntryRef::Path(p) => Ok(p.clone()),
+        EntryRef::Id(id) => {
+            let journal = if let Some(dir) = journal_dir {
+                Journal::from_root(dir.to_path_buf())?
+            } else {
+                Journal::find()?
+            };
+            journal.find_entry_by_id(id)
+        }
+    }
+}
+
+// ── CheckIssue ────────────────────────────────────────────────────────────────
+
+/// A problem reported by [`check_entry`].
+#[derive(Debug, Clone)]
+pub enum CheckIssue {
+    /// The file does not follow the archelon-managed filename convention.
+    UnmanagedFilename,
+    /// The filename does not match the ID + title/slug derived from the frontmatter.
+    FilenameMismatch {
+        /// The filename the entry *should* have.
+        expected_filename: String,
+    },
+}
+
+impl CheckIssue {
+    pub fn as_str(&self) -> String {
+        match self {
+            CheckIssue::UnmanagedFilename =>
+                "not a managed entry (filename lacks a valid CarettaId prefix)".to_owned(),
+            CheckIssue::FilenameMismatch { expected_filename } =>
+                format!("filename mismatch — should be `{expected_filename}`"),
+        }
+    }
+}
+
+// ── check ─────────────────────────────────────────────────────────────────────
+
+/// Validate an entry's frontmatter and filename.
+///
+/// Returns a (possibly empty) list of [`CheckIssue`]s.
+/// An empty list means the entry passes all checks.
+pub fn check_entry(path: &Path) -> Result<Vec<CheckIssue>> {
+    if !is_managed_filename(path) {
+        return Ok(vec![CheckIssue::UnmanagedFilename]);
+    }
+
+    let entry = read_entry(path)?;
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+    // Safety: `is_managed_filename` guarantees a valid 7-char CarettaId prefix.
+    let id: CarettaId = stem[..7].parse().unwrap();
+    let expected = entry_filename_from_frontmatter(id, &entry.frontmatter);
+    let actual = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+
+    let mut issues = Vec::new();
+    if actual != expected {
+        issues.push(CheckIssue::FilenameMismatch { expected_filename: expected });
+    }
+    Ok(issues)
+}
+
+// ── fix ───────────────────────────────────────────────────────────────────────
+
+/// Rename an entry file so its name matches the frontmatter ID and title/slug.
+///
+/// Returns `Some(new_path)` if the file was renamed, `None` if it was already correct.
+/// Returns `Err` if the file is not a managed entry.
+pub fn fix_entry(path: &Path) -> Result<Option<PathBuf>> {
+    if !is_managed_filename(path) {
+        return Err(Error::InvalidEntry(format!(
+            "{}: not a managed entry (filename lacks a valid CarettaId prefix)",
+            path.display()
+        )));
+    }
+
+    let entry = read_entry(path)?;
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+    let id: CarettaId = stem[..7].parse().unwrap();
+
+    let expected = entry_filename_from_frontmatter(id, &entry.frontmatter);
+    let actual = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+
+    if actual == expected {
+        return Ok(None);
+    }
+
+    let new_path = path.parent().unwrap_or_else(|| Path::new(".")).join(&expected);
+    std::fs::rename(path, &new_path)?;
+    Ok(Some(new_path))
+}
+
+// ── remove ────────────────────────────────────────────────────────────────────
+
+/// Delete an entry file from disk.
+pub fn remove_entry(path: &Path) -> Result<()> {
+    std::fs::remove_file(path).map_err(Error::Io)
+}
+
+// ── internal helpers ──────────────────────────────────────────────────────────
+
+/// Build the canonical filename for an entry using the frontmatter slug (if set)
+/// or `slugify(title)` as a fallback.
+fn entry_filename_from_frontmatter(id: CarettaId, fm: &Frontmatter) -> String {
+    let slug = fm.slug.clone().unwrap_or_else(|| {
+        fm.title.as_deref().map(slugify).unwrap_or_default()
+    });
+    if slug.is_empty() {
+        format!("{id}.md")
+    } else {
+        format!("{id}_{slug}.md")
+    }
 }

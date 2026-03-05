@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use archelon_core::{
+    entry_ref::EntryRef,
     journal::Journal,
     ops::{self, EntryFields as CoreEntryFields, EntryFilter, MatchLabel},
     period::{parse_datetime, parse_datetime_end, parse_period},
@@ -88,6 +89,21 @@ pub enum EntryCommand {
         #[command(flatten)]
         fields: EntryFields,
     },
+    /// Check whether an entry's frontmatter and filename are valid
+    Check {
+        /// Path to the entry file, or an ID / ID prefix
+        entry: String,
+    },
+    /// Rename an entry file to match its frontmatter ID and title/slug
+    Fix {
+        /// Path to the entry file, or an ID / ID prefix
+        entry: String,
+    },
+    /// Delete an entry file
+    Remove {
+        /// Path to the entry file, or an ID / ID prefix
+        entry: String,
+    },
 }
 
 /// Frontmatter fields shared between `entry new` and `entry set` (clap-aware).
@@ -172,6 +188,9 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
         EntryCommand::New { name, body, fields } => new(journal_dir, &name, body, fields),
         EntryCommand::Edit { entry } => edit(&resolve_entry(journal_dir, &entry)?),
         EntryCommand::Set { entry, fields } => set(journal_dir, &resolve_entry(journal_dir, &entry)?, fields),
+        EntryCommand::Check { entry } => check(journal_dir, &entry),
+        EntryCommand::Fix { entry } => fix(journal_dir, &entry),
+        EntryCommand::Remove { entry } => remove(journal_dir, &entry),
     }
 }
 
@@ -347,15 +366,49 @@ fn set(journal_dir: Option<&Path>, path: &Path, fields: EntryFields) -> Result<(
     Ok(())
 }
 
+// ── check ─────────────────────────────────────────────────────────────────────
+
+fn check(journal_dir: Option<&Path>, entry: &str) -> Result<()> {
+    let path = resolve_entry(journal_dir, entry)?;
+    let issues = ops::check_entry(&path)?;
+    if issues.is_empty() {
+        println!("ok: {}", path.display());
+    } else {
+        for issue in &issues {
+            println!("{}: {}", path.display(), issue.as_str());
+        }
+    }
+    Ok(())
+}
+
+// ── fix ───────────────────────────────────────────────────────────────────────
+
+fn fix(journal_dir: Option<&Path>, entry: &str) -> Result<()> {
+    let path = resolve_entry(journal_dir, entry)?;
+    match ops::fix_entry(&path)? {
+        Some(new_path) => println!(
+            "renamed: {} → {}",
+            path.file_name().unwrap_or_default().to_string_lossy(),
+            new_path.file_name().unwrap_or_default().to_string_lossy(),
+        ),
+        None => println!("ok: {} (already correct)", path.display()),
+    }
+    Ok(())
+}
+
+// ── remove ────────────────────────────────────────────────────────────────────
+
+fn remove(journal_dir: Option<&Path>, entry: &str) -> Result<()> {
+    let path = resolve_entry(journal_dir, entry)?;
+    ops::remove_entry(&path)?;
+    println!("removed: {}", path.display());
+    Ok(())
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 fn resolve_entry(journal_dir: Option<&Path>, entry: &str) -> Result<PathBuf> {
-    let p = Path::new(entry);
-    if p.exists() {
-        return Ok(p.to_path_buf());
-    }
-    let journal = open_journal(journal_dir)?;
-    journal.find_entry_by_id(entry).map_err(Into::into)
+    ops::resolve_entry(&EntryRef::parse(entry), journal_dir).map_err(Into::into)
 }
 
 fn resolve_editor() -> String {

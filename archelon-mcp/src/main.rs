@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use archelon_core::{
+    entry_ref::EntryRef,
     journal::{Journal, WeekStart},
     ops::{self, EntryFields, EntryFilter},
     parser::read_entry,
@@ -42,12 +43,8 @@ impl ArchelonServer {
     }
 
     fn resolve_entry(&self, entry: &str) -> anyhow::Result<PathBuf> {
-        let p = Path::new(entry);
-        if p.exists() {
-            return Ok(p.to_path_buf());
-        }
-        let journal = self.open_journal()?;
-        journal.find_entry_by_id(entry).map_err(Into::into)
+        ops::resolve_entry(&EntryRef::parse(entry), self.journal_dir.as_deref())
+            .map_err(Into::into)
     }
 
     fn week_start(&self) -> WeekStart {
@@ -145,6 +142,24 @@ struct EntrySetParams {
     event_start: Option<String>,
     /// Event end date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)
     event_end: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct EntryCheckParams {
+    /// File path to the entry, or an ID / ID prefix
+    entry: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct EntryFixParams {
+    /// File path to the entry, or an ID / ID prefix
+    entry: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct EntryRemoveParams {
+    /// File path to the entry, or an ID / ID prefix
+    entry: String,
 }
 
 // ── helpers for parameter parsing ─────────────────────────────────────────────
@@ -367,6 +382,52 @@ impl ArchelonServer {
             )?;
             ops::update_entry(&path, fields)?;
             Ok(format!("updated: {}", path.display()))
+        })()
+        .map_err(|e| e.to_string())
+    }
+
+    #[tool(description = "Check whether an entry's frontmatter and filename are valid. \
+        Returns 'ok' or a list of issues (e.g. filename mismatch).")]
+    fn entry_check(&self, Parameters(p): Parameters<EntryCheckParams>) -> Result<String, String> {
+        (|| -> anyhow::Result<String> {
+            let path = self.resolve_entry(&p.entry)?;
+            let issues = ops::check_entry(&path)?;
+            if issues.is_empty() {
+                Ok(format!("ok: {}", path.display()))
+            } else {
+                let lines: Vec<String> = issues
+                    .iter()
+                    .map(|i| format!("{}: {}", path.display(), i.as_str()))
+                    .collect();
+                Ok(lines.join("\n"))
+            }
+        })()
+        .map_err(|e| e.to_string())
+    }
+
+    #[tool(description = "Rename an entry file so its name matches the frontmatter ID and title/slug. \
+        Reports the rename or confirms the filename is already correct.")]
+    fn entry_fix(&self, Parameters(p): Parameters<EntryFixParams>) -> Result<String, String> {
+        (|| -> anyhow::Result<String> {
+            let path = self.resolve_entry(&p.entry)?;
+            match ops::fix_entry(&path)? {
+                Some(new_path) => Ok(format!(
+                    "renamed: {} → {}",
+                    path.file_name().unwrap_or_default().to_string_lossy(),
+                    new_path.file_name().unwrap_or_default().to_string_lossy(),
+                )),
+                None => Ok(format!("ok: {} (already correct)", path.display())),
+            }
+        })()
+        .map_err(|e| e.to_string())
+    }
+
+    #[tool(description = "Delete an entry file from the journal")]
+    fn entry_remove(&self, Parameters(p): Parameters<EntryRemoveParams>) -> Result<String, String> {
+        (|| -> anyhow::Result<String> {
+            let path = self.resolve_entry(&p.entry)?;
+            ops::remove_entry(&path)?;
+            Ok(format!("removed: {}", path.display()))
         })()
         .map_err(|e| e.to_string())
     }
