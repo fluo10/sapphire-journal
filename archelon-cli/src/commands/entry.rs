@@ -1,9 +1,8 @@
 use anyhow::{bail, Context, Result};
 use archelon_core::{
-    entry::{Entry, EventMeta, Frontmatter, TaskMeta},
-    journal::{is_managed_filename, Journal, new_entry_path},
-    parser::{read_entry, render_entry, write_entry},
-    period::{parse_datetime, parse_datetime_end, parse_period, Period},
+    journal::Journal,
+    ops::{self, EntryFields as CoreEntryFields, EntryFilter, MatchLabel},
+    period::{parse_datetime, parse_datetime_end, parse_period},
 };
 use chrono::NaiveDateTime;
 use clap::{Args, Subcommand};
@@ -91,7 +90,10 @@ pub enum EntryCommand {
     },
 }
 
-/// Frontmatter fields shared between `entry new` and `entry set`.
+/// Frontmatter fields shared between `entry new` and `entry set` (clap-aware).
+///
+/// After parsing this is converted into [`archelon_core::ops::EntryFields`]
+/// and passed to the core operation functions.
 #[derive(Args)]
 pub struct EntryFields {
     /// Title written into the frontmatter
@@ -127,6 +129,21 @@ pub struct EntryFields {
     pub event_end: Option<NaiveDateTime>,
 }
 
+impl From<EntryFields> for CoreEntryFields {
+    fn from(f: EntryFields) -> Self {
+        Self {
+            title: f.title,
+            slug: f.slug,
+            tags: f.tags,
+            task_due: f.task_due,
+            task_status: f.task_status,
+            task_closed_at: f.task_closed_at,
+            event_start: f.event_start,
+            event_end: f.event_end,
+        }
+    }
+}
+
 pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
     match cmd {
         EntryCommand::List { path, period, task_due, event_start, event_end, created_at, updated_at, task_status, json } => {
@@ -148,12 +165,13 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
                 task_status: task_status.unwrap_or_default(),
             };
 
-            list(journal_dir, path.as_deref(), filter, json)
+            let entries = ops::list_entries(journal_dir, path.as_deref(), &filter)?;
+            print_entries(&entries, filter.has_any_filter(), json)
         }
         EntryCommand::Show { entry } => show(&resolve_entry(journal_dir, &entry)?),
         EntryCommand::New { name, body, fields } => new(journal_dir, &name, body, fields),
         EntryCommand::Edit { entry } => edit(&resolve_entry(journal_dir, &entry)?),
-        EntryCommand::Set { entry, fields } => set(&resolve_entry(journal_dir, &entry)?, fields),
+        EntryCommand::Set { entry, fields } => set(journal_dir, &resolve_entry(journal_dir, &entry)?, fields),
     }
 }
 
@@ -166,155 +184,15 @@ fn open_journal(journal_dir: Option<&Path>) -> Result<Journal> {
     }
 }
 
-// ── filter ────────────────────────────────────────────────────────────────────
+// ── list output ───────────────────────────────────────────────────────────────
 
-struct EntryFilter {
-    /// Shortcut: applies the same period to all timestamp fields simultaneously (OR across fields)
-    period: Option<Period>,
-    task_due: Option<Period>,
-    event_start: Option<Period>,
-    event_end: Option<Period>,
-    created_at: Option<Period>,
-    updated_at: Option<Period>,
-    /// AND condition: entry must have a task whose status is one of these values
-    task_status: Vec<String>,
-}
-
-impl EntryFilter {
-    fn has_timestamp_filter(&self) -> bool {
-        self.period.is_some()
-            || self.task_due.is_some()
-            || self.event_start.is_some()
-            || self.event_end.is_some()
-            || self.created_at.is_some()
-            || self.updated_at.is_some()
-    }
-
-    /// Returns `(include, labels)`.
-    ///
-    /// Timestamp filters are ORed: any one matching field is sufficient.
-    /// `task_status` is ANDed on top: the entry must also satisfy the status filter.
-    fn matches(&self, entry: &Entry) -> (bool, Vec<MatchLabel>) {
-        let mut labels = Vec::new();
-
-        let timestamp_ok = if self.has_timestamp_filter() {
-            let task_due_val = entry.frontmatter.task.as_ref().and_then(|t| t.due);
-            let event_start_val = entry.frontmatter.event.as_ref().and_then(|e| e.start);
-            let event_end_val = entry.frontmatter.event.as_ref().and_then(|e| e.end);
-            let created_val = entry.frontmatter.created_at;
-            let updated_val = entry.frontmatter.updated_at;
-
-            macro_rules! check {
-                ($filter:expr, $val:expr, $label:expr) => {
-                    if let Some(p) = &$filter {
-                        if p.matches($val) {
-                            labels.push($label);
-                        }
-                    }
-                };
-            }
-
-            // --period applies to all fields
-            if let Some(p) = &self.period {
-                if p.matches(task_due_val) {
-                    labels.push(MatchLabel::TaskDue);
-                }
-                if p.matches(event_start_val) {
-                    labels.push(MatchLabel::EventStart);
-                }
-                if p.matches(event_end_val) {
-                    labels.push(MatchLabel::EventEnd);
-                }
-                if p.matches(created_val) {
-                    labels.push(MatchLabel::CreatedAt);
-                }
-                if p.matches(updated_val) {
-                    labels.push(MatchLabel::UpdatedAt);
-                }
-            }
-
-            // per-field filters (may add duplicate labels; dedup below)
-            check!(self.task_due, task_due_val, MatchLabel::TaskDue);
-            check!(self.event_start, event_start_val, MatchLabel::EventStart);
-            check!(self.event_end, event_end_val, MatchLabel::EventEnd);
-            check!(self.created_at, created_val, MatchLabel::CreatedAt);
-            check!(self.updated_at, updated_val, MatchLabel::UpdatedAt);
-
-            labels.dedup();
-            !labels.is_empty()
-        } else {
-            true
-        };
-
-        let status_ok = if !self.task_status.is_empty() {
-            entry.frontmatter.task.as_ref().is_some_and(|t| {
-                let s = t.status.as_deref().unwrap_or("open");
-                self.task_status.iter().any(|ts| ts == s)
-            })
-        } else {
-            true
-        };
-
-        (timestamp_ok && status_ok, labels)
-    }
-}
-
-// ── list ──────────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MatchLabel {
-    TaskDue,
-    EventStart,
-    EventEnd,
-    CreatedAt,
-    UpdatedAt,
-}
-
-impl MatchLabel {
-    fn as_str(self) -> &'static str {
-        match self {
-            MatchLabel::TaskDue => "TASK_DUE",
-            MatchLabel::EventStart => "EVENT_START",
-            MatchLabel::EventEnd => "EVENT_END",
-            MatchLabel::CreatedAt => "CREATED",
-            MatchLabel::UpdatedAt => "UPDATED",
-        }
-    }
-}
-
-fn list(
-    journal_dir: Option<&Path>,
-    path: Option<&Path>,
-    filter: EntryFilter,
+fn print_entries(
+    entries: &[(archelon_core::entry::Entry, Vec<MatchLabel>)],
+    has_filter: bool,
     json: bool,
 ) -> Result<()> {
-    let paths = collect_entries(journal_dir, path)?;
-    let has_filter = filter.has_timestamp_filter() || !filter.task_status.is_empty();
-
-    let mut filtered: Vec<(Entry, Vec<MatchLabel>)> = Vec::new();
-
-    for path in &paths {
-        if !is_managed_filename(path) {
-            continue;
-        }
-        let entry = match read_entry(path) {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("warn: {} — {e}", path.display());
-                continue;
-            }
-        };
-
-        let (include, labels) = filter.matches(&entry);
-        if has_filter && !include {
-            continue;
-        }
-
-        filtered.push((entry, labels));
-    }
-
     if json {
-        let records: Vec<serde_json::Value> = filtered
+        let records: Vec<serde_json::Value> = entries
             .iter()
             .map(|(entry, labels)| {
                 let mut v = serde_json::json!({
@@ -341,8 +219,7 @@ fn list(
         return Ok(());
     }
 
-    // Table output
-    let rows: Vec<(String, String, String)> = filtered
+    let rows: Vec<(String, String, String)> = entries
         .iter()
         .map(|(entry, labels)| {
             let id = entry.id().map(|id| id.to_string()).unwrap_or_default();
@@ -357,8 +234,7 @@ fn list(
                     .unwrap_or("")
                     .to_owned()
             };
-            let title = entry.title().to_owned();
-            (id, status, title)
+            (id, status, entry.title().to_owned())
         })
         .collect();
 
@@ -368,22 +244,21 @@ fn list(
 
     let id_w = rows.iter().map(|(id, _, _)| id.len()).max().unwrap_or(7);
     let status_w = rows.iter().map(|(_, s, _)| s.len()).max().unwrap_or(0);
-
     for (id, status, title) in &rows {
         println!("{:<id_w$}  {:<status_w$}  {title}", id, status);
     }
-
     Ok(())
 }
 
 // ── show ──────────────────────────────────────────────────────────────────────
 
 fn show(path: &Path) -> Result<()> {
+    use archelon_core::parser::read_entry;
+
     let entry = read_entry(path)?;
     let fm = &entry.frontmatter;
 
     println!("# {}", entry.title());
-
     if let Some(ts) = fm.created_at {
         println!("created:  {}", ts.format("%Y-%m-%dT%H:%M"));
     }
@@ -405,77 +280,32 @@ fn show(path: &Path) -> Result<()> {
     }
     if let Some(event) = &fm.event {
         match (event.start, event.end) {
-            (Some(s), Some(e)) => {
-                println!("event:    {} – {}", s.format("%Y-%m-%d"), e.format("%Y-%m-%d"))
-            }
-            (Some(s), None) => println!("event:    from {}", s.format("%Y-%m-%d")),
-            (None, Some(e)) => println!("event:    until {}", e.format("%Y-%m-%d")),
-            (None, None) => println!("event:    (no dates)"),
+            (Some(s), Some(e)) => println!("event:    {} – {}", s.format("%Y-%m-%d"), e.format("%Y-%m-%d")),
+            (Some(s), None)    => println!("event:    from {}", s.format("%Y-%m-%d")),
+            (None, Some(e))    => println!("event:    until {}", e.format("%Y-%m-%d")),
+            (None, None)       => println!("event:    (no dates)"),
         }
     }
-
     println!();
     print!("{}", entry.body);
-
     Ok(())
 }
 
 // ── new ───────────────────────────────────────────────────────────────────────
 
 fn new(journal_dir: Option<&Path>, name: &str, body: Option<String>, fields: EntryFields) -> Result<()> {
-    let fm_title = fields.title.or_else(|| Some(name.to_owned()));
-    let tags = fields.tags.unwrap_or_default();
     let journal = open_journal(journal_dir)?;
-    let dest = journal.root.join(new_entry_path(name));
-
-    if dest.exists() {
-        bail!("{} already exists", dest.display());
-    }
 
     let body = match body {
         Some(b) => b,
-        None => prompt_editor(fm_title.as_deref(), &tags)?,
+        None => {
+            let title = fields.title.as_deref().unwrap_or(name);
+            let tags = fields.tags.as_deref().unwrap_or(&[]);
+            prompt_editor(Some(title), tags)?
+        }
     };
 
-    let task = if fields.task_due.is_some()
-        || fields.task_status.is_some()
-        || fields.task_closed_at.is_some()
-    {
-        let inactive =
-            matches!(fields.task_status.as_deref(), Some("done" | "cancelled" | "archived"));
-        let closed_at = fields
-            .task_closed_at
-            .or_else(|| inactive.then(|| chrono::Local::now().naive_local()));
-        Some(TaskMeta { due: fields.task_due, status: fields.task_status, closed_at })
-    } else {
-        None
-    };
-    let event = if fields.event_start.is_some() || fields.event_end.is_some() {
-        Some(EventMeta { start: fields.event_start, end: fields.event_end })
-    } else {
-        None
-    };
-
-    let now = chrono::Local::now().naive_local();
-    let entry = Entry {
-        path: dest.clone(),
-        frontmatter: Frontmatter {
-            title: fm_title,
-            slug: fields.slug,
-            tags,
-            created_at: Some(now),
-            updated_at: Some(now),
-            task,
-            event,
-        },
-        body,
-    };
-
-    std::fs::create_dir_all(dest.parent().unwrap())
-        .with_context(|| format!("failed to create directory for {}", dest.display()))?;
-    std::fs::write(&dest, render_entry(&entry))
-        .with_context(|| format!("failed to write {}", dest.display()))?;
-
+    let dest = ops::create_entry(&journal, name, body, fields.into())?;
     println!("created: {}", dest.display());
     Ok(())
 }
@@ -486,23 +316,20 @@ fn edit(path: &Path) -> Result<()> {
     if !path.exists() {
         bail!("{} does not exist", path.display());
     }
-
     let editor = resolve_editor();
     let status = Command::new(&editor)
         .arg(path)
         .status()
         .with_context(|| format!("failed to launch editor `{editor}`"))?;
-
     if !status.success() {
         bail!("editor exited with non-zero status");
     }
-
     Ok(())
 }
 
 // ── set ───────────────────────────────────────────────────────────────────────
 
-fn set(path: &Path, fields: EntryFields) -> Result<()> {
+fn set(journal_dir: Option<&Path>, path: &Path, fields: EntryFields) -> Result<()> {
     if fields.title.is_none()
         && fields.slug.is_none()
         && fields.tags.is_none()
@@ -514,104 +341,21 @@ fn set(path: &Path, fields: EntryFields) -> Result<()> {
     {
         bail!("nothing to update — specify at least one field");
     }
-
-    let mut entry = read_entry(path)?;
-
-    if let Some(t) = fields.title {
-        entry.frontmatter.title = Some(t);
-    }
-    if let Some(s) = fields.slug {
-        entry.frontmatter.slug = Some(s);
-    }
-    if let Some(ts) = fields.tags {
-        entry.frontmatter.tags = ts;
-    }
-
-    if fields.task_due.is_some()
-        || fields.task_status.is_some()
-        || fields.task_closed_at.is_some()
-    {
-        let task = entry.frontmatter.task.get_or_insert_with(Default::default);
-        if let Some(d) = fields.task_due {
-            task.due = Some(d);
-        }
-        if let Some(s) = fields.task_status {
-            let inactive = matches!(s.as_str(), "done" | "cancelled" | "archived");
-            task.status = Some(s);
-            // Auto-set closed_at when transitioning to inactive (unless already set or overridden)
-            if inactive && task.closed_at.is_none() && fields.task_closed_at.is_none() {
-                task.closed_at = Some(chrono::Local::now().naive_local());
-            }
-        }
-        if let Some(ca) = fields.task_closed_at {
-            task.closed_at = Some(ca);
-        }
-    }
-
-    if fields.event_start.is_some() || fields.event_end.is_some() {
-        let event = entry.frontmatter.event.get_or_insert_with(Default::default);
-        if let Some(s) = fields.event_start {
-            event.start = Some(s);
-        }
-        if let Some(e) = fields.event_end {
-            event.end = Some(e);
-        }
-    }
-
-    write_entry(&mut entry)?;
+    let _ = journal_dir; // reserved for future use
+    ops::update_entry(path, fields.into())?;
     println!("updated: {}", path.display());
     Ok(())
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/// Resolve a user-supplied `entry` argument to a concrete file path.
-///
-/// Resolution order:
-/// 1. If the argument is an existing file path, return it as-is.
-/// 2. Otherwise treat it as an ID prefix and search the current journal.
 fn resolve_entry(journal_dir: Option<&Path>, entry: &str) -> Result<PathBuf> {
     let p = Path::new(entry);
     if p.exists() {
         return Ok(p.to_path_buf());
     }
-
     let journal = open_journal(journal_dir)?;
     journal.find_entry_by_id(entry).map_err(Into::into)
-}
-
-/// Collect `.md` files for the list command.
-/// If path is given, scan only that directory.
-/// Otherwise, use journal root + year subdirs; fall back to ".".
-fn collect_entries(journal_dir: Option<&Path>, path: Option<&Path>) -> Result<Vec<PathBuf>> {
-    if let Some(v) = path {
-        let mut paths: Vec<_> = std::fs::read_dir(v)?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
-            .collect();
-        paths.sort();
-        return Ok(paths);
-    }
-
-    if let Some(dir) = journal_dir {
-        return Journal::from_root(dir.to_path_buf())
-            .context("not an archelon journal")?
-            .collect_entries()
-            .map_err(Into::into);
-    }
-
-    if let Ok(journal) = Journal::find() {
-        return journal.collect_entries().map_err(Into::into);
-    }
-
-    let mut paths: Vec<_> = std::fs::read_dir(".")?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
-        .collect();
-    paths.sort();
-    Ok(paths)
 }
 
 fn resolve_editor() -> String {
@@ -620,7 +364,6 @@ fn resolve_editor() -> String {
         .unwrap_or_else(|_| "vi".into())
 }
 
-/// Open a temp file in $EDITOR and return the body the user typed.
 fn prompt_editor(title: Option<&str>, tags: &[String]) -> Result<String> {
     let editor = resolve_editor();
 
@@ -646,7 +389,6 @@ fn prompt_editor(title: Option<&str>, tags: &[String]) -> Result<String> {
         .arg(tmp.path())
         .status()
         .with_context(|| format!("failed to launch editor `{editor}`"))?;
-
     if !status.success() {
         bail!("editor exited with non-zero status");
     }
@@ -662,6 +404,5 @@ fn prompt_editor(title: Option<&str>, tags: &[String]) -> Result<String> {
     if body.is_empty() {
         bail!("aborting: empty entry");
     }
-
     Ok(body)
 }

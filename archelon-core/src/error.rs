@@ -20,6 +20,9 @@ pub enum Error {
     #[error("id prefix `{0}` is ambiguous ({1} matches)")]
     AmbiguousId(String, usize),
 
+    #[error("{0} already exists")]
+    EntryAlreadyExists(String),
+
     #[error("invalid config: {0}")]
     InvalidConfig(String),
 }

@@ -2,10 +2,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use archelon_core::{
-    entry::{Entry, EventMeta, Frontmatter, TaskMeta},
-    journal::{is_managed_filename, Journal, WeekStart, new_entry_path},
-    parser::{read_entry, render_entry, write_entry},
-    period::{parse_datetime, parse_datetime_end, parse_period, Period},
+    journal::{Journal, WeekStart},
+    ops::{self, EntryFields, EntryFilter},
+    parser::read_entry,
+    period::{parse_datetime, parse_datetime_end, parse_period},
 };
 use rmcp::{
     ServerHandler, ServiceExt,
@@ -147,79 +147,41 @@ struct EntrySetParams {
     event_end: Option<String>,
 }
 
-// ── filter ────────────────────────────────────────────────────────────────────
+// ── helpers for parameter parsing ─────────────────────────────────────────────
 
-struct EntryFilter {
-    period: Option<Period>,
-    task_due: Option<Period>,
-    event_start: Option<Period>,
-    event_end: Option<Period>,
-    created_at: Option<Period>,
-    updated_at: Option<Period>,
-    task_status: Vec<String>,
-}
-
-impl EntryFilter {
-    fn has_timestamp_filter(&self) -> bool {
-        self.period.is_some()
-            || self.task_due.is_some()
-            || self.event_start.is_some()
-            || self.event_end.is_some()
-            || self.created_at.is_some()
-            || self.updated_at.is_some()
-    }
-
-    fn matches(&self, entry: &Entry) -> (bool, Vec<&'static str>) {
-        let mut labels: Vec<&'static str> = Vec::new();
-
-        let timestamp_ok = if self.has_timestamp_filter() {
-            let task_due_val = entry.frontmatter.task.as_ref().and_then(|t| t.due);
-            let event_start_val = entry.frontmatter.event.as_ref().and_then(|e| e.start);
-            let event_end_val = entry.frontmatter.event.as_ref().and_then(|e| e.end);
-            let created_val = entry.frontmatter.created_at;
-            let updated_val = entry.frontmatter.updated_at;
-
-            macro_rules! check {
-                ($filter:expr, $val:expr, $label:literal) => {
-                    if let Some(p) = &$filter {
-                        if p.matches($val) {
-                            labels.push($label);
-                        }
-                    }
-                };
-            }
-
-            if let Some(p) = &self.period {
-                if p.matches(task_due_val) { labels.push("TASK_DUE"); }
-                if p.matches(event_start_val) { labels.push("EVENT_START"); }
-                if p.matches(event_end_val) { labels.push("EVENT_END"); }
-                if p.matches(created_val) { labels.push("CREATED"); }
-                if p.matches(updated_val) { labels.push("UPDATED"); }
-            }
-
-            check!(self.task_due, task_due_val, "TASK_DUE");
-            check!(self.event_start, event_start_val, "EVENT_START");
-            check!(self.event_end, event_end_val, "EVENT_END");
-            check!(self.created_at, created_val, "CREATED");
-            check!(self.updated_at, updated_val, "UPDATED");
-
-            labels.dedup();
-            !labels.is_empty()
-        } else {
-            true
-        };
-
-        let status_ok = if !self.task_status.is_empty() {
-            entry.frontmatter.task.as_ref().is_some_and(|t| {
-                let s = t.status.as_deref().unwrap_or("open");
-                self.task_status.iter().any(|ts| ts == s)
-            })
-        } else {
-            true
-        };
-
-        (timestamp_ok && status_ok, labels)
-    }
+fn parse_entry_fields(
+    title: Option<String>,
+    slug: Option<String>,
+    tags: Option<String>,
+    task_due: Option<&str>,
+    task_status: Option<String>,
+    task_closed_at: Option<&str>,
+    event_start: Option<&str>,
+    event_end: Option<&str>,
+) -> anyhow::Result<EntryFields> {
+    Ok(EntryFields {
+        title,
+        slug,
+        tags: tags.as_deref().map(|s| {
+            s.split(',')
+                .map(|t| t.trim().to_owned())
+                .filter(|t| !t.is_empty())
+                .collect()
+        }),
+        task_due: task_due
+            .map(|s| parse_datetime_end(s).map_err(anyhow::Error::msg))
+            .transpose()?,
+        task_status,
+        task_closed_at: task_closed_at
+            .map(|s| parse_datetime(s).map_err(anyhow::Error::msg))
+            .transpose()?,
+        event_start: event_start
+            .map(|s| parse_datetime(s).map_err(anyhow::Error::msg))
+            .transpose()?,
+        event_end: event_end
+            .map(|s| parse_datetime_end(s).map_err(anyhow::Error::msg))
+            .transpose()?,
+    })
 }
 
 // ── tool implementations ──────────────────────────────────────────────────────
@@ -271,9 +233,7 @@ impl ArchelonServer {
     fn entry_list(&self, Parameters(p): Parameters<EntryListParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let week_start = self.week_start();
-            let parse = |s: &str| {
-                parse_period(s, week_start).map_err(anyhow::Error::msg)
-            };
+            let parse = |s: &str| parse_period(s, week_start).map_err(anyhow::Error::msg);
 
             let filter = EntryFilter {
                 period: p.period.as_deref().map(parse).transpose()?,
@@ -285,44 +245,32 @@ impl ArchelonServer {
                 task_status: p.task_status.unwrap_or_default(),
             };
 
-            let has_filter = filter.has_timestamp_filter() || !filter.task_status.is_empty();
-            let paths = collect_entries(self.journal_dir.as_deref())?;
-            let mut records: Vec<serde_json::Value> = Vec::new();
+            let has_filter = filter.has_any_filter();
+            let entries = ops::list_entries(self.journal_dir.as_deref(), None, &filter)?;
 
-            for path in &paths {
-                if !is_managed_filename(path) {
-                    continue;
-                }
-                let entry = match read_entry(path) {
-                    Ok(e) => e,
-                    Err(e) => {
-                        eprintln!("warn: {} — {e}", path.display());
-                        continue;
+            let records: Vec<serde_json::Value> = entries
+                .iter()
+                .map(|(entry, labels)| {
+                    let mut v = serde_json::json!({
+                        "id": entry.id().map(|id| id.to_string()),
+                        "path": entry.path.display().to_string(),
+                        "title": entry.title(),
+                        "slug": entry.frontmatter.slug,
+                        "created_at": entry.frontmatter.created_at,
+                        "updated_at": entry.frontmatter.updated_at,
+                        "tags": entry.frontmatter.tags,
+                        "task": entry.frontmatter.task,
+                        "event": entry.frontmatter.event,
+                        "body": entry.body,
+                    });
+                    if has_filter {
+                        v["match_labels"] = serde_json::json!(
+                            labels.iter().map(|l| l.as_str()).collect::<Vec<_>>()
+                        );
                     }
-                };
-
-                let (include, labels) = filter.matches(&entry);
-                if has_filter && !include {
-                    continue;
-                }
-
-                let mut v = serde_json::json!({
-                    "id": entry.id().map(|id| id.to_string()),
-                    "path": entry.path.display().to_string(),
-                    "title": entry.title(),
-                    "slug": entry.frontmatter.slug,
-                    "created_at": entry.frontmatter.created_at,
-                    "updated_at": entry.frontmatter.updated_at,
-                    "tags": entry.frontmatter.tags,
-                    "task": entry.frontmatter.task,
-                    "event": entry.frontmatter.event,
-                    "body": entry.body,
-                });
-                if has_filter {
-                    v["match_labels"] = serde_json::json!(labels);
-                }
-                records.push(v);
-            }
+                    v
+                })
+                .collect();
 
             Ok(serde_json::to_string_pretty(&records)?)
         })()
@@ -337,7 +285,6 @@ impl ArchelonServer {
             let fm = &entry.frontmatter;
 
             let mut out = format!("# {}\n", entry.title());
-
             if let Some(ts) = fm.created_at {
                 out.push_str(&format!("created:  {}\n", ts.format("%Y-%m-%dT%H:%M")));
             }
@@ -350,11 +297,8 @@ impl ArchelonServer {
             if let Some(task) = &fm.task {
                 let status = task.status.as_deref().unwrap_or("open");
                 match task.due {
-                    Some(d) => out.push_str(&format!(
-                        "task:     {status} (due {})\n",
-                        d.format("%Y-%m-%d")
-                    )),
-                    None => out.push_str(&format!("task:     {status}\n")),
+                    Some(d) => out.push_str(&format!("task:     {status} (due {})\n", d.format("%Y-%m-%d"))),
+                    None    => out.push_str(&format!("task:     {status}\n")),
                 }
                 if let Some(ca) = task.closed_at {
                     out.push_str(&format!("closed:   {}\n", ca.format("%Y-%m-%dT%H:%M")));
@@ -362,21 +306,12 @@ impl ArchelonServer {
             }
             if let Some(event) = &fm.event {
                 match (event.start, event.end) {
-                    (Some(s), Some(e)) => out.push_str(&format!(
-                        "event:    {} – {}\n",
-                        s.format("%Y-%m-%d"),
-                        e.format("%Y-%m-%d")
-                    )),
-                    (Some(s), None) => {
-                        out.push_str(&format!("event:    from {}\n", s.format("%Y-%m-%d")))
-                    }
-                    (None, Some(e)) => {
-                        out.push_str(&format!("event:    until {}\n", e.format("%Y-%m-%d")))
-                    }
-                    (None, None) => out.push_str("event:    (no dates)\n"),
+                    (Some(s), Some(e)) => out.push_str(&format!("event:    {} – {}\n", s.format("%Y-%m-%d"), e.format("%Y-%m-%d"))),
+                    (Some(s), None)    => out.push_str(&format!("event:    from {}\n", s.format("%Y-%m-%d"))),
+                    (None, Some(e))    => out.push_str(&format!("event:    until {}\n", e.format("%Y-%m-%d"))),
+                    (None, None)       => out.push_str("event:    (no dates)\n"),
                 }
             }
-
             out.push('\n');
             out.push_str(&entry.body);
             Ok(out)
@@ -388,76 +323,17 @@ impl ArchelonServer {
     fn entry_new(&self, Parameters(p): Parameters<EntryNewParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let journal = self.open_journal()?;
-            let dest = journal.root.join(new_entry_path(&p.name));
-
-            if dest.exists() {
-                anyhow::bail!("{} already exists", dest.display());
-            }
-
-            let tags = p
-                .tags
-                .as_deref()
-                .map(|s| {
-                    s.split(',')
-                        .map(|t| t.trim().to_owned())
-                        .filter(|t| !t.is_empty())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-
-            let task = if p.task_due.is_some()
-                || p.task_status.is_some()
-                || p.task_closed_at.is_some()
-            {
-                let due = p.task_due.as_deref()
-                    .map(|s| parse_datetime_end(s).map_err(anyhow::Error::msg))
-                    .transpose()?;
-                let status = p.task_status.clone();
-                let inactive =
-                    matches!(status.as_deref(), Some("done" | "cancelled" | "archived"));
-                let closed_at = p
-                    .task_closed_at
-                    .as_deref()
-                    .map(|s| parse_datetime(s).map_err(anyhow::Error::msg))
-                    .transpose()?
-                    .or_else(|| inactive.then(|| chrono::Local::now().naive_local()));
-                Some(TaskMeta { due, status, closed_at })
-            } else {
-                None
-            };
-
-            let event = if p.event_start.is_some() || p.event_end.is_some() {
-                let start = p.event_start.as_deref()
-                    .map(|s| parse_datetime(s).map_err(anyhow::Error::msg))
-                    .transpose()?;
-                let end = p.event_end.as_deref()
-                    .map(|s| parse_datetime_end(s).map_err(anyhow::Error::msg))
-                    .transpose()?;
-                Some(EventMeta { start, end })
-            } else {
-                None
-            };
-
-            let now = chrono::Local::now().naive_local();
-            let entry = Entry {
-                path: dest.clone(),
-                frontmatter: Frontmatter {
-                    title: p.title.or_else(|| Some(p.name.clone())),
-                    slug: p.slug,
-                    tags,
-                    created_at: Some(now),
-                    updated_at: Some(now),
-                    task,
-                    event,
-                },
-                body: p.body,
-            };
-
-            std::fs::create_dir_all(dest.parent().unwrap())
-                .with_context(|| format!("failed to create directory for {}", dest.display()))?;
-            std::fs::write(&dest, render_entry(&entry))
-                .with_context(|| format!("failed to write {}", dest.display()))?;
-
+            let fields = parse_entry_fields(
+                p.title,
+                p.slug,
+                p.tags,
+                p.task_due.as_deref(),
+                p.task_status,
+                p.task_closed_at.as_deref(),
+                p.event_start.as_deref(),
+                p.event_end.as_deref(),
+            )?;
+            let dest = ops::create_entry(&journal, &p.name, p.body, fields)?;
             Ok(format!("created: {}", dest.display()))
         })()
         .map_err(|e| e.to_string())
@@ -479,50 +355,17 @@ impl ArchelonServer {
             }
 
             let path = self.resolve_entry(&p.entry)?;
-            let mut entry = read_entry(&path)?;
-
-            if let Some(t) = p.title {
-                entry.frontmatter.title = Some(t);
-            }
-            if let Some(s) = p.slug {
-                entry.frontmatter.slug = Some(s);
-            }
-            if let Some(tags_str) = p.tags {
-                entry.frontmatter.tags = tags_str
-                    .split(',')
-                    .map(|t| t.trim().to_owned())
-                    .filter(|t| !t.is_empty())
-                    .collect();
-            }
-
-            if p.task_due.is_some() || p.task_status.is_some() || p.task_closed_at.is_some() {
-                let task = entry.frontmatter.task.get_or_insert_with(Default::default);
-                if let Some(d) = p.task_due.as_deref() {
-                    task.due = Some(parse_datetime_end(d).map_err(anyhow::Error::msg)?);
-                }
-                if let Some(s) = p.task_status {
-                    let inactive = matches!(s.as_str(), "done" | "cancelled" | "archived");
-                    task.status = Some(s);
-                    if inactive && task.closed_at.is_none() && p.task_closed_at.is_none() {
-                        task.closed_at = Some(chrono::Local::now().naive_local());
-                    }
-                }
-                if let Some(ca) = p.task_closed_at.as_deref() {
-                    task.closed_at = Some(parse_datetime(ca).map_err(anyhow::Error::msg)?);
-                }
-            }
-
-            if p.event_start.is_some() || p.event_end.is_some() {
-                let event = entry.frontmatter.event.get_or_insert_with(Default::default);
-                if let Some(s) = p.event_start.as_deref() {
-                    event.start = Some(parse_datetime(s).map_err(anyhow::Error::msg)?);
-                }
-                if let Some(e) = p.event_end.as_deref() {
-                    event.end = Some(parse_datetime_end(e).map_err(anyhow::Error::msg)?);
-                }
-            }
-
-            write_entry(&mut entry)?;
+            let fields = parse_entry_fields(
+                p.title,
+                p.slug,
+                p.tags,
+                p.task_due.as_deref(),
+                p.task_status,
+                p.task_closed_at.as_deref(),
+                p.event_start.as_deref(),
+                p.event_end.as_deref(),
+            )?;
+            ops::update_entry(&path, fields)?;
             Ok(format!("updated: {}", path.display()))
         })()
         .map_err(|e| e.to_string())
@@ -543,25 +386,6 @@ impl ServerHandler for ArchelonServer {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-fn collect_entries(journal_dir: Option<&Path>) -> anyhow::Result<Vec<PathBuf>> {
-    if let Some(dir) = journal_dir {
-        return Journal::from_root(dir.to_path_buf())
-            .context("not an archelon journal")?
-            .collect_entries()
-            .map_err(Into::into);
-    }
-    if let Ok(journal) = Journal::find() {
-        return journal.collect_entries().map_err(Into::into);
-    }
-    let mut paths: Vec<_> = std::fs::read_dir(".")?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
-        .collect();
-    paths.sort();
-    Ok(paths)
-}
 
 fn detect_timezone() -> String {
     if let Ok(tz) = std::env::var("TZ") {
