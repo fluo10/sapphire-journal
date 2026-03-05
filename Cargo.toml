@@ -1,5 +1,5 @@
 [workspace]
-members = ["archelon-cli", "archelon-core"]
+members = ["archelon-cli", "archelon-core", "archelon-mcp"]
 resolver = "3"
 
 [workspace.package]
