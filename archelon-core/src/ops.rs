@@ -4,7 +4,7 @@
 //! caller only needs to handle input-format concerns (CLI arg parsing, JSON
 //! deserialization, etc.) and output formatting.
 
-use std::path::{Path, PathBuf};
+use std::{cmp::Ordering, path::{Path, PathBuf}, str::FromStr};
 
 use caretta_id::CarettaId;
 use chrono::{Datelike as _, NaiveDateTime};
@@ -18,6 +18,61 @@ use crate::{
     period::Period,
 };
 
+// ── SortField / SortOrder ─────────────────────────────────────────────────────
+
+/// Which field to sort entries by in [`list_entries`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortField {
+    #[default]
+    Id,
+    Title,
+    TaskStatus,
+    CreatedAt,
+    UpdatedAt,
+    TaskDue,
+    EventStart,
+    EventEnd,
+}
+
+impl FromStr for SortField {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "id"           => Ok(Self::Id),
+            "title"        => Ok(Self::Title),
+            "task_status"  => Ok(Self::TaskStatus),
+            "created_at"   => Ok(Self::CreatedAt),
+            "updated_at"   => Ok(Self::UpdatedAt),
+            "task_due"     => Ok(Self::TaskDue),
+            "event_start"  => Ok(Self::EventStart),
+            "event_end"    => Ok(Self::EventEnd),
+            other => Err(format!(
+                "unknown sort field `{other}`; expected one of: \
+                 id, title, task_status, created_at, updated_at, task_due, event_start, event_end"
+            )),
+        }
+    }
+}
+
+/// Sort direction for [`list_entries`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortOrder {
+    #[default]
+    Asc,
+    Desc,
+}
+
+impl FromStr for SortOrder {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "asc"  => Ok(Self::Asc),
+            "desc" => Ok(Self::Desc),
+            other  => Err(format!("unknown sort order `{other}`; expected `asc` or `desc`")),
+        }
+    }
+}
+
 // ── EntryFilter ───────────────────────────────────────────────────────────────
 
 /// Filter criteria for [`list_entries`].
@@ -25,8 +80,7 @@ use crate::{
 /// Timestamp fields are ORed: an entry is included when *any* specified
 /// timestamp filter matches its corresponding field.
 ///
-/// `task_status` is ANDed on top: if non-empty, the entry must also have a
-/// task whose status appears in the list.
+/// `task_status` and `tags` are ANDed on top.
 #[derive(Debug, Default)]
 pub struct EntryFilter {
     /// Shortcut: apply the same period to all timestamp fields simultaneously.
@@ -38,6 +92,15 @@ pub struct EntryFilter {
     pub updated_at: Option<Period>,
     /// AND condition on task status (empty = no constraint).
     pub task_status: Vec<String>,
+    /// AND condition: entry must contain ALL of these tags (empty = no constraint).
+    pub tags: Vec<String>,
+    /// OR condition with timestamp filters: include tasks whose `due` is in the past
+    /// and `closed_at` is absent.
+    pub overdue: bool,
+    /// Field to sort results by (`None` = keep filesystem order).
+    pub sort_by: Option<SortField>,
+    /// Sort direction (default: ascending).
+    pub sort_order: SortOrder,
 }
 
 impl EntryFilter {
@@ -48,10 +111,11 @@ impl EntryFilter {
             || self.event_end.is_some()
             || self.created_at.is_some()
             || self.updated_at.is_some()
+            || self.overdue
     }
 
     pub fn has_any_filter(&self) -> bool {
-        self.has_timestamp_filter() || !self.task_status.is_empty()
+        self.has_timestamp_filter() || !self.task_status.is_empty() || !self.tags.is_empty()
     }
 
     /// Evaluate whether `entry` should be included.
@@ -94,6 +158,17 @@ impl EntryFilter {
             check!(self.created_at,  created_val,     MatchLabel::CreatedAt);
             check!(self.updated_at,  updated_val,     MatchLabel::UpdatedAt);
 
+            // overdue: task with due in the past and no closed_at
+            if self.overdue {
+                let is_overdue = entry.frontmatter.task.as_ref().is_some_and(|t| {
+                    t.due.is_some_and(|due| due < chrono::Local::now().naive_local())
+                        && t.closed_at.is_none()
+                });
+                if is_overdue {
+                    labels.push(MatchLabel::Overdue);
+                }
+            }
+
             labels.dedup();
             !labels.is_empty()
         } else {
@@ -109,7 +184,13 @@ impl EntryFilter {
             true
         };
 
-        (timestamp_ok && status_ok, labels)
+        let tags_ok = if !self.tags.is_empty() {
+            self.tags.iter().all(|tag| entry.frontmatter.tags.contains(tag))
+        } else {
+            true
+        };
+
+        (timestamp_ok && status_ok && tags_ok, labels)
     }
 }
 
@@ -123,6 +204,7 @@ pub enum MatchLabel {
     EventEnd,
     CreatedAt,
     UpdatedAt,
+    Overdue,
 }
 
 impl MatchLabel {
@@ -133,6 +215,7 @@ impl MatchLabel {
             MatchLabel::EventEnd   => "EVENT_END",
             MatchLabel::CreatedAt  => "CREATED",
             MatchLabel::UpdatedAt  => "UPDATED",
+            MatchLabel::Overdue    => "OVERDUE",
         }
     }
 }
@@ -174,7 +257,50 @@ pub fn list_entries(
         result.push((entry, labels));
     }
 
+    if let Some(field) = filter.sort_by {
+        result.sort_by(|(a, _), (b, _)| {
+            let ord = sort_cmp(a, b, field);
+            if filter.sort_order == SortOrder::Desc { ord.reverse() } else { ord }
+        });
+    }
+
     Ok(result)
+}
+
+fn sort_cmp(a: &Entry, b: &Entry, field: SortField) -> Ordering {
+    match field {
+        SortField::Id => a.id().cmp(&b.id()),
+        SortField::Title => a.title().cmp(b.title()),
+        SortField::TaskStatus => {
+            let sa = a.frontmatter.task.as_ref().and_then(|t| t.status.as_deref()).unwrap_or("");
+            let sb = b.frontmatter.task.as_ref().and_then(|t| t.status.as_deref()).unwrap_or("");
+            sa.cmp(sb)
+        }
+        SortField::CreatedAt  => cmp_opt(a.frontmatter.created_at, b.frontmatter.created_at),
+        SortField::UpdatedAt  => cmp_opt(a.frontmatter.updated_at, b.frontmatter.updated_at),
+        SortField::TaskDue    => cmp_opt(
+            a.frontmatter.task.as_ref().and_then(|t| t.due),
+            b.frontmatter.task.as_ref().and_then(|t| t.due),
+        ),
+        SortField::EventStart => cmp_opt(
+            a.frontmatter.event.as_ref().and_then(|e| e.start),
+            b.frontmatter.event.as_ref().and_then(|e| e.start),
+        ),
+        SortField::EventEnd   => cmp_opt(
+            a.frontmatter.event.as_ref().and_then(|e| e.end),
+            b.frontmatter.event.as_ref().and_then(|e| e.end),
+        ),
+    }
+}
+
+/// Compare two `Option<T>` values; `None` sorts after `Some(_)`.
+fn cmp_opt<T: Ord>(a: Option<T>, b: Option<T>) -> Ordering {
+    match (a, b) {
+        (Some(x), Some(y)) => x.cmp(&y),
+        (Some(_), None)    => Ordering::Less,
+        (None,    Some(_)) => Ordering::Greater,
+        (None,    None)    => Ordering::Equal,
+    }
 }
 
 /// Collect `.md` file paths for listing.

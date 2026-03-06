@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use archelon_core::{
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
-    ops::{self, EntryFields, EntryFilter},
+    ops::{self, EntryFields, EntryFilter, SortField, SortOrder},
     parser::read_entry,
     period::{parse_datetime, parse_datetime_end, parse_period},
 };
@@ -90,6 +90,21 @@ struct EntryListParams {
     /// AND filter: include only entries whose task status matches one of these values.
     /// Provide as an array, e.g. ["open", "in_progress"]
     task_status: Option<Vec<String>>,
+
+    /// AND filter: include only entries that have ALL of these tags.
+    /// Provide as an array, e.g. ["work", "urgent"]
+    tags: Option<Vec<String>>,
+
+    /// OR filter with period: include tasks whose due date is in the past and closed_at is absent.
+    /// Can be combined with period; either condition is sufficient for inclusion.
+    overdue: Option<bool>,
+
+    /// Field to sort results by.
+    /// Accepted values: id | title | task_status | created_at | updated_at | task_due | event_start | event_end
+    sort_by: Option<String>,
+
+    /// Sort direction: "asc" (default) or "desc"
+    sort_order: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -242,9 +257,9 @@ impl ArchelonServer {
     }
 
     #[tool(description = "List journal entries as JSON. \
-        Timestamp filters (period, task_due, event_start, event_end, created_at, updated_at) are ORed: \
-        an entry matches if any specified timestamp field falls within the given period. \
-        task_status is ANDed on top: if provided, the entry must also have a matching task status.")]
+        Timestamp filters (period, task_due, event_start, event_end, created_at, updated_at, overdue) are ORed: \
+        an entry matches if any specified timestamp condition is satisfied. \
+        task_status and tags are ANDed on top.")]
     fn entry_list(&self, Parameters(p): Parameters<EntryListParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let week_start = self.week_start();
@@ -258,6 +273,15 @@ impl ArchelonServer {
                 created_at: p.created_at.as_deref().map(parse).transpose()?,
                 updated_at: p.updated_at.as_deref().map(parse).transpose()?,
                 task_status: p.task_status.unwrap_or_default(),
+                tags: p.tags.unwrap_or_default(),
+                overdue: p.overdue.unwrap_or(false),
+                sort_by: p.sort_by.as_deref()
+                    .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
+                    .transpose()?,
+                sort_order: p.sort_order.as_deref()
+                    .map(|s| s.parse::<SortOrder>().map_err(anyhow::Error::msg))
+                    .transpose()?
+                    .unwrap_or_default(),
             };
 
             let has_filter = filter.has_any_filter();

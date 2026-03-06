@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use archelon_core::{
     entry_ref::EntryRef,
     journal::Journal,
-    ops::{self, EntryFields as CoreEntryFields, EntryFilter, MatchLabel},
+    ops::{self, EntryFields as CoreEntryFields, EntryFilter, MatchLabel, SortField, SortOrder},
     period::{parse_datetime, parse_datetime_end, parse_period},
 };
 use chrono::NaiveDateTime;
@@ -53,6 +53,24 @@ pub enum EntryCommand {
         /// Comma-separated for multiple values, e.g. open,in_progress
         #[arg(long, value_name = "STATUS[,...]", value_delimiter = ',', num_args = 1..)]
         task_status: Option<Vec<String>>,
+
+        /// AND filter: include only entries that have ALL specified tags.
+        /// Comma-separated, e.g. work,urgent
+        #[arg(long, value_name = "TAG[,...]", value_delimiter = ',', num_args = 1..)]
+        tags: Option<Vec<String>>,
+
+        /// Include overdue tasks (due in the past, not yet closed). OR'd with period filters.
+        #[arg(long)]
+        overdue: bool,
+
+        /// Sort results by a field.
+        /// Values: id | title | task_status | created_at | updated_at | task_due | event_start | event_end
+        #[arg(long, value_name = "FIELD")]
+        sort_by: Option<String>,
+
+        /// Sort direction: asc (default) or desc
+        #[arg(long, value_name = "ORDER", default_value = "asc")]
+        sort_order: String,
 
         /// Output all matching entries as JSON (metadata + body) for AI/machine consumption
         #[arg(long)]
@@ -162,7 +180,7 @@ impl From<EntryFields> for CoreEntryFields {
 
 pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
     match cmd {
-        EntryCommand::List { path, period, task_due, event_start, event_end, created_at, updated_at, task_status, json } => {
+        EntryCommand::List { path, period, task_due, event_start, event_end, created_at, updated_at, task_status, tags, overdue, sort_by, sort_order, json } => {
             // Resolve week_start from journal config (needed for this_week parsing)
             let week_start = open_journal(journal_dir)
                 .and_then(|j| j.config().map_err(Into::into))
@@ -179,6 +197,12 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
                 created_at: created_at.as_deref().map(parse).transpose()?,
                 updated_at: updated_at.as_deref().map(parse).transpose()?,
                 task_status: task_status.unwrap_or_default(),
+                tags: tags.unwrap_or_default(),
+                overdue,
+                sort_by: sort_by.as_deref()
+                    .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
+                    .transpose()?,
+                sort_order: sort_order.parse::<SortOrder>().map_err(anyhow::Error::msg)?,
             };
 
             let entries = ops::list_entries(journal_dir, path.as_deref(), &filter)?;
