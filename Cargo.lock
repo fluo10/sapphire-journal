@@ -85,7 +85,6 @@ dependencies = [
  "chrono",
  "clap",
  "serde_json",
- "tempfile",
 ]
 
 [[package]]

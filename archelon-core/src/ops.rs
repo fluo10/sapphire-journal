@@ -426,11 +426,14 @@ pub fn create_entry(
 /// `updated_at` is refreshed automatically by [`write_entry`].
 /// If the title or slug changed, the file is also renamed to match the new
 /// canonical filename.  Returns `Some(new_path)` when renamed, `None` otherwise.
-pub fn update_entry(path: &Path, title: Option<String>, fields: EntryFields) -> Result<Option<PathBuf>> {
+pub fn update_entry(path: &Path, title: Option<String>, body: Option<String>, fields: EntryFields) -> Result<Option<PathBuf>> {
     let mut entry = read_entry(path)?;
 
     if let Some(t) = title {
         entry.frontmatter.title = t;
+    }
+    if let Some(b) = body {
+        entry.body = b;
     }
     if let Some(s) = fields.slug {
         entry.frontmatter.slug = Some(s);
@@ -471,6 +474,45 @@ pub fn update_entry(path: &Path, title: Option<String>, fields: EntryFields) -> 
 
     write_entry(&mut entry)?;
     fix_entry(path)
+}
+
+// ── prepare new (for editor workflow) ─────────────────────────────────────────
+
+/// Create a new entry file with a frontmatter template in the journal's year directory.
+///
+/// The file is named `<id>.md` with required frontmatter pre-filled and optional
+/// fields commented out.  The caller should open an editor on the returned path
+/// and then call [`fix_entry`] to rename the file once the user has set a title.
+pub fn prepare_new_entry(journal: &Journal) -> Result<PathBuf> {
+    let id = CarettaId::now_unix();
+    let year = chrono::Local::now().year();
+    let now = chrono::Local::now().naive_local();
+    let now_fmt = now.format("%Y-%m-%dT%H:%M");
+
+    let dir = journal.root.join(year.to_string());
+    std::fs::create_dir_all(&dir)?;
+
+    let path = dir.join(format!("{id}.md"));
+
+    let template = format!(
+        "---\n\
+         id: '{id}'\n\
+         title: ''\n\
+         created_at: {now_fmt}\n\
+         updated_at: {now_fmt}\n\
+         # slug: ''\n\
+         # tags: [tag1, tag2]\n\
+         # task:\n\
+         #   status: open\n\
+         #   due: YYYY-MM-DD\n\
+         # event:\n\
+         #   start: YYYY-MM-DD\n\
+         #   end: YYYY-MM-DD\n\
+         ---\n\n"
+    );
+
+    std::fs::write(&path, template)?;
+    Ok(path)
 }
 
 // ── EntryRef resolution ───────────────────────────────────────────────────────

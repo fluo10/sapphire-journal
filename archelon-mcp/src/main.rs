@@ -141,6 +141,8 @@ struct EntrySetParams {
     entry: String,
     /// New title
     title: Option<String>,
+    /// New body content (Markdown). Replaces the existing body.
+    body: Option<String>,
     /// New slug override
     slug: Option<String>,
     /// New tags as comma-separated string. Pass empty string to clear all tags.
@@ -373,6 +375,7 @@ impl ArchelonServer {
     fn entry_set(&self, Parameters(p): Parameters<EntrySetParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             if p.title.is_none()
+                && p.body.is_none()
                 && p.slug.is_none()
                 && p.tags.is_none()
                 && p.task_due.is_none()
@@ -394,7 +397,7 @@ impl ArchelonServer {
                 p.event_start.as_deref(),
                 p.event_end.as_deref(),
             )?;
-            let msg = if let Some(new_path) = ops::update_entry(&path, p.title, fields)? {
+            let msg = if let Some(new_path) = ops::update_entry(&path, p.title, p.body, fields)? {
                 format!("updated and renamed: {}", new_path.display())
             } else {
                 format!("updated: {}", path.display())

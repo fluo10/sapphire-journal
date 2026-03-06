@@ -8,7 +8,6 @@ use archelon_core::{
 use chrono::NaiveDateTime;
 use clap::{Args, Subcommand};
 use std::{
-    io::Write as _,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -81,24 +80,23 @@ pub enum EntryCommand {
         /// Path to the entry file, or an ID / ID prefix
         entry: String,
     },
-    /// Create a new entry.
-    /// Without --body, opens $EDITOR (like `git commit` without -m).
+    /// Create a new entry with an optional body.
     New {
         /// Title of the entry — written into the frontmatter and used to generate the filename slug
         #[arg(long, short)]
         title: String,
 
-        /// Inline body content — skips the editor (like git commit -m)
-        #[arg(long, short)]
-        body: Option<String>,
-
         #[command(flatten)]
         fields: EntryFields,
     },
-    /// Open an entry in $EDITOR
+    /// Open an entry in $EDITOR. Without an argument, or with --new, creates a new entry.
     Edit {
         /// Path to the entry file, or an ID / ID prefix
-        entry: String,
+        entry: Option<String>,
+
+        /// Create a new entry and open it in $EDITOR with a pre-filled frontmatter template
+        #[arg(long)]
+        new: bool,
     },
     /// Update frontmatter fields without opening an editor
     Set {
@@ -135,6 +133,10 @@ pub enum EntryCommand {
 /// and passed to the core operation functions.
 #[derive(Args)]
 pub struct EntryFields {
+    /// Body content (Markdown). For `entry set`, replaces the existing body.
+    #[arg(long, short)]
+    pub body: Option<String>,
+
     /// Slug override in the frontmatter
     #[arg(long)]
     pub slug: Option<String>,
@@ -209,8 +211,16 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
             print_entries(&entries, filter.has_any_filter(), json)
         }
         EntryCommand::Show { entry } => show(&resolve_entry(journal_dir, &entry)?),
-        EntryCommand::New { title, body, fields } => new(journal_dir, title, body, fields),
-        EntryCommand::Edit { entry } => edit(&resolve_entry(journal_dir, &entry)?),
+        EntryCommand::New { title, fields } => new(journal_dir, title, fields),
+        EntryCommand::Edit { entry, new } => {
+            if new {
+                edit_new(journal_dir)
+            } else if let Some(e) = entry {
+                edit(&resolve_entry(journal_dir, &e)?)
+            } else {
+                bail!("specify an entry or use --new to create one")
+            }
+        }
         EntryCommand::Set { entry, title, fields } => set(journal_dir, &resolve_entry(journal_dir, &entry)?, title, fields),
         EntryCommand::Check { entry } => check(journal_dir, &entry),
         EntryCommand::Fix { entry } => fix(journal_dir, &entry),
@@ -332,17 +342,9 @@ fn show(path: &Path) -> Result<()> {
 
 // ── new ───────────────────────────────────────────────────────────────────────
 
-fn new(journal_dir: Option<&Path>, title: String, body: Option<String>, fields: EntryFields) -> Result<()> {
+fn new(journal_dir: Option<&Path>, title: String, fields: EntryFields) -> Result<()> {
     let journal = open_journal(journal_dir)?;
-
-    let body = match body {
-        Some(b) => b,
-        None => {
-            let tags = fields.tags.as_deref().unwrap_or(&[]);
-            prompt_editor(Some(&title), tags)?
-        }
-    };
-
+    let body = fields.body.clone().unwrap_or_default();
     let dest = ops::create_entry(&journal, &title, body, fields.into())?;
     println!("created: {}", dest.display());
     Ok(())
@@ -365,10 +367,32 @@ fn edit(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn edit_new(journal_dir: Option<&Path>) -> Result<()> {
+    let journal = open_journal(journal_dir)?;
+    let path = ops::prepare_new_entry(&journal)?;
+
+    let editor = resolve_editor();
+    let status = Command::new(&editor)
+        .arg(&path)
+        .status()
+        .with_context(|| format!("failed to launch editor `{editor}`"))?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&path);
+        bail!("editor exited with non-zero status");
+    }
+
+    match ops::fix_entry(&path)? {
+        Some(new_path) => println!("created: {}", new_path.display()),
+        None => println!("created: {}", path.display()),
+    }
+    Ok(())
+}
+
 // ── set ───────────────────────────────────────────────────────────────────────
 
 fn set(journal_dir: Option<&Path>, path: &Path, title: Option<String>, fields: EntryFields) -> Result<()> {
     if title.is_none()
+        && fields.body.is_none()
         && fields.slug.is_none()
         && fields.tags.is_none()
         && fields.task_due.is_none()
@@ -380,7 +404,8 @@ fn set(journal_dir: Option<&Path>, path: &Path, title: Option<String>, fields: E
         bail!("nothing to update — specify at least one field");
     }
     let _ = journal_dir; // reserved for future use
-    if let Some(new_path) = ops::update_entry(path, title, fields.into())? {
+    let body = fields.body.clone();
+    if let Some(new_path) = ops::update_entry(path, title, body, fields.into())? {
         println!("updated and renamed: {}", new_path.display());
     } else {
         println!("updated: {}", path.display());
@@ -439,45 +464,3 @@ fn resolve_editor() -> String {
         .unwrap_or_else(|_| "vi".into())
 }
 
-fn prompt_editor(title: Option<&str>, tags: &[String]) -> Result<String> {
-    let editor = resolve_editor();
-
-    let mut template =
-        "# archelon: Write your entry below. Lines starting with '# archelon:' are ignored.\n"
-            .to_owned();
-    if let Some(t) = title {
-        template.push_str(&format!("# archelon: title = {t}\n"));
-    }
-    if !tags.is_empty() {
-        template.push_str(&format!("# archelon: tags  = {}\n", tags.join(", ")));
-    }
-    template.push('\n');
-
-    let mut tmp = tempfile::Builder::new()
-        .prefix("archelon-")
-        .suffix(".md")
-        .tempfile()?;
-    tmp.write_all(template.as_bytes())?;
-    tmp.flush()?;
-
-    let status = Command::new(&editor)
-        .arg(tmp.path())
-        .status()
-        .with_context(|| format!("failed to launch editor `{editor}`"))?;
-    if !status.success() {
-        bail!("editor exited with non-zero status");
-    }
-
-    let content = std::fs::read_to_string(tmp.path())?;
-    let body: String = content
-        .lines()
-        .filter(|l| !l.starts_with("# archelon:"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let body = body.trim_start_matches('\n').to_owned();
-
-    if body.is_empty() {
-        bail!("aborting: empty entry");
-    }
-    Ok(body)
-}

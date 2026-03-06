@@ -15,5 +15,4 @@ archelon-core = { path = "../archelon-core" }
 clap = { version = "4", features = ["derive", "env"] }
 anyhow = "1"
 chrono = { version = "0.4" }
-tempfile = "3"
 serde_json = "1"
