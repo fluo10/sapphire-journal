@@ -84,8 +84,9 @@ pub enum EntryCommand {
     /// Create a new entry.
     /// Without --body, opens $EDITOR (like `git commit` without -m).
     New {
-        /// Name of the entry — used as the title and to generate the filename slug
-        name: String,
+        /// Title of the entry — written into the frontmatter and used to generate the filename slug
+        #[arg(long, short)]
+        title: String,
 
         /// Inline body content — skips the editor (like git commit -m)
         #[arg(long, short)]
@@ -103,6 +104,10 @@ pub enum EntryCommand {
     Set {
         /// Path to the entry file, or an ID / ID prefix
         entry: String,
+
+        /// New title
+        #[arg(long, short)]
+        title: Option<String>,
 
         #[command(flatten)]
         fields: EntryFields,
@@ -130,10 +135,6 @@ pub enum EntryCommand {
 /// and passed to the core operation functions.
 #[derive(Args)]
 pub struct EntryFields {
-    /// Title written into the frontmatter
-    #[arg(long, short)]
-    pub title: Option<String>,
-
     /// Slug override in the frontmatter
     #[arg(long)]
     pub slug: Option<String>,
@@ -166,7 +167,6 @@ pub struct EntryFields {
 impl From<EntryFields> for CoreEntryFields {
     fn from(f: EntryFields) -> Self {
         Self {
-            title: f.title,
             slug: f.slug,
             tags: f.tags,
             task_due: f.task_due,
@@ -209,9 +209,9 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
             print_entries(&entries, filter.has_any_filter(), json)
         }
         EntryCommand::Show { entry } => show(&resolve_entry(journal_dir, &entry)?),
-        EntryCommand::New { name, body, fields } => new(journal_dir, &name, body, fields),
+        EntryCommand::New { title, body, fields } => new(journal_dir, title, body, fields),
         EntryCommand::Edit { entry } => edit(&resolve_entry(journal_dir, &entry)?),
-        EntryCommand::Set { entry, fields } => set(journal_dir, &resolve_entry(journal_dir, &entry)?, fields),
+        EntryCommand::Set { entry, title, fields } => set(journal_dir, &resolve_entry(journal_dir, &entry)?, title, fields),
         EntryCommand::Check { entry } => check(journal_dir, &entry),
         EntryCommand::Fix { entry } => fix(journal_dir, &entry),
         EntryCommand::Remove { entry } => remove(journal_dir, &entry),
@@ -302,12 +302,8 @@ fn show(path: &Path) -> Result<()> {
     let fm = &entry.frontmatter;
 
     println!("# {}", entry.title());
-    if let Some(ts) = fm.created_at {
-        println!("created:  {}", ts.format("%Y-%m-%dT%H:%M"));
-    }
-    if let Some(ts) = fm.updated_at {
-        println!("updated:  {}", ts.format("%Y-%m-%dT%H:%M"));
-    }
+    println!("created:  {}", fm.created_at.format("%Y-%m-%dT%H:%M"));
+    println!("updated:  {}", fm.updated_at.format("%Y-%m-%dT%H:%M"));
     if !fm.tags.is_empty() {
         println!("tags:     {}", fm.tags.join(", "));
     }
@@ -336,19 +332,18 @@ fn show(path: &Path) -> Result<()> {
 
 // ── new ───────────────────────────────────────────────────────────────────────
 
-fn new(journal_dir: Option<&Path>, name: &str, body: Option<String>, fields: EntryFields) -> Result<()> {
+fn new(journal_dir: Option<&Path>, title: String, body: Option<String>, fields: EntryFields) -> Result<()> {
     let journal = open_journal(journal_dir)?;
 
     let body = match body {
         Some(b) => b,
         None => {
-            let title = fields.title.as_deref().unwrap_or(name);
             let tags = fields.tags.as_deref().unwrap_or(&[]);
-            prompt_editor(Some(title), tags)?
+            prompt_editor(Some(&title), tags)?
         }
     };
 
-    let dest = ops::create_entry(&journal, name, body, fields.into())?;
+    let dest = ops::create_entry(&journal, &title, body, fields.into())?;
     println!("created: {}", dest.display());
     Ok(())
 }
@@ -372,8 +367,8 @@ fn edit(path: &Path) -> Result<()> {
 
 // ── set ───────────────────────────────────────────────────────────────────────
 
-fn set(journal_dir: Option<&Path>, path: &Path, fields: EntryFields) -> Result<()> {
-    if fields.title.is_none()
+fn set(journal_dir: Option<&Path>, path: &Path, title: Option<String>, fields: EntryFields) -> Result<()> {
+    if title.is_none()
         && fields.slug.is_none()
         && fields.tags.is_none()
         && fields.task_due.is_none()
@@ -385,7 +380,7 @@ fn set(journal_dir: Option<&Path>, path: &Path, fields: EntryFields) -> Result<(
         bail!("nothing to update — specify at least one field");
     }
     let _ = journal_dir; // reserved for future use
-    if let Some(new_path) = ops::update_entry(path, fields.into())? {
+    if let Some(new_path) = ops::update_entry(path, title, fields.into())? {
         println!("updated and renamed: {}", new_path.display());
     } else {
         println!("updated: {}", path.display());

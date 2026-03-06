@@ -129,8 +129,8 @@ impl EntryFilter {
             let task_due_val = entry.frontmatter.task.as_ref().and_then(|t| t.due);
             let event_start_val = entry.frontmatter.event.as_ref().and_then(|e| e.start);
             let event_end_val = entry.frontmatter.event.as_ref().and_then(|e| e.end);
-            let created_val = entry.frontmatter.created_at;
-            let updated_val = entry.frontmatter.updated_at;
+            let created_val = Some(entry.frontmatter.created_at);
+            let updated_val = Some(entry.frontmatter.updated_at);
 
             macro_rules! check {
                 ($filter:expr, $val:expr, $label:expr) => {
@@ -276,8 +276,8 @@ fn sort_cmp(a: &Entry, b: &Entry, field: SortField) -> Ordering {
             let sb = b.frontmatter.task.as_ref().and_then(|t| t.status.as_deref()).unwrap_or("");
             sa.cmp(sb)
         }
-        SortField::CreatedAt  => cmp_opt(a.frontmatter.created_at, b.frontmatter.created_at),
-        SortField::UpdatedAt  => cmp_opt(a.frontmatter.updated_at, b.frontmatter.updated_at),
+        SortField::CreatedAt  => a.frontmatter.created_at.cmp(&b.frontmatter.created_at),
+        SortField::UpdatedAt  => a.frontmatter.updated_at.cmp(&b.frontmatter.updated_at),
         SortField::TaskDue    => cmp_opt(
             a.frontmatter.task.as_ref().and_then(|t| t.due),
             b.frontmatter.task.as_ref().and_then(|t| t.due),
@@ -342,11 +342,10 @@ pub fn collect_entries(journal_dir: Option<&Path>, path: Option<&Path>) -> Resul
 
 /// Parsed frontmatter fields used for creating or updating an entry.
 ///
-/// All fields are optional. Callers (CLI, MCP, …) parse their input format
-/// into this type before calling [`create_entry`] or [`update_entry`].
+/// All fields are optional. `title` is passed separately to [`create_entry`]
+/// (required) and [`update_entry`] (optional).
 #[derive(Debug, Default)]
 pub struct EntryFields {
-    pub title: Option<String>,
     pub slug: Option<String>,
     /// `None` = leave tags unchanged; `Some([])` = clear all tags.
     pub tags: Option<Vec<String>>,
@@ -359,20 +358,19 @@ pub struct EntryFields {
 
 // ── create ────────────────────────────────────────────────────────────────────
 
-/// Create a new entry in `journal` with the given `name`, `body`, and `fields`.
+/// Create a new entry in `journal` with the given `title`, `body`, and `fields`.
 ///
 /// Returns the path of the newly created file.
 /// Fails with [`Error::EntryAlreadyExists`] if the destination already exists.
 pub fn create_entry(
     journal: &Journal,
-    name: &str,
+    title: &str,
     body: String,
     fields: EntryFields,
 ) -> Result<PathBuf> {
     let id = CarettaId::now_unix();
     let year = chrono::Local::now().year();
 
-    let fm_title = fields.title.or_else(|| Some(name.to_owned()));
     let tags = fields.tags.unwrap_or_default();
 
     let task = if fields.task_due.is_some()
@@ -398,11 +396,11 @@ pub fn create_entry(
     let now = chrono::Local::now().naive_local();
     let frontmatter = Frontmatter {
         id,
-        title: fm_title,
+        title: title.to_owned(),
         slug: fields.slug,
         tags,
-        created_at: Some(now),
-        updated_at: Some(now),
+        created_at: now,
+        updated_at: now,
         task,
         event,
     };
@@ -428,11 +426,11 @@ pub fn create_entry(
 /// `updated_at` is refreshed automatically by [`write_entry`].
 /// If the title or slug changed, the file is also renamed to match the new
 /// canonical filename.  Returns `Some(new_path)` when renamed, `None` otherwise.
-pub fn update_entry(path: &Path, fields: EntryFields) -> Result<Option<PathBuf>> {
+pub fn update_entry(path: &Path, title: Option<String>, fields: EntryFields) -> Result<Option<PathBuf>> {
     let mut entry = read_entry(path)?;
 
-    if let Some(t) = fields.title {
-        entry.frontmatter.title = Some(t);
+    if let Some(t) = title {
+        entry.frontmatter.title = t;
     }
     if let Some(s) = fields.slug {
         entry.frontmatter.slug = Some(s);
@@ -582,7 +580,7 @@ pub fn remove_entry(path: &Path) -> Result<()> {
 /// or `slugify(title)` as a fallback.
 fn entry_filename_from_frontmatter(id: CarettaId, fm: &Frontmatter) -> String {
     let slug = fm.slug.clone().unwrap_or_else(|| {
-        fm.title.as_deref().map(slugify).unwrap_or_default()
+        if fm.title.is_empty() { String::new() } else { slugify(&fm.title) }
     });
     if slug.is_empty() {
         format!("{id}.md")

@@ -8,20 +8,20 @@ use std::path::PathBuf;
 pub struct Frontmatter {
     pub id: CarettaId,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
+    #[serde(default)]
+    pub title: String,
 
     /// Optional slug override. If absent, the slug is derived from the filename.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub slug: Option<String>,
 
     /// Timestamp when the entry was first created. Set automatically by `new`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<NaiveDateTime>,
+    #[serde(default)]
+    pub created_at: NaiveDateTime,
 
     /// Timestamp of the last write. Updated automatically by `write_entry`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<NaiveDateTime>,
+    #[serde(default)]
+    pub updated_at: NaiveDateTime,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
@@ -91,10 +91,10 @@ impl Entry {
         self.frontmatter.id
     }
 
-    /// Returns the title: frontmatter title → file stem → "(untitled)".
+    /// Returns the title: frontmatter title (if non-empty) → file stem → "(untitled)".
     pub fn title(&self) -> &str {
-        if let Some(ref t) = self.frontmatter.title {
-            return t.as_str();
+        if !self.frontmatter.title.is_empty() {
+            return &self.frontmatter.title;
         }
         self.path
             .file_stem()

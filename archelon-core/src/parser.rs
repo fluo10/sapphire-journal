@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use caretta_id::CarettaId;
+use chrono::NaiveDateTime;
 
 use crate::{
     entry::{Entry, Frontmatter},
@@ -33,25 +34,32 @@ fn id_from_path(path: &Path) -> Option<CarettaId> {
     stem.get(..7)?.parse().ok()
 }
 
+fn bare_frontmatter(path: &Path) -> Result<Frontmatter> {
+    let id = id_from_path(path).ok_or_else(|| {
+        Error::InvalidEntry(
+            "no frontmatter and filename does not contain a valid CarettaId".into(),
+        )
+    })?;
+    Ok(Frontmatter {
+        id,
+        title: String::new(),
+        slug: None,
+        created_at: NaiveDateTime::default(),
+        updated_at: NaiveDateTime::default(),
+        tags: Vec::new(),
+        task: None,
+        event: None,
+    })
+}
+
 fn split_frontmatter<'a>(path: &Path, source: &'a str) -> Result<(Frontmatter, &'a str)> {
     let Some(rest) = source.strip_prefix(FENCE) else {
-        // No frontmatter block — derive ID from filename.
-        let id = id_from_path(path).ok_or_else(|| {
-            Error::InvalidEntry(
-                "no frontmatter and filename does not contain a valid CarettaId".into(),
-            )
-        })?;
-        return Ok((Frontmatter { id, title: None, slug: None, created_at: None, updated_at: None, tags: Vec::new(), task: None, event: None }, source));
+        return Ok((bare_frontmatter(path)?, source));
     };
 
     // The opening `---` must be followed by a newline.
     let Some(rest) = rest.strip_prefix('\n') else {
-        let id = id_from_path(path).ok_or_else(|| {
-            Error::InvalidEntry(
-                "no frontmatter and filename does not contain a valid CarettaId".into(),
-            )
-        })?;
-        return Ok((Frontmatter { id, title: None, slug: None, created_at: None, updated_at: None, tags: Vec::new(), task: None, event: None }, source));
+        return Ok((bare_frontmatter(path)?, source));
     };
 
     let Some(end) = rest.find(&format!("\n{FENCE}")) else {
@@ -89,7 +97,7 @@ pub fn render_entry(entry: &Entry) -> String {
 
 /// Write an [`Entry`] back to its source file, updating `updated_at` first.
 pub fn write_entry(entry: &mut Entry) -> Result<()> {
-    entry.frontmatter.updated_at = Some(chrono::Local::now().naive_local());
+    entry.frontmatter.updated_at = chrono::Local::now().naive_local();
     std::fs::write(&entry.path, render_entry(entry))?;
     Ok(())
 }
@@ -108,7 +116,7 @@ mod tests {
     fn parses_entry_with_frontmatter() {
         let src = "---\nid: '0000000'\ntitle: Hello\ntags: [rust, cli]\n---\nsome body\n";
         let entry = parse_entry(&managed_path(), src).unwrap();
-        assert_eq!(entry.frontmatter.title.as_deref(), Some("Hello"));
+        assert_eq!(entry.frontmatter.title, "Hello");
         assert_eq!(entry.frontmatter.tags, vec!["rust", "cli"]);
         assert_eq!(entry.body, "some body\n");
     }
@@ -117,7 +125,7 @@ mod tests {
     fn parses_entry_without_frontmatter() {
         let src = "just a body\n";
         let entry = parse_entry(&managed_path(), src).unwrap();
-        assert!(entry.frontmatter.title.is_none());
+        assert!(entry.frontmatter.title.is_empty());
         assert_eq!(entry.body, "just a body\n");
     }
 
@@ -133,7 +141,7 @@ mod tests {
         use crate::entry::TaskMeta;
         let src = "---\nid: '0000000'\n---\nbody\n";
         let mut entry = parse_entry(&managed_path(), src).unwrap();
-        entry.frontmatter.title = Some("My Task".into());
+        entry.frontmatter.title = "My Task".into();
         entry.frontmatter.task = Some(TaskMeta {
             status: Some("open".into()),
             due: Some("2026-03-10T00:00:00".parse().unwrap()),

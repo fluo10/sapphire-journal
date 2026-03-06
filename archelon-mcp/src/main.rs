@@ -115,12 +115,10 @@ struct EntryShowParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct EntryNewParams {
-    /// Name of the entry — used as the title and to generate the filename slug
-    name: String,
+    /// Title of the entry — written into the frontmatter and used to generate the filename slug
+    title: String,
     /// Body content (Markdown)
     body: String,
-    /// Title written into the frontmatter (defaults to `name`)
-    title: Option<String>,
     /// Slug override in the frontmatter
     slug: Option<String>,
     /// Tags as comma-separated string (e.g. "work,project")
@@ -180,7 +178,6 @@ struct EntryRemoveParams {
 // ── helpers for parameter parsing ─────────────────────────────────────────────
 
 fn parse_entry_fields(
-    title: Option<String>,
     slug: Option<String>,
     tags: Option<String>,
     task_due: Option<&str>,
@@ -190,7 +187,6 @@ fn parse_entry_fields(
     event_end: Option<&str>,
 ) -> anyhow::Result<EntryFields> {
     Ok(EntryFields {
-        title,
         slug,
         tags: tags.as_deref().map(|s| {
             s.split(',')
@@ -324,12 +320,8 @@ impl ArchelonServer {
             let fm = &entry.frontmatter;
 
             let mut out = format!("# {}\n", entry.title());
-            if let Some(ts) = fm.created_at {
-                out.push_str(&format!("created:  {}\n", ts.format("%Y-%m-%dT%H:%M")));
-            }
-            if let Some(ts) = fm.updated_at {
-                out.push_str(&format!("updated:  {}\n", ts.format("%Y-%m-%dT%H:%M")));
-            }
+            out.push_str(&format!("created:  {}\n", fm.created_at.format("%Y-%m-%dT%H:%M")));
+            out.push_str(&format!("updated:  {}\n", fm.updated_at.format("%Y-%m-%dT%H:%M")));
             if !fm.tags.is_empty() {
                 out.push_str(&format!("tags:     {}\n", fm.tags.join(", ")));
             }
@@ -363,7 +355,6 @@ impl ArchelonServer {
         (|| -> anyhow::Result<String> {
             let journal = self.open_journal()?;
             let fields = parse_entry_fields(
-                p.title,
                 p.slug,
                 p.tags,
                 p.task_due.as_deref(),
@@ -372,7 +363,7 @@ impl ArchelonServer {
                 p.event_start.as_deref(),
                 p.event_end.as_deref(),
             )?;
-            let dest = ops::create_entry(&journal, &p.name, p.body, fields)?;
+            let dest = ops::create_entry(&journal, &p.title, p.body, fields)?;
             Ok(format!("created: {}", dest.display()))
         })()
         .map_err(|e| e.to_string())
@@ -395,7 +386,6 @@ impl ArchelonServer {
 
             let path = self.resolve_entry(&p.entry)?;
             let fields = parse_entry_fields(
-                p.title,
                 p.slug,
                 p.tags,
                 p.task_due.as_deref(),
@@ -404,7 +394,7 @@ impl ArchelonServer {
                 p.event_start.as_deref(),
                 p.event_end.as_deref(),
             )?;
-            let msg = if let Some(new_path) = ops::update_entry(&path, fields)? {
+            let msg = if let Some(new_path) = ops::update_entry(&path, p.title, fields)? {
                 format!("updated and renamed: {}", new_path.display())
             } else {
                 format!("updated: {}", path.display())
