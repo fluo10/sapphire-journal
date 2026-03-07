@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "archelon", about = "Markdown-based task and note manager")]
+#[command(name = "archelon", about = "Markdown-based task and note manager", version)]
 struct Cli {
     /// Path to the journal root (the directory containing `.archelon/`).
     /// Overrides the automatic upward search from the current directory.
