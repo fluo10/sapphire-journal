@@ -10,6 +10,11 @@ repository.workspace = true
 name = "archelon"
 path = "src/main.rs"
 
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target_os }-{ target_arch }{ binary-ext }"
+pkg-fmt = "bin"
+bin-dir = "{ bin }{ binary-ext }"
+
 [dependencies]
 archelon-core = { path = "../archelon-core", version = "0.1.1" }
 clap = { version = "4", features = ["derive", "env"] }
