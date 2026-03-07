@@ -33,6 +33,9 @@ impl Period {
         match self {
             Period::None => event_start.is_none() && event_end.is_none(),
             Period::Range(ps, pe) => {
+                if event_start.is_none() && event_end.is_none() {
+                    return false;
+                }
                 let after_period_end = event_start.is_some_and(|es| es > *pe);
                 let before_period_start = event_end.is_some_and(|ee| ee < *ps);
                 !after_period_end && !before_period_start
@@ -195,5 +198,32 @@ mod tests {
         assert!(p.matches(Some(dt("2026-03-05T12:00:00"))));
         assert!(!p.matches(Some(dt("2026-03-06T00:00:00"))));
         assert!(!p.matches(None));
+    }
+
+    #[test]
+    fn overlaps_event_no_event_never_matches() {
+        // Entry has no event at all — must not match any Range period.
+        let p = Period::Range(dt("2026-03-08T00:00:00"), dt("2026-03-08T23:59:59"));
+        assert!(!p.overlaps_event(None, None));
+    }
+
+    #[test]
+    fn overlaps_event_spanning_period() {
+        // Event spans the entire month; a single-day period inside it must match.
+        let p = Period::Range(dt("2026-03-08T00:00:00"), dt("2026-03-08T23:59:59"));
+        assert!(p.overlaps_event(
+            Some(dt("2026-03-01T00:00:00")),
+            Some(dt("2026-03-31T23:59:59")),
+        ));
+    }
+
+    #[test]
+    fn overlaps_event_outside_period() {
+        // Event is entirely after the period.
+        let p = Period::Range(dt("2026-03-08T00:00:00"), dt("2026-03-08T23:59:59"));
+        assert!(!p.overlaps_event(
+            Some(dt("2026-03-10T00:00:00")),
+            Some(dt("2026-03-20T23:59:59")),
+        ));
     }
 }
