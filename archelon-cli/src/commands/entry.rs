@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use archelon_core::{
     entry_ref::EntryRef,
     journal::Journal,
-    ops::{self, EntryFields as CoreEntryFields, EntryFilter, MatchLabel, SortField, SortOrder},
+    ops::{self, EntryFields as CoreEntryFields, EntryFilter, FieldSelector, MatchLabel, SortField, SortOrder},
     period::{parse_datetime, parse_datetime_end, parse_period},
 };
 use chrono::NaiveDateTime;
@@ -14,36 +14,37 @@ use std::{
 
 #[derive(Subcommand)]
 pub enum EntryCommand {
-    /// List entries; optionally filter by per-field period conditions and/or task status
+    /// List entries; optionally filter by period, field selectors, task status, and tags
     List {
         /// Directory to search (defaults to journal root, then current directory)
         path: Option<PathBuf>,
 
-        /// Convenience filter applied to all timestamp fields simultaneously (OR across fields).
-        /// Equivalent to setting --task-due, --event-span, --created-at, --updated-at
-        /// to the same period.
+        /// Time range to filter against. Without field selectors (--task-due, --event-span,
+        /// --created-at, --updated-at) the period is applied to all timestamp fields (OR).
+        /// Add field selectors to restrict matching to specific fields.
         ///
         /// PERIOD formats: today | this_week | this_month | none |
         /// YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
         #[arg(long, value_name = "PERIOD")]
         period: Option<String>,
 
-        /// Filter by task due date (PERIOD format, see --period)
-        #[arg(long, value_name = "PERIOD")]
-        task_due: Option<String>,
+        /// Restrict --period to task due date.
+        /// Without --period: include entries that have a task_due set.
+        #[arg(long)]
+        task_due: bool,
 
-        /// Filter by event span: include entries whose event [start, end] overlaps the given period.
-        /// Use this to find in-progress events on a specific date or within a range.
-        #[arg(long, value_name = "PERIOD")]
-        event_span: Option<String>,
+        /// Restrict --period to event span (overlap semantics).
+        /// Without --period: include entries that have an event set.
+        #[arg(long)]
+        event_span: bool,
 
-        /// Filter by created_at timestamp (PERIOD format, see --period)
-        #[arg(long, value_name = "PERIOD")]
-        created_at: Option<String>,
+        /// Restrict --period to created_at timestamp.
+        #[arg(long)]
+        created_at: bool,
 
-        /// Filter by updated_at timestamp (PERIOD format, see --period)
-        #[arg(long, value_name = "PERIOD")]
-        updated_at: Option<String>,
+        /// Restrict --period to updated_at timestamp.
+        #[arg(long)]
+        updated_at: bool,
 
         /// Filter by task status (AND with timestamp filters).
         /// Comma-separated for multiple values, e.g. open,in_progress
@@ -190,10 +191,7 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
 
             let filter = EntryFilter {
                 period: period.as_deref().map(parse).transpose()?,
-                task_due: task_due.as_deref().map(parse).transpose()?,
-                event_span: event_span.as_deref().map(parse).transpose()?,
-                created_at: created_at.as_deref().map(parse).transpose()?,
-                updated_at: updated_at.as_deref().map(parse).transpose()?,
+                fields: FieldSelector { task_due, event_span, created_at, updated_at },
                 task_status: task_status.unwrap_or_default(),
                 tags: tags.unwrap_or_default(),
                 overdue,
