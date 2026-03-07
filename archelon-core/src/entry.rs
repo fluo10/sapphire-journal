@@ -42,7 +42,7 @@ pub struct Frontmatter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskMeta {
     /// Due date/time.
-    #[serde(skip_serializing_if = "Option::is_none", with = "naive_datetime_serde::eod::opt")]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "naive_datetime_serde::eod::opt")]
     pub due: Option<NaiveDateTime>,
 
     /// Task status. Conventional values: open | in_progress | done | cancelled | archived
@@ -51,7 +51,7 @@ pub struct TaskMeta {
 
     /// Timestamp when the task was closed (status → done/cancelled/archived).
     /// Set automatically by `entry set`; can be overridden manually.
-    #[serde(skip_serializing_if = "Option::is_none", with = "naive_datetime_serde::opt")]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "naive_datetime_serde::opt")]
     pub closed_at: Option<NaiveDateTime>,
 }
 
