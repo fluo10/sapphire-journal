@@ -73,23 +73,46 @@ impl FromStr for SortOrder {
     }
 }
 
+// ── FieldSelector ─────────────────────────────────────────────────────────────
+
+/// Selects which timestamp fields [`EntryFilter::period`] applies to.
+///
+/// When all fields are `false` (the default), `period` applies to all fields
+/// simultaneously (OR across all).  Setting one or more fields to `true`
+/// restricts the period check to only those fields.
+///
+/// Without a `period`, a `true` flag means "the field must be present (set)".
+#[derive(Debug, Default, Clone)]
+pub struct FieldSelector {
+    pub task_due: bool,
+    pub event_span: bool,
+    pub created_at: bool,
+    pub updated_at: bool,
+}
+
+impl FieldSelector {
+    /// Returns `true` when no field is explicitly selected (i.e. all are `false`).
+    pub fn is_empty(&self) -> bool {
+        !self.task_due && !self.event_span && !self.created_at && !self.updated_at
+    }
+}
+
 // ── EntryFilter ───────────────────────────────────────────────────────────────
 
 /// Filter criteria for [`list_entries`].
 ///
-/// Timestamp fields are ORed: an entry is included when *any* specified
-/// timestamp filter matches its corresponding field.
+/// `period` combined with `fields` forms the timestamp filter:
+/// - `period` set, `fields` empty → apply the period to all timestamp fields (OR).
+/// - `period` set, `fields` non-empty → apply the period to only the selected fields (OR).
+/// - `period` absent, `fields` non-empty → include entries where the selected fields exist.
 ///
 /// `task_status` and `tags` are ANDed on top.
 #[derive(Debug, Default)]
 pub struct EntryFilter {
-    /// Shortcut: apply the same period to all timestamp fields simultaneously.
+    /// Period to match against timestamp fields.
     pub period: Option<Period>,
-    pub task_due: Option<Period>,
-    /// Filter by event span overlap: matches when the event's [start, end] range overlaps this period.
-    pub event_span: Option<Period>,
-    pub created_at: Option<Period>,
-    pub updated_at: Option<Period>,
+    /// Which fields the period applies to (empty = all fields).
+    pub fields: FieldSelector,
     /// AND condition on task status (empty = no constraint).
     pub task_status: Vec<String>,
     /// AND condition: entry must contain ALL of these tags (empty = no constraint).
@@ -105,12 +128,7 @@ pub struct EntryFilter {
 
 impl EntryFilter {
     pub fn has_timestamp_filter(&self) -> bool {
-        self.period.is_some()
-            || self.task_due.is_some()
-            || self.event_span.is_some()
-            || self.created_at.is_some()
-            || self.updated_at.is_some()
-            || self.overdue
+        self.period.is_some() || !self.fields.is_empty() || self.overdue
     }
 
     pub fn has_any_filter(&self) -> bool {
@@ -125,40 +143,24 @@ impl EntryFilter {
         let mut labels = Vec::new();
 
         let timestamp_ok = if self.has_timestamp_filter() {
-            let task_due_val = entry.frontmatter.task.as_ref().and_then(|t| t.due);
+            let task_due_val    = entry.frontmatter.task.as_ref().and_then(|t| t.due);
             let event_start_val = entry.frontmatter.event.as_ref().map(|e| e.start);
-            let event_end_val = entry.frontmatter.event.as_ref().map(|e| e.end);
-            let created_val = Some(entry.frontmatter.created_at);
-            let updated_val = Some(entry.frontmatter.updated_at);
+            let event_end_val   = entry.frontmatter.event.as_ref().map(|e| e.end);
+            let created_val     = Some(entry.frontmatter.created_at);
+            let updated_val     = Some(entry.frontmatter.updated_at);
 
-            macro_rules! check {
-                ($filter:expr, $val:expr, $label:expr) => {
-                    if let Some(p) = &$filter {
-                        if p.matches($val) {
-                            labels.push($label);
-                        }
-                    }
-                };
-            }
-
-            // --period applies to all fields simultaneously
             if let Some(p) = &self.period {
-                if p.matches(task_due_val) { labels.push(MatchLabel::TaskDue); }
-                if p.overlaps_event(event_start_val, event_end_val) { labels.push(MatchLabel::EventSpan); }
-                if p.matches(created_val) { labels.push(MatchLabel::CreatedAt); }
-                if p.matches(updated_val) { labels.push(MatchLabel::UpdatedAt); }
-            }
-
-            // per-field filters (dedup handles overlap with --period)
-            check!(self.task_due,   task_due_val, MatchLabel::TaskDue);
-            check!(self.created_at, created_val,  MatchLabel::CreatedAt);
-            check!(self.updated_at, updated_val,  MatchLabel::UpdatedAt);
-
-            // event span filter: overlap test
-            if let Some(p) = &self.event_span {
-                if p.overlaps_event(event_start_val, event_end_val) {
-                    labels.push(MatchLabel::EventSpan);
-                }
+                // No field selectors → apply to all fields simultaneously
+                let all = self.fields.is_empty();
+                if (all || self.fields.task_due)   && p.matches(task_due_val)                        { labels.push(MatchLabel::TaskDue); }
+                if (all || self.fields.event_span) && p.overlaps_event(event_start_val, event_end_val) { labels.push(MatchLabel::EventSpan); }
+                if (all || self.fields.created_at) && p.matches(created_val)                         { labels.push(MatchLabel::CreatedAt); }
+                if (all || self.fields.updated_at) && p.matches(updated_val)                         { labels.push(MatchLabel::UpdatedAt); }
+            } else {
+                // No period: field flags → check that the field exists (is set)
+                if self.fields.task_due   && task_due_val.is_some()                                   { labels.push(MatchLabel::TaskDue); }
+                if self.fields.event_span && (event_start_val.is_some() || event_end_val.is_some())   { labels.push(MatchLabel::EventSpan); }
+                // created_at / updated_at are always set on every entry → no useful existence check
             }
 
             // overdue: task with due in the past and no closed_at

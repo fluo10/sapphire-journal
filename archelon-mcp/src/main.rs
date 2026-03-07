@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use archelon_core::{
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
-    ops::{self, EntryFields, EntryFilter, SortField, SortOrder},
+    ops::{self, EntryFields, EntryFilter, FieldSelector, SortField, SortOrder},
     parser::read_entry,
     period::{parse_datetime, parse_datetime_end, parse_period},
 };
@@ -65,25 +65,26 @@ struct InitParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct EntryListParams {
-    /// Convenience filter applied to all timestamp fields simultaneously (OR across fields).
-    /// Equivalent to setting task_due, event_span, created_at, updated_at to the same period.
+    /// Period to match against timestamp fields.
+    /// When no field selectors are set, the period applies to all fields (OR).
     ///
     /// Accepted formats: today | this_week | this_month | none |
     /// YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
     period: Option<String>,
 
-    /// Filter by task due date (same PERIOD format as `period`)
-    task_due: Option<String>,
+    /// Restrict period matching to task due date.
+    /// Without period: include entries that have a task_due set.
+    task_due: Option<bool>,
 
-    /// Filter by event span overlap: matches entries whose event [start, end] range overlaps
-    /// the given period. Use this to find in-progress events on a specific date or within a range.
-    event_span: Option<String>,
+    /// Restrict period matching to event span (overlap semantics).
+    /// Without period: include entries that have an event set.
+    event_span: Option<bool>,
 
-    /// Filter by created_at timestamp (same PERIOD format as `period`)
-    created_at: Option<String>,
+    /// Restrict period matching to created_at timestamp.
+    created_at: Option<bool>,
 
-    /// Filter by updated_at timestamp (same PERIOD format as `period`)
-    updated_at: Option<String>,
+    /// Restrict period matching to updated_at timestamp.
+    updated_at: Option<bool>,
 
     /// AND filter: include only entries whose task status matches one of these values.
     /// Provide as an array, e.g. ["open", "in_progress"]
@@ -253,10 +254,12 @@ impl ArchelonServer {
     }
 
     #[tool(description = "List journal entries as JSON. \
-        Timestamp filters (period, task_due, event_span, created_at, updated_at, overdue) are ORed: \
-        an entry matches if any specified timestamp condition is satisfied. \
+        Use `period` to specify a time range. \
+        Use field selectors (task_due, event_span, created_at, updated_at) to restrict which fields \
+        the period applies to; omitting all selectors applies the period to all fields (OR). \
+        Without a period, field selectors filter entries where that field is present. \
         event_span uses interval-overlap semantics so in-progress events are included. \
-        task_status and tags are ANDed on top.")]
+        task_status, tags, and overdue are independent AND/OR filters.")]
     fn entry_list(&self, Parameters(p): Parameters<EntryListParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let week_start = self.week_start();
@@ -264,10 +267,12 @@ impl ArchelonServer {
 
             let filter = EntryFilter {
                 period: p.period.as_deref().map(parse).transpose()?,
-                task_due: p.task_due.as_deref().map(parse).transpose()?,
-                event_span: p.event_span.as_deref().map(parse).transpose()?,
-                created_at: p.created_at.as_deref().map(parse).transpose()?,
-                updated_at: p.updated_at.as_deref().map(parse).transpose()?,
+                fields: FieldSelector {
+                    task_due:   p.task_due.unwrap_or(false),
+                    event_span: p.event_span.unwrap_or(false),
+                    created_at: p.created_at.unwrap_or(false),
+                    updated_at: p.updated_at.unwrap_or(false),
+                },
                 task_status: p.task_status.unwrap_or_default(),
                 tags: p.tags.unwrap_or_default(),
                 overdue: p.overdue.unwrap_or(false),
