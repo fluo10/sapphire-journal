@@ -49,6 +49,14 @@ jobs:
             package: archelon-cli
             binary: archelon.exe
             asset_name: archelon-cli-windows-x86_64.exe
+          - os: ubuntu-24.04-arm
+            package: archelon-cli
+            binary: archelon
+            asset_name: archelon-cli-linux-aarch64
+          - os: ubuntu-24.04-arm
+            package: archelon-mcp
+            binary: archelon-mcp
+            asset_name: archelon-mcp-linux-aarch64
           - os: ubuntu-latest
             package: archelon-mcp
             binary: archelon-mcp
