@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
+use clap::Parser;
 use archelon_core::{
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
@@ -482,15 +483,27 @@ fn detect_timezone() -> String {
     "UTC".to_owned()
 }
 
+// ── CLI ───────────────────────────────────────────────────────────────────────
+
+#[derive(Parser)]
+#[command(name = "archelon-mcp", about = "MCP server for archelon", version)]
+struct Args {
+    /// Path to the journal root (the directory containing `.archelon/`).
+    /// Can also be set via the ARCHELON_JOURNAL_DIR environment variable.
+    #[arg(long, env = "ARCHELON_JOURNAL_DIR", value_name = "DIR")]
+    journal_dir: Option<PathBuf>,
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+
     // Log to stderr so stdout remains clean for the MCP JSON-RPC protocol
     tracing_subscriber::fmt().with_writer(std::io::stderr).init();
 
-    let journal_dir = std::env::var("ARCHELON_JOURNAL_DIR").ok().map(PathBuf::from);
-    let server = ArchelonServer::new(journal_dir);
+    let server = ArchelonServer::new(args.journal_dir);
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
     Ok(())
