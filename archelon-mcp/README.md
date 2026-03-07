@@ -48,8 +48,7 @@ Timestamp filters are **OR'd** across fields; `task_status` and `tags` are **AND
 |---|---|
 | `period` | Shorthand: applies to all timestamp fields |
 | `task_due` | Filter by task due date |
-| `event_start` | Filter by event start |
-| `event_end` | Filter by event end |
+| `event_span` | Filter by event span overlap: matches entries whose event [start, end] overlaps the period |
 | `created_at` | Filter by created_at |
 | `updated_at` | Filter by updated_at |
 | `overdue` | Include tasks whose due date is past and not closed |

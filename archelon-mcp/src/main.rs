@@ -66,7 +66,7 @@ struct InitParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct EntryListParams {
     /// Convenience filter applied to all timestamp fields simultaneously (OR across fields).
-    /// Equivalent to setting task_due, event_start, event_end, created_at, updated_at to the same period.
+    /// Equivalent to setting task_due, event_span, created_at, updated_at to the same period.
     ///
     /// Accepted formats: today | this_week | this_month | none |
     /// YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
@@ -75,11 +75,9 @@ struct EntryListParams {
     /// Filter by task due date (same PERIOD format as `period`)
     task_due: Option<String>,
 
-    /// Filter by event start date (same PERIOD format as `period`)
-    event_start: Option<String>,
-
-    /// Filter by event end date (same PERIOD format as `period`)
-    event_end: Option<String>,
+    /// Filter by event span overlap: matches entries whose event [start, end] range overlaps
+    /// the given period. Use this to find in-progress events on a specific date or within a range.
+    event_span: Option<String>,
 
     /// Filter by created_at timestamp (same PERIOD format as `period`)
     created_at: Option<String>,
@@ -255,8 +253,9 @@ impl ArchelonServer {
     }
 
     #[tool(description = "List journal entries as JSON. \
-        Timestamp filters (period, task_due, event_start, event_end, created_at, updated_at, overdue) are ORed: \
+        Timestamp filters (period, task_due, event_span, created_at, updated_at, overdue) are ORed: \
         an entry matches if any specified timestamp condition is satisfied. \
+        event_span uses interval-overlap semantics so in-progress events are included. \
         task_status and tags are ANDed on top.")]
     fn entry_list(&self, Parameters(p): Parameters<EntryListParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
@@ -266,8 +265,7 @@ impl ArchelonServer {
             let filter = EntryFilter {
                 period: p.period.as_deref().map(parse).transpose()?,
                 task_due: p.task_due.as_deref().map(parse).transpose()?,
-                event_start: p.event_start.as_deref().map(parse).transpose()?,
-                event_end: p.event_end.as_deref().map(parse).transpose()?,
+                event_span: p.event_span.as_deref().map(parse).transpose()?,
                 created_at: p.created_at.as_deref().map(parse).transpose()?,
                 updated_at: p.updated_at.as_deref().map(parse).transpose()?,
                 task_status: p.task_status.unwrap_or_default(),

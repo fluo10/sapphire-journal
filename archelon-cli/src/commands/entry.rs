@@ -20,7 +20,7 @@ pub enum EntryCommand {
         path: Option<PathBuf>,
 
         /// Convenience filter applied to all timestamp fields simultaneously (OR across fields).
-        /// Equivalent to setting --task-due, --event-start, --event-end, --created-at, --updated-at
+        /// Equivalent to setting --task-due, --event-span, --created-at, --updated-at
         /// to the same period.
         ///
         /// PERIOD formats: today | this_week | this_month | none |
@@ -32,13 +32,10 @@ pub enum EntryCommand {
         #[arg(long, value_name = "PERIOD")]
         task_due: Option<String>,
 
-        /// Filter by event start date (PERIOD format, see --period)
+        /// Filter by event span: include entries whose event [start, end] overlaps the given period.
+        /// Use this to find in-progress events on a specific date or within a range.
         #[arg(long, value_name = "PERIOD")]
-        event_start: Option<String>,
-
-        /// Filter by event end date (PERIOD format, see --period)
-        #[arg(long, value_name = "PERIOD")]
-        event_end: Option<String>,
+        event_span: Option<String>,
 
         /// Filter by created_at timestamp (PERIOD format, see --period)
         #[arg(long, value_name = "PERIOD")]
@@ -182,7 +179,7 @@ impl From<EntryFields> for CoreEntryFields {
 
 pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
     match cmd {
-        EntryCommand::List { path, period, task_due, event_start, event_end, created_at, updated_at, task_status, tags, overdue, sort_by, sort_order, json } => {
+        EntryCommand::List { path, period, task_due, event_span, created_at, updated_at, task_status, tags, overdue, sort_by, sort_order, json } => {
             // Resolve week_start from journal config (needed for this_week parsing)
             let week_start = open_journal(journal_dir)
                 .and_then(|j| j.config().map_err(Into::into))
@@ -194,8 +191,7 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
             let filter = EntryFilter {
                 period: period.as_deref().map(parse).transpose()?,
                 task_due: task_due.as_deref().map(parse).transpose()?,
-                event_start: event_start.as_deref().map(parse).transpose()?,
-                event_end: event_end.as_deref().map(parse).transpose()?,
+                event_span: event_span.as_deref().map(parse).transpose()?,
                 created_at: created_at.as_deref().map(parse).transpose()?,
                 updated_at: updated_at.as_deref().map(parse).transpose()?,
                 task_status: task_status.unwrap_or_default(),

@@ -61,8 +61,7 @@ Timestamp filters (OR'd across fields):
 ```bash
 --period PERIOD               # shorthand: applies to all timestamp fields
 --task-due PERIOD             # filter by task due date
---event-start PERIOD          # filter by event start
---event-end PERIOD            # filter by event end
+--event-span PERIOD           # filter by event span overlap (in-progress events included)
 --created-at PERIOD           # filter by created_at
 --updated-at PERIOD           # filter by updated_at
 --overdue                     # include tasks whose due date is past and not closed

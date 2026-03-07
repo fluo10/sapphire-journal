@@ -86,8 +86,8 @@ pub struct EntryFilter {
     /// Shortcut: apply the same period to all timestamp fields simultaneously.
     pub period: Option<Period>,
     pub task_due: Option<Period>,
-    pub event_start: Option<Period>,
-    pub event_end: Option<Period>,
+    /// Filter by event span overlap: matches when the event's [start, end] range overlaps this period.
+    pub event_span: Option<Period>,
     pub created_at: Option<Period>,
     pub updated_at: Option<Period>,
     /// AND condition on task status (empty = no constraint).
@@ -107,8 +107,7 @@ impl EntryFilter {
     pub fn has_timestamp_filter(&self) -> bool {
         self.period.is_some()
             || self.task_due.is_some()
-            || self.event_start.is_some()
-            || self.event_end.is_some()
+            || self.event_span.is_some()
             || self.created_at.is_some()
             || self.updated_at.is_some()
             || self.overdue
@@ -145,18 +144,22 @@ impl EntryFilter {
             // --period applies to all fields simultaneously
             if let Some(p) = &self.period {
                 if p.matches(task_due_val) { labels.push(MatchLabel::TaskDue); }
-                if p.matches(event_start_val) { labels.push(MatchLabel::EventStart); }
-                if p.matches(event_end_val) { labels.push(MatchLabel::EventEnd); }
+                if p.overlaps_event(event_start_val, event_end_val) { labels.push(MatchLabel::EventSpan); }
                 if p.matches(created_val) { labels.push(MatchLabel::CreatedAt); }
                 if p.matches(updated_val) { labels.push(MatchLabel::UpdatedAt); }
             }
 
             // per-field filters (dedup handles overlap with --period)
-            check!(self.task_due,    task_due_val,    MatchLabel::TaskDue);
-            check!(self.event_start, event_start_val, MatchLabel::EventStart);
-            check!(self.event_end,   event_end_val,   MatchLabel::EventEnd);
-            check!(self.created_at,  created_val,     MatchLabel::CreatedAt);
-            check!(self.updated_at,  updated_val,     MatchLabel::UpdatedAt);
+            check!(self.task_due,   task_due_val, MatchLabel::TaskDue);
+            check!(self.created_at, created_val,  MatchLabel::CreatedAt);
+            check!(self.updated_at, updated_val,  MatchLabel::UpdatedAt);
+
+            // event span filter: overlap test
+            if let Some(p) = &self.event_span {
+                if p.overlaps_event(event_start_val, event_end_val) {
+                    labels.push(MatchLabel::EventSpan);
+                }
+            }
 
             // overdue: task with due in the past and no closed_at
             if self.overdue {
@@ -200,8 +203,8 @@ impl EntryFilter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchLabel {
     TaskDue,
-    EventStart,
-    EventEnd,
+    /// The filter period overlaps the event's [start, end] span.
+    EventSpan,
     CreatedAt,
     UpdatedAt,
     Overdue,
@@ -210,12 +213,11 @@ pub enum MatchLabel {
 impl MatchLabel {
     pub fn as_str(self) -> &'static str {
         match self {
-            MatchLabel::TaskDue    => "TASK_DUE",
-            MatchLabel::EventStart => "EVENT_START",
-            MatchLabel::EventEnd   => "EVENT_END",
-            MatchLabel::CreatedAt  => "CREATED",
-            MatchLabel::UpdatedAt  => "UPDATED",
-            MatchLabel::Overdue    => "OVERDUE",
+            MatchLabel::TaskDue   => "TASK_DUE",
+            MatchLabel::EventSpan => "EVENT_SPAN",
+            MatchLabel::CreatedAt => "CREATED",
+            MatchLabel::UpdatedAt => "UPDATED",
+            MatchLabel::Overdue   => "OVERDUE",
         }
     }
 }
