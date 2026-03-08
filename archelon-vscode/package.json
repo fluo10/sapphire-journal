@@ -4,6 +4,10 @@
   "publisher": "fluo10",
   "description": "VS Code extension for the Archelon journal",
   "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fluo10/archelon"
+  },
   "engines": {
     "vscode": "^1.109.0"
   },
@@ -38,8 +42,8 @@
       "properties": {
         "archelon.binaryPath": {
           "type": "string",
-          "default": "archelon",
-          "description": "Path to the archelon binary. Defaults to 'archelon' on $PATH."
+          "default": "",
+          "description": "Path to the archelon binary. Leave empty to use the bundled binary or 'archelon' on $PATH."
         },
         "archelon.autoFixOnSave": {
           "type": "boolean",
