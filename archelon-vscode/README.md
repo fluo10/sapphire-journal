@@ -1,71 +1,22 @@
-# archelon-vscode README
+# Archelon for VS Code
 
-This is the README for your extension "archelon-vscode". After writing up a brief description, we recommend including the following sections.
+VS Code extension for the [Archelon](https://github.com/fluo10/archelon) journal.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
-
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+- **Auto-fix on save** — automatically runs `entry fix --touch` when saving a managed entry, updating timestamps and normalizing the filename.
+- **New Entry** (`Archelon: New Entry`) — creates a new journal entry and opens it in the editor.
+- **Open Entry** (`Archelon: Open Entry by ID`) — opens an entry by ID or ID prefix.
+- **Remove Entry** (`Archelon: Remove Entry`) — removes the active entry (or one specified by ID) after confirmation.
+- **List Entries** (`Archelon: List Entries`) — shows all entries in a Quick Pick and opens the selected one.
 
 ## Requirements
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+The `archelon` CLI binary must be available. When installing from a platform-specific VSIX, the binary is bundled automatically. Otherwise, install it separately and set `archelon.binaryPath` if needed.
 
 ## Extension Settings
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+| Setting | Default | Description |
+|---|---|---|
+| `archelon.binaryPath` | `"archelon"` | Path to the archelon binary. Defaults to `archelon` on `$PATH`. |
+| `archelon.autoFixOnSave` | `true` | Automatically run `entry fix --touch` when saving a managed entry file. |
