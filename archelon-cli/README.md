@@ -4,6 +4,36 @@ Command-line interface for [archelon](https://github.com/fluo10/archelon) — a 
 
 ## Installation
 
+### Install script (Linux / macOS)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/fluo10/archelon/main/install.sh | sh
+```
+
+Installs the latest release of `archelon` (CLI) and `archelon-mcp` to `~/.local/bin`.
+
+To install only the CLI:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/fluo10/archelon/main/install.sh | sh -s -- archelon-cli
+```
+
+### Install script (Windows)
+
+```powershell
+irm https://raw.githubusercontent.com/fluo10/archelon/main/install.ps1 | iex
+```
+
+Installs `archelon.exe` and `archelon-mcp.exe` to `%USERPROFILE%\.local\bin` and adds it to your user `PATH`.
+
+### From crates.io
+
+```bash
+cargo install archelon-cli
+```
+
+### From source
+
 ```bash
 cargo install --path .
 ```

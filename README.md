@@ -70,6 +70,32 @@ event:
 ---
 ```
 
+## Installation
+
+### Linux / macOS
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/fluo10/archelon/main/install.sh | sh
+```
+
+### Windows
+
+```powershell
+irm https://raw.githubusercontent.com/fluo10/archelon/main/install.ps1 | iex
+```
+
+### cargo-binstall
+
+```sh
+cargo binstall archelon-cli archelon-mcp
+```
+
+### From source
+
+```sh
+cargo install archelon-cli archelon-mcp
+```
+
 ## CLI usage
 
 See [archelon-cli/README.md](archelon-cli/README.md) for the full command reference.
@@ -78,18 +104,28 @@ A **journal** is any directory tree that contains a `.archelon/` directory.
 `archelon` locates it by walking up from the current directory, the same way `git` finds `.git/`.
 Use `archelon init` to create one.
 
+## VS Code extension
+
+The `archelon-vscode` extension integrates with the editor:
+
+- **Auto-fix on save** — runs `entry fix --touch` automatically, keeping filenames and timestamps in sync
+- **New Entry**, **Open Entry by ID**, **Remove Entry**, **List Entries** commands available from the Command Palette
+
+Download the platform-specific VSIX (with the CLI binary bundled) from the [Releases](https://github.com/fluo10/archelon/releases) page.
+
 ## Project structure
 
 ```
 archelon/
-├── archelon-core/   # Data model, Markdown parser/serializer, (future) SQLite cache
-├── archelon-cli/    # CLI binary built with clap
-└── archelon-mcp/    # MCP server for AI agent integration
+├── archelon-core/    # Data model, Markdown parser/serializer, (future) SQLite cache
+├── archelon-cli/     # CLI binary built with clap
+├── archelon-mcp/     # MCP server for AI agent integration
+└── archelon-vscode/  # VS Code extension
 ```
 
 ## Status
 
-Early development — CLI is functional for basic entry management.
+Early development — CLI and MCP server are functional for basic entry management. VS Code extension available as a VSIX.
 SQLite caching is planned.
 
 ## License

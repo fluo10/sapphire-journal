@@ -16,7 +16,7 @@ pkg-fmt = "bin"
 bin-dir = "{ bin }{ binary-ext }"
 
 [dependencies]
-archelon-core = { path = "../archelon-core", version = "0.1.1" }
+archelon-core = { path = "../archelon-core", version = "0.2.0" }
 clap = { version = "4", features = ["derive", "env"] }
 anyhow = "1"
 chrono = { version = "0.4" }

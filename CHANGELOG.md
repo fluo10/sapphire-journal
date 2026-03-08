@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-03-08
+
+### Added
+
+- Install scripts for Linux/macOS (`install.sh`) and Windows (`install.ps1`) — installs pre-built binaries to `~/.local/bin`
+- `cargo-binstall` support for `archelon-cli` and `archelon-mcp`
+- VS Code extension (`archelon-vscode`) with auto-fix on save, New Entry, Open Entry, Remove Entry, and List Entries commands; CLI binary bundled in platform-specific VSIX
+- `--version` flag for `archelon-cli` and `archelon-mcp`
+- `--journal-dir` global option for `archelon-mcp`
+- `entry fix --touch` flag to optionally refresh `updated_at` when fixing an entry
+- `entry fix` now syncs `closed_at` based on task status when fixing
+- Crate-level documentation for `archelon-core`
+
+### Changed
+
+- `entry list`: per-field `--FIELD PERIOD` arguments replaced with `--FIELD` boolean selectors that apply a shared `--period` value — simplifies the interface and avoids redundant argument pairs
+- `entry list`: `--event-start` / `--event-end` filters replaced with `--event-span`, which matches entries whose event `[start, end]` interval overlaps the given period (in-progress events are included)
+
+### Fixed
+
+- `period`: `overlaps_event` now correctly returns `false` when an entry has no event instead of always matching
+
 ## [0.1.1] - 2026-03-07
 
 ### Fixed

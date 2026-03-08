@@ -2,6 +2,36 @@
 
 MCP (Model Context Protocol) server for [archelon](https://github.com/fluo10/archelon) — lets AI agents read and write journal entries over stdio.
 
+## Installation
+
+### Install script (Linux / macOS)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/fluo10/archelon/main/install.sh | sh
+```
+
+Installs the latest release of `archelon-mcp` (and `archelon` CLI) to `~/.local/bin`.
+
+To install only the MCP server:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/fluo10/archelon/main/install.sh | sh -s -- archelon-mcp
+```
+
+### Install script (Windows)
+
+```powershell
+irm https://raw.githubusercontent.com/fluo10/archelon/main/install.ps1 | iex
+```
+
+Installs `archelon-mcp.exe` (and `archelon.exe`) to `%USERPROFILE%\.local\bin` and adds it to your user `PATH`.
+
+### From crates.io
+
+```bash
+cargo install archelon-mcp
+```
+
 ## Usage
 
 The server communicates over stdin/stdout using the MCP protocol. Run it as a subprocess from your MCP host configuration.
