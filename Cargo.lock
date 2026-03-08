@@ -78,7 +78,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "archelon-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "archelon-core",
@@ -89,7 +89,7 @@ dependencies = [
 
 [[package]]
 name = "archelon-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "caretta-id",
  "chrono",
@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "archelon-mcp"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "archelon-core",

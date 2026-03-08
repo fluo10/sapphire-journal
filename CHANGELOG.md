@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-03-08
+
+### Fixed
+
+- `entry fix`: repeated calls no longer accumulate blank lines between the frontmatter fence and the body ([#30](https://github.com/fluo10/archelon/pull/30))
+
 ## [0.2.0] - 2026-03-08
 
 ### Added
