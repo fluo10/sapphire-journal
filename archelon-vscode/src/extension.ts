@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { fixEntry, prepareNewEntry, removeEntry, resolvePath } from './cli';
+import { fixEntry, listEntries, prepareNewEntry, removeEntry, resolvePath } from './cli';
 import { findJournalRoot, isManagedFilename } from './journal';
 
 /** Return a cwd suitable for CLI calls: active file's dir if inside a journal, else workspace root. */
@@ -100,6 +100,57 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showInformationMessage(`Archelon: removed ${label}`);
             } catch (err) {
                 vscode.window.showErrorMessage(`Archelon: remove failed — ${err}`);
+            }
+        })
+    );
+
+    // ── Command: List Entries ─────────────────────────────────────────────────
+    context.subscriptions.push(
+        vscode.commands.registerCommand('archelon.listEntries', async () => {
+            const cwd = getJournalCwd();
+            if (!cwd) {
+                vscode.window.showErrorMessage('Archelon: no workspace folder open.');
+                return;
+            }
+
+            let entries;
+            try {
+                entries = await listEntries(cwd);
+            } catch (err) {
+                vscode.window.showErrorMessage(`Archelon: failed to list entries — ${err}`);
+                return;
+            }
+
+            const items = entries.map(e => {
+                // description: task status or event span
+                let description = '';
+                if (e.task) {
+                    description = `[${e.task.status}]`;
+                } else if (e.event) {
+                    description = e.event.start === e.event.end
+                        ? e.event.start.slice(0, 10)
+                        : `${e.event.start.slice(0, 10)} – ${e.event.end.slice(0, 10)}`;
+                }
+
+                // detail: id · tags (if any)
+                const tagPart = e.tags.length > 0 ? `  #${e.tags.join(' #')}` : '';
+                const detail = `${e.id}${tagPart}`;
+
+                return { label: e.title || '(untitled)', description, detail, entryPath: e.path };
+            });
+
+            const selected = await vscode.window.showQuickPick(items, {
+                matchOnDescription: true,
+                matchOnDetail: true,
+                placeHolder: 'Select an entry to open',
+            });
+            if (!selected) { return; }
+
+            try {
+                const doc = await vscode.workspace.openTextDocument(selected.entryPath);
+                await vscode.window.showTextDocument(doc);
+            } catch (err) {
+                vscode.window.showErrorMessage(`Archelon: failed to open entry — ${err}`);
             }
         })
     );

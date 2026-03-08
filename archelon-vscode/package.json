@@ -26,6 +26,10 @@
       {
         "command": "archelon.removeEntry",
         "title": "Archelon: Remove Entry"
+      },
+      {
+        "command": "archelon.listEntries",
+        "title": "Archelon: List Entries"
       }
     ],
     "configuration": {

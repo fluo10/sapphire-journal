@@ -56,3 +56,22 @@ export async function resolvePath(entry: string, cwd: string): Promise<string> {
 export async function removeEntry(entry: string, cwd: string): Promise<void> {
     await execFileAsync(bin(), ['entry', 'remove', entry], { cwd });
 }
+
+export interface EntryRecord {
+    id: string;
+    path: string;
+    title: string;
+    tags: string[];
+    updated_at: string;
+    task?: { status: string; due?: string; closed_at?: string } | null;
+    event?: { start: string; end: string } | null;
+}
+
+/**
+ * Run `archelon entry list --json` and return parsed records.
+ * Throws on non-zero exit (e.g. journal not found).
+ */
+export async function listEntries(cwd: string): Promise<EntryRecord[]> {
+    const { stdout } = await execFileAsync(bin(), ['entry', 'list', '--json'], { cwd });
+    return JSON.parse(stdout) as EntryRecord[];
+}
