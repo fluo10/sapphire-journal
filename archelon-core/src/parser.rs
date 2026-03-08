@@ -70,7 +70,7 @@ fn split_frontmatter<'a>(path: &Path, source: &'a str) -> Result<(Frontmatter, &
 
     let yaml = &rest[..end];
     let body = &rest[end + 1 + FENCE.len()..]; // skip `\n---`
-    let body = body.strip_prefix('\n').unwrap_or(body);
+    let body = body.trim_start_matches('\n');
 
     let frontmatter: Frontmatter = serde_yaml::from_str(yaml)?;
     Ok((frontmatter, body))
