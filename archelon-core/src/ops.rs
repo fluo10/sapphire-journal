@@ -120,6 +120,9 @@ pub struct EntryFilter {
     /// OR condition with timestamp filters: include tasks whose `due` is in the past
     /// and `closed_at` is absent.
     pub overdue: bool,
+    /// OR condition with timestamp filters: include tasks that have `started_at` set,
+    /// `closed_at` absent, and (when a period is active) `started_at` ≤ period end.
+    pub task_started: bool,
     /// Field to sort results by (`None` = keep filesystem order).
     pub sort_by: Option<SortField>,
     /// Sort direction (default: ascending).
@@ -128,7 +131,7 @@ pub struct EntryFilter {
 
 impl EntryFilter {
     pub fn has_timestamp_filter(&self) -> bool {
-        self.period.is_some() || !self.fields.is_empty() || self.overdue
+        self.period.is_some() || !self.fields.is_empty() || self.overdue || self.task_started
     }
 
     pub fn has_any_filter(&self) -> bool {
@@ -174,6 +177,22 @@ impl EntryFilter {
                 }
             }
 
+            // task_started: task with started_at set, no closed_at, and started_at ≤ period end
+            if self.task_started {
+                let period_end = match &self.period {
+                    Some(Period::Range(_, end)) => Some(*end),
+                    _ => None,
+                };
+                let is_started = entry.frontmatter.task.as_ref().is_some_and(|t| {
+                    t.started_at.is_some()
+                        && t.closed_at.is_none()
+                        && period_end.map_or(true, |end| t.started_at.unwrap() <= end)
+                });
+                if is_started {
+                    labels.push(MatchLabel::TaskStarted);
+                }
+            }
+
             labels.dedup();
             !labels.is_empty()
         } else {
@@ -205,6 +224,7 @@ impl EntryFilter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchLabel {
     TaskDue,
+    TaskStarted,
     /// The filter period overlaps the event's [start, end] span.
     EventSpan,
     CreatedAt,
@@ -215,11 +235,12 @@ pub enum MatchLabel {
 impl MatchLabel {
     pub fn as_str(self) -> &'static str {
         match self {
-            MatchLabel::TaskDue   => "TASK_DUE",
-            MatchLabel::EventSpan => "EVENT_SPAN",
-            MatchLabel::CreatedAt => "CREATED",
-            MatchLabel::UpdatedAt => "UPDATED",
-            MatchLabel::Overdue   => "OVERDUE",
+            MatchLabel::TaskDue     => "TASK_DUE",
+            MatchLabel::TaskStarted => "TASK_STARTED",
+            MatchLabel::EventSpan   => "EVENT_SPAN",
+            MatchLabel::CreatedAt   => "CREATED",
+            MatchLabel::UpdatedAt   => "UPDATED",
+            MatchLabel::Overdue     => "OVERDUE",
         }
     }
 }
@@ -355,6 +376,7 @@ pub struct EntryFields {
     pub tags: Option<Vec<String>>,
     pub task_due: Option<NaiveDateTime>,
     pub task_status: Option<String>,
+    pub task_started_at: Option<NaiveDateTime>,
     pub task_closed_at: Option<NaiveDateTime>,
     pub event_start: Option<NaiveDateTime>,
     pub event_end: Option<NaiveDateTime>,
@@ -379,14 +401,19 @@ pub fn create_entry(
 
     let task = if fields.task_due.is_some()
         || fields.task_status.is_some()
+        || fields.task_started_at.is_some()
         || fields.task_closed_at.is_some()
     {
-        let inactive =
-            matches!(fields.task_status.as_deref(), Some("done" | "cancelled" | "archived"));
+        let status = fields.task_status.unwrap_or_else(|| "open".to_owned());
+        let inactive = matches!(status.as_str(), "done" | "cancelled" | "archived");
+        let in_progress = status == "in_progress";
+        let started_at = fields
+            .task_started_at
+            .or_else(|| in_progress.then(|| chrono::Local::now().naive_local()));
         let closed_at = fields
             .task_closed_at
             .or_else(|| inactive.then(|| chrono::Local::now().naive_local()));
-        Some(TaskMeta { due: fields.task_due, status: fields.task_status.unwrap_or_else(|| "open".to_owned()), closed_at })
+        Some(TaskMeta { due: fields.task_due, status, started_at, closed_at })
     } else {
         None
     };
@@ -450,22 +477,31 @@ pub fn update_entry(path: &Path, title: Option<String>, body: Option<String>, fi
 
     if fields.task_due.is_some()
         || fields.task_status.is_some()
+        || fields.task_started_at.is_some()
         || fields.task_closed_at.is_some()
     {
         let task = entry.frontmatter.task.get_or_insert_with(|| TaskMeta {
             status: "open".to_owned(),
             due: None,
+            started_at: None,
             closed_at: None,
         });
         if let Some(d) = fields.task_due {
             task.due = Some(d);
         }
         if let Some(s) = fields.task_status {
+            let in_progress = s == "in_progress";
             let inactive = matches!(s.as_str(), "done" | "cancelled" | "archived");
             task.status = s;
+            if in_progress && task.started_at.is_none() && fields.task_started_at.is_none() {
+                task.started_at = Some(chrono::Local::now().naive_local());
+            }
             if inactive && task.closed_at.is_none() && fields.task_closed_at.is_none() {
                 task.closed_at = Some(chrono::Local::now().naive_local());
             }
+        }
+        if let Some(sa) = fields.task_started_at {
+            task.started_at = Some(sa);
         }
         if let Some(ca) = fields.task_closed_at {
             task.closed_at = Some(ca);
@@ -597,6 +633,15 @@ pub fn check_entry(path: &Path) -> Result<Vec<CheckIssue>> {
 
 // ── fix ───────────────────────────────────────────────────────────────────────
 
+/// If the entry has a task with `in_progress` status and no `started_at`, set it to now.
+fn sync_started_at(entry: &mut Entry) {
+    if let Some(task) = &mut entry.frontmatter.task {
+        if task.status == "in_progress" && task.started_at.is_none() {
+            task.started_at = Some(chrono::Local::now().naive_local());
+        }
+    }
+}
+
 /// If the entry has a task with a closed status and no `closed_at`, set it to now.
 fn sync_closed_at(entry: &mut Entry) {
     if let Some(task) = &mut entry.frontmatter.task {
@@ -615,6 +660,7 @@ fn sync_closed_at(entry: &mut Entry) {
 ///
 /// Returns `Some(new_path)` if the file was renamed, `None` otherwise.
 fn fix_entry_mut(entry: &mut Entry, touch: bool) -> Result<Option<PathBuf>> {
+    sync_started_at(entry);
     sync_closed_at(entry);
     if touch {
         entry.frontmatter.updated_at = chrono::Local::now().naive_local();

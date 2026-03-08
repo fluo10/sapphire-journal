@@ -136,6 +136,7 @@ mod tests {
         entry.frontmatter.task = Some(TaskMeta {
             status: "open".into(),
             due: Some("2026-03-10T00:00:00".parse().unwrap()),
+            started_at: None,
             closed_at: None,
         });
         let rendered = render_entry(&entry);

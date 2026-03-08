@@ -99,6 +99,10 @@ struct EntryListParams {
     /// Can be combined with period; either condition is sufficient for inclusion.
     overdue: Option<bool>,
 
+    /// OR filter with period: include tasks that have started_at set, closed_at absent,
+    /// and (when period is given) started_at ≤ period end.
+    task_started: Option<bool>,
+
     /// Field to sort results by.
     /// Accepted values: id | title | task_status | created_at | updated_at | task_due | event_start | event_end
     sort_by: Option<String>,
@@ -127,6 +131,8 @@ struct EntryNewParams {
     task_due: Option<String>,
     /// Task status (open | in_progress | done | cancelled | archived)
     task_status: Option<String>,
+    /// Task start date/time; set automatically when status → in_progress
+    task_started_at: Option<String>,
     /// Task close date/time
     task_closed_at: Option<String>,
     /// Event start date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)
@@ -151,6 +157,8 @@ struct EntrySetParams {
     task_due: Option<String>,
     /// Task status (open | in_progress | done | cancelled | archived)
     task_status: Option<String>,
+    /// Task start date/time; set automatically when status → in_progress
+    task_started_at: Option<String>,
     /// Task close date/time
     task_closed_at: Option<String>,
     /// Event start date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)
@@ -187,6 +195,7 @@ fn parse_entry_fields(
     tags: Option<String>,
     task_due: Option<&str>,
     task_status: Option<String>,
+    task_started_at: Option<&str>,
     task_closed_at: Option<&str>,
     event_start: Option<&str>,
     event_end: Option<&str>,
@@ -203,6 +212,9 @@ fn parse_entry_fields(
             .map(|s| parse_datetime_end(s).map_err(anyhow::Error::msg))
             .transpose()?,
         task_status,
+        task_started_at: task_started_at
+            .map(|s| parse_datetime(s).map_err(anyhow::Error::msg))
+            .transpose()?,
         task_closed_at: task_closed_at
             .map(|s| parse_datetime(s).map_err(anyhow::Error::msg))
             .transpose()?,
@@ -280,6 +292,7 @@ impl ArchelonServer {
                 task_status: p.task_status.unwrap_or_default(),
                 tags: p.tags.unwrap_or_default(),
                 overdue: p.overdue.unwrap_or(false),
+                task_started: p.task_started.unwrap_or(false),
                 sort_by: p.sort_by.as_deref()
                     .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
                     .transpose()?,
@@ -363,6 +376,7 @@ impl ArchelonServer {
                 p.tags,
                 p.task_due.as_deref(),
                 p.task_status,
+                p.task_started_at.as_deref(),
                 p.task_closed_at.as_deref(),
                 p.event_start.as_deref(),
                 p.event_end.as_deref(),
@@ -382,6 +396,7 @@ impl ArchelonServer {
                 && p.tags.is_none()
                 && p.task_due.is_none()
                 && p.task_status.is_none()
+                && p.task_started_at.is_none()
                 && p.task_closed_at.is_none()
                 && p.event_start.is_none()
                 && p.event_end.is_none()
@@ -395,6 +410,7 @@ impl ArchelonServer {
                 p.tags,
                 p.task_due.as_deref(),
                 p.task_status,
+                p.task_started_at.as_deref(),
                 p.task_closed_at.as_deref(),
                 p.event_start.as_deref(),
                 p.event_end.as_deref(),

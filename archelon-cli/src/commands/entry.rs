@@ -60,6 +60,12 @@ pub enum EntryCommand {
         #[arg(long)]
         overdue: bool,
 
+        /// Include tasks that have been started (started_at set) and not yet closed.
+        /// When combined with --period, only tasks started on or before the period end are included.
+        /// OR'd with period filters.
+        #[arg(long)]
+        task_started: bool,
+
         /// Sort results by a field.
         /// Values: id | title | task_status | created_at | updated_at | task_due | event_start | event_end
         #[arg(long, value_name = "FIELD")]
@@ -167,6 +173,10 @@ pub struct EntryFields {
     #[arg(long)]
     pub task_status: Option<String>,
 
+    /// Task start date/time; set automatically when status → in_progress
+    #[arg(long, value_name = "DATETIME", value_parser = parse_datetime)]
+    pub task_started_at: Option<NaiveDateTime>,
+
     /// Task close date/time; set automatically when status → done/cancelled/archived
     #[arg(long, value_name = "DATETIME", value_parser = parse_datetime)]
     pub task_closed_at: Option<NaiveDateTime>,
@@ -187,6 +197,7 @@ impl From<EntryFields> for CoreEntryFields {
             tags: f.tags,
             task_due: f.task_due,
             task_status: f.task_status,
+            task_started_at: f.task_started_at,
             task_closed_at: f.task_closed_at,
             event_start: f.event_start,
             event_end: f.event_end,
@@ -196,7 +207,7 @@ impl From<EntryFields> for CoreEntryFields {
 
 pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
     match cmd {
-        EntryCommand::List { path, period, task_due, event_span, created_at, updated_at, task_status, tags, overdue, sort_by, sort_order, json } => {
+        EntryCommand::List { path, period, task_due, event_span, created_at, updated_at, task_status, tags, overdue, task_started, sort_by, sort_order, json } => {
             // Resolve week_start from journal config (needed for this_week parsing)
             let week_start = open_journal(journal_dir)
                 .and_then(|j| j.config().map_err(Into::into))
@@ -211,6 +222,7 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
                 task_status: task_status.unwrap_or_default(),
                 tags: tags.unwrap_or_default(),
                 overdue,
+                task_started,
                 sort_by: sort_by.as_deref()
                     .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
                     .transpose()?,
@@ -334,6 +346,9 @@ fn show(path: &Path) -> Result<()> {
             Some(d) => println!("task:     {status} (due {})", d.format("%Y-%m-%d")),
             None => println!("task:     {status}"),
         }
+        if let Some(sa) = task.started_at {
+            println!("started:  {}", sa.format("%Y-%m-%dT%H:%M"));
+        }
         if let Some(ca) = task.closed_at {
             println!("closed:   {}", ca.format("%Y-%m-%dT%H:%M"));
         }
@@ -407,6 +422,7 @@ fn set(journal_dir: Option<&Path>, path: &Path, title: Option<String>, fields: E
         && fields.tags.is_none()
         && fields.task_due.is_none()
         && fields.task_status.is_none()
+        && fields.task_started_at.is_none()
         && fields.task_closed_at.is_none()
         && fields.event_start.is_none()
         && fields.event_end.is_none()
