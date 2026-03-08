@@ -113,10 +113,26 @@ pub enum EntryCommand {
         /// Path to the entry file, or an ID / ID prefix
         entry: String,
     },
-    /// Rename an entry file to match its frontmatter ID and title/slug
+    /// Normalize an entry: sync closed_at, rename to match frontmatter, and optionally refresh updated_at
     Fix {
         /// Path to the entry file, or an ID / ID prefix
         entry: String,
+
+        /// Also update updated_at to the current time
+        #[arg(long)]
+        touch: bool,
+    },
+    /// Print the absolute path of an entry, or create a new template and print its path.
+    /// Intended for editor integrations that need a file path without opening an editor.
+    Path {
+        /// File path to the entry, or an ID / ID prefix.
+        /// Required unless --new is given.
+        #[arg(required_unless_present = "new")]
+        entry: Option<String>,
+
+        /// Create a new entry template file and print its path instead of resolving an existing entry
+        #[arg(long)]
+        new: bool,
     },
     /// Delete an entry file
     Remove {
@@ -217,7 +233,8 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
         }
         EntryCommand::Set { entry, title, fields } => set(journal_dir, &resolve_entry(journal_dir, &entry)?, title, fields),
         EntryCommand::Check { entry } => check(journal_dir, &entry),
-        EntryCommand::Fix { entry } => fix(journal_dir, &entry),
+        EntryCommand::Fix { entry, touch } => fix(journal_dir, &entry, touch),
+        EntryCommand::Path { entry, new } => entry_path(journal_dir, entry.as_deref(), new),
         EntryCommand::Remove { entry } => remove(journal_dir, &entry),
     }
 }
@@ -353,6 +370,10 @@ fn edit(path: &Path) -> Result<()> {
     if !status.success() {
         bail!("editor exited with non-zero status");
     }
+    match ops::fix_entry(path, true)? {
+        Some(new_path) => println!("updated: {}", new_path.display()),
+        None => println!("updated: {}", path.display()),
+    }
     Ok(())
 }
 
@@ -370,7 +391,7 @@ fn edit_new(journal_dir: Option<&Path>) -> Result<()> {
         bail!("editor exited with non-zero status");
     }
 
-    match ops::fix_entry(&path)? {
+    match ops::fix_entry(&path, true)? {
         Some(new_path) => println!("created: {}", new_path.display()),
         None => println!("created: {}", path.display()),
     }
@@ -419,15 +440,29 @@ fn check(journal_dir: Option<&Path>, entry: &str) -> Result<()> {
 
 // ── fix ───────────────────────────────────────────────────────────────────────
 
-fn fix(journal_dir: Option<&Path>, entry: &str) -> Result<()> {
+fn fix(journal_dir: Option<&Path>, entry: &str, touch: bool) -> Result<()> {
     let path = resolve_entry(journal_dir, entry)?;
-    match ops::fix_entry(&path)? {
+    match ops::fix_entry(&path, touch)? {
         Some(new_path) => println!(
             "renamed: {} → {}",
             path.file_name().unwrap_or_default().to_string_lossy(),
             new_path.file_name().unwrap_or_default().to_string_lossy(),
         ),
         None => println!("ok: {} (already correct)", path.display()),
+    }
+    Ok(())
+}
+
+// ── path ──────────────────────────────────────────────────────────────────────
+
+fn entry_path(journal_dir: Option<&Path>, entry: Option<&str>, new: bool) -> Result<()> {
+    if new {
+        let journal = open_journal(journal_dir)?;
+        let path = ops::prepare_new_entry(&journal)?;
+        println!("{}", path.display());
+    } else {
+        let path = resolve_entry(journal_dir, entry.unwrap())?;
+        println!("{}", path.display());
     }
     Ok(())
 }

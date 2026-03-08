@@ -1,82 +1,31 @@
-name: Release
+name: Test VSIX Build
 
 on:
-  pull_request:
-    types: [closed]
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
-  prepare:
-    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
-
-      - name: Extract version from branch name
-        id: version
-        run: |
-          BRANCH="${{ github.event.pull_request.head.ref }}"
-          VERSION="${BRANCH#release/}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Create tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ steps.version.outputs.version }}
-          git push origin ${{ steps.version.outputs.version }}
-
   build:
-    needs: prepare
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
-            package: archelon-cli
             binary: archelon
             asset_name: archelon-cli-linux-x86_64
+          - os: ubuntu-24.04-arm
+            binary: archelon
+            asset_name: archelon-cli-linux-aarch64
           - os: macos-latest
-            package: archelon-cli
             binary: archelon
             asset_name: archelon-cli-macos-aarch64
           - os: windows-latest
-            package: archelon-cli
             binary: archelon.exe
             asset_name: archelon-cli-windows-x86_64.exe
-          - os: ubuntu-24.04-arm
-            package: archelon-cli
-            binary: archelon
-            asset_name: archelon-cli-linux-aarch64
-          - os: ubuntu-24.04-arm
-            package: archelon-mcp
-            binary: archelon-mcp
-            asset_name: archelon-mcp-linux-aarch64
-          - os: ubuntu-latest
-            package: archelon-mcp
-            binary: archelon-mcp
-            asset_name: archelon-mcp-linux-x86_64
-          - os: macos-latest
-            package: archelon-mcp
-            binary: archelon-mcp
-            asset_name: archelon-mcp-macos-aarch64
-          - os: windows-latest
-            package: archelon-mcp
-            binary: archelon-mcp.exe
-            asset_name: archelon-mcp-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p ${{ matrix.package }}
+      - run: cargo build --release -p archelon-cli
 
       - name: Rename binary (Unix)
         if: runner.os != 'Windows'
@@ -93,7 +42,7 @@ jobs:
           path: ${{ matrix.asset_name }}
 
   vsix:
-    needs: [prepare, build]
+    needs: build
     strategy:
       matrix:
         include:
@@ -112,8 +61,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -148,20 +95,3 @@ jobs:
         with:
           name: archelon-vscode-${{ matrix.vsce_target }}.vsix
           path: archelon-vscode/*.vsix
-
-  release:
-    needs: [prepare, build, vsix]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.prepare.outputs.version }}
-          generate_release_notes: true
-          files: artifacts/*

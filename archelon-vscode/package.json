@@ -1,0 +1,70 @@
+{
+  "name": "archelon-vscode",
+  "displayName": "Archelon",
+  "publisher": "fluo10",
+  "description": "VS Code extension for the Archelon journal",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:markdown"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "archelon.newEntry",
+        "title": "Archelon: New Entry"
+      },
+      {
+        "command": "archelon.openEntry",
+        "title": "Archelon: Open Entry by ID"
+      },
+      {
+        "command": "archelon.removeEntry",
+        "title": "Archelon: Remove Entry"
+      },
+      {
+        "command": "archelon.listEntries",
+        "title": "Archelon: List Entries"
+      }
+    ],
+    "configuration": {
+      "title": "Archelon",
+      "properties": {
+        "archelon.binaryPath": {
+          "type": "string",
+          "default": "archelon",
+          "description": "Path to the archelon binary. Defaults to 'archelon' on $PATH."
+        },
+        "archelon.autoFixOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically run 'entry fix --touch' when saving a managed entry file."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.109.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "typescript-eslint": "^8.56.1",
+    "eslint": "^9.39.3",
+    "typescript": "^5.9.3",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}

@@ -14,7 +14,7 @@ use crate::{
     entry_ref::EntryRef,
     error::{Error, Result},
     journal::{is_managed_filename, Journal, slugify},
-    parser::{read_entry, render_entry, write_entry},
+    parser::{read_entry, render_entry},
     period::Period,
 };
 
@@ -486,8 +486,7 @@ pub fn update_entry(path: &Path, title: Option<String>, body: Option<String>, fi
         }
     }
 
-    write_entry(&mut entry)?;
-    fix_entry(path)
+    fix_entry_mut(&mut entry, true)
 }
 
 // ── prepare new (for editor workflow) ─────────────────────────────────────────
@@ -598,20 +597,32 @@ pub fn check_entry(path: &Path) -> Result<Vec<CheckIssue>> {
 
 // ── fix ───────────────────────────────────────────────────────────────────────
 
-/// Rename an entry file so its name matches the frontmatter ID and title/slug.
-///
-/// Returns `Some(new_path)` if the file was renamed, `None` if it was already correct.
-/// Returns `Err` if the file is not a managed entry.
-pub fn fix_entry(path: &Path) -> Result<Option<PathBuf>> {
-    if !is_managed_filename(path) {
-        return Err(Error::InvalidEntry(format!(
-            "{}: not a managed entry (filename lacks a valid CarettaId prefix)",
-            path.display()
-        )));
+/// If the entry has a task with a closed status and no `closed_at`, set it to now.
+fn sync_closed_at(entry: &mut Entry) {
+    if let Some(task) = &mut entry.frontmatter.task {
+        let is_closed = matches!(task.status.as_str(), "done" | "cancelled" | "archived");
+        if is_closed && task.closed_at.is_none() {
+            task.closed_at = Some(chrono::Local::now().naive_local());
+        }
     }
+}
 
-    let entry = read_entry(path)?;
+/// Core fix logic on an already-loaded entry: sync `closed_at`, optionally update
+/// `updated_at`, write the file, and rename it if the filename no longer matches the
+/// frontmatter.
+///
+/// `touch`: if `true`, refresh `updated_at` to the current time before writing.
+///
+/// Returns `Some(new_path)` if the file was renamed, `None` otherwise.
+fn fix_entry_mut(entry: &mut Entry, touch: bool) -> Result<Option<PathBuf>> {
+    sync_closed_at(entry);
+    if touch {
+        entry.frontmatter.updated_at = chrono::Local::now().naive_local();
+    }
+    std::fs::write(&entry.path, render_entry(entry))?;
+
     let expected = entry_filename_from_frontmatter(entry.frontmatter.id, &entry.frontmatter);
+    let path = entry.path.clone();
     let actual = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
 
     if actual == expected {
@@ -619,8 +630,27 @@ pub fn fix_entry(path: &Path) -> Result<Option<PathBuf>> {
     }
 
     let new_path = path.parent().unwrap_or_else(|| Path::new(".")).join(&expected);
-    std::fs::rename(path, &new_path)?;
+    std::fs::rename(&path, &new_path)?;
     Ok(Some(new_path))
+}
+
+/// Normalize an entry: sync `closed_at`, rename the file to match its frontmatter
+/// ID and title/slug, and optionally refresh `updated_at`.
+///
+/// `touch`: if `true`, update `updated_at` to the current time.
+///
+/// Returns `Some(new_path)` if the file was renamed, `None` if it was already correct.
+/// Returns `Err` if the file is not a managed entry.
+pub fn fix_entry(path: &Path, touch: bool) -> Result<Option<PathBuf>> {
+    if !is_managed_filename(path) {
+        return Err(Error::InvalidEntry(format!(
+            "{}: not a managed entry (filename lacks a valid CarettaId prefix)",
+            path.display()
+        )));
+    }
+
+    let mut entry = read_entry(path)?;
+    fix_entry_mut(&mut entry, touch)
 }
 
 // ── remove ────────────────────────────────────────────────────────────────────
