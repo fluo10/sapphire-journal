@@ -23,8 +23,8 @@
 //! - `entries`: core metadata.  `id INTEGER PRIMARY KEY` uses CarettaId as i64
 //!   via the `caretta-id` crate's `rusqlite` feature.
 //! - `tags`: many-to-many tag index for efficient tag filtering.
-//! - `entries_fts`: FTS5 virtual table (unicode61) over `title` + `body` for
-//!   full-text search.
+//! - `entries_fts`: FTS5 virtual table (trigram tokenizer) over `title` + `body`
+//!   for full-text search. Trigram enables substring search and CJK text with no spaces.
 //!
 //! # Schema versioning
 //!
@@ -88,7 +88,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
     body,
     content    = 'entries',
     content_rowid = 'id',
-    tokenize   = 'unicode61'
+    tokenize   = 'trigram'
 );
 ";
 

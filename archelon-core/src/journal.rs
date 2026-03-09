@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use caretta_id::CarettaId;
 use chrono::Datelike as _;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::error::{Error, Result};
 
@@ -119,17 +120,17 @@ impl Journal {
     }
 
     /// Return the stable journal ID, generating and persisting it if not yet set.
-    pub fn journal_id(&self) -> Result<CarettaId> {
+    pub fn journal_id(&self) -> Result<Uuid> {
         let config = self.config()?;
         if let Some(id) = config.journal.id {
             return Ok(id);
         }
-        let id = CarettaId::now_unix();
+        let id = Uuid::new_v4();
         self.save_journal_id(id)?;
         Ok(id)
     }
 
-    fn save_journal_id(&self, id: CarettaId) -> Result<()> {
+    fn save_journal_id(&self, id: Uuid) -> Result<()> {
         let mut config = self.config()?;
         config.journal.id = Some(id);
         let path = self.archelon_dir().join("config.toml");
@@ -198,7 +199,7 @@ pub struct JournalSection {
     /// Generated on first cache access and stored here so the cache survives
     /// directory moves and is never synced by git/Syncthing/Nextcloud.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<CarettaId>,
+    pub id: Option<Uuid>,
 }
 
 impl Default for JournalSection {
