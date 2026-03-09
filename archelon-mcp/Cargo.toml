@@ -5,6 +5,8 @@ edition.workspace = true
 description = "MCP server for archelon"
 license.workspace = true
 repository.workspace = true
+categories = ["command-line-utilities", "text-processing"]
+keywords = ["markdown", "task-management", "notes", "mcp", "mcp-server"]
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target_os }-{ target_arch }{ binary-ext }"

@@ -5,6 +5,8 @@ version.workspace = true
 description.workspace = true
 license.workspace = true
 repository.workspace = true
+categories = ["text-processing", "filesystem", "data-structures"]
+keywords = ["markdown", "task-management", "notes", "frontmatter", "plain-text"]
 
 [dependencies]
 caretta-id = { version = "0.10", features = ["serde"] }
