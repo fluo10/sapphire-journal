@@ -260,31 +260,26 @@ impl MatchLabel {
 /// entry is returned with an empty label list.
 pub fn list_entries(
     journal_dir: Option<&Path>,
-    path: Option<&Path>,
     filter: &EntryFilter,
 ) -> Result<Vec<(Entry, Vec<MatchLabel>)>> {
-    // When listing the full journal (no directory override), use the SQLite cache.
-    // The sync here also keeps the cache up-to-date as a side effect.
-    if path.is_none() {
-        let journal_opt = if let Some(dir) = journal_dir {
-            Journal::from_root(dir.to_path_buf()).ok()
-        } else {
-            Journal::find().ok()
-        };
-        if let Some(ref journal) = journal_opt {
-            if let Ok(conn) = cache::open_cache(journal) {
-                let _ = cache::sync_cache(journal, &conn);
-                if let Ok(entries) = cache::list_entries_from_cache(&conn) {
-                    return apply_filter_and_sort(entries, filter);
-                }
-            }
+    let journal = if let Some(dir) = journal_dir {
+        Journal::from_root(dir.to_path_buf())?
+    } else {
+        Journal::find()?
+    };
+
+    // Try the cache first; the sync also keeps it up-to-date as a side effect.
+    if let Ok(conn) = cache::open_cache(&journal) {
+        let _ = cache::sync_cache(&journal, &conn);
+        if let Ok(entries) = cache::list_entries_from_cache(&conn) {
+            return apply_filter_and_sort(entries, filter);
         }
     }
 
-    // Fallback: read from disk (used when a path override is given or cache is unavailable).
-    let paths = collect_entries(journal_dir, path)?;
-    let mut result = Vec::new();
+    // Fallback: read from disk when the cache is unavailable.
+    let paths = journal.collect_entries()?;
     let has_filter = filter.has_any_filter();
+    let mut result = Vec::new();
     for p in &paths {
         if !is_managed_filename(p) {
             continue;
@@ -302,14 +297,12 @@ pub fn list_entries(
         }
         result.push((entry, labels));
     }
-
     if let Some(field) = filter.sort_by {
         result.sort_by(|(a, _), (b, _)| {
             let ord = sort_cmp(a, b, field);
             if filter.sort_order == SortOrder::Desc { ord.reverse() } else { ord }
         });
     }
-
     Ok(result)
 }
 
@@ -368,40 +361,6 @@ fn cmp_opt<T: Ord>(a: Option<T>, b: Option<T>) -> Ordering {
     }
 }
 
-/// Collect `.md` file paths for listing.
-///
-/// Priority:
-/// 1. `path` argument — scan only that directory
-/// 2. `journal_dir` argument — use journal root + year subdirs
-/// 3. Auto-detect journal from CWD
-/// 4. Fall back to `"."`
-pub fn collect_entries(journal_dir: Option<&Path>, path: Option<&Path>) -> Result<Vec<PathBuf>> {
-    if let Some(v) = path {
-        let mut paths: Vec<_> = std::fs::read_dir(v)?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
-            .collect();
-        paths.sort();
-        return Ok(paths);
-    }
-
-    if let Some(dir) = journal_dir {
-        return Journal::from_root(dir.to_path_buf())?.collect_entries();
-    }
-
-    if let Ok(journal) = Journal::find() {
-        return journal.collect_entries();
-    }
-
-    let mut paths: Vec<_> = std::fs::read_dir(".")?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
-        .collect();
-    paths.sort();
-    Ok(paths)
-}
 
 // ── EntryFields ───────────────────────────────────────────────────────────────
 

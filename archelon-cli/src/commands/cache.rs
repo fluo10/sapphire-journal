@@ -44,6 +44,7 @@ fn info(journal: &Journal) -> Result<()> {
     let info = cache::cache_info(journal, &conn)?;
     println!("path:           {}", info.db_path.display());
     println!("schema version: v{} (app: v{})", info.schema_version, cache::SCHEMA_VERSION);
+    println!("files tracked:  {}", info.file_count);
     println!("entries:        {}", info.entry_count);
     println!("unique tags:    {}", info.unique_tag_count);
     Ok(())

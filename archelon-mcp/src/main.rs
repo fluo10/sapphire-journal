@@ -304,7 +304,7 @@ impl ArchelonServer {
             };
 
             let has_filter = filter.has_any_filter();
-            let entries = ops::list_entries(self.journal_dir.as_deref(), None, &filter)?;
+            let entries = ops::list_entries(self.journal_dir.as_deref(), &filter)?;
 
             let records: Vec<serde_json::Value> = entries
                 .iter()
@@ -486,10 +486,11 @@ impl ArchelonServer {
             let conn = cache::open_cache(&journal)?;
             let info = cache::cache_info(&journal, &conn)?;
             Ok(format!(
-                "path: {}\nschema version: v{} (app: v{})\nentries: {}\nunique tags: {}",
+                "path: {}\nschema version: v{} (app: v{})\nfiles tracked: {}\nentries: {}\nunique tags: {}",
                 info.db_path.display(),
                 info.schema_version,
                 cache::SCHEMA_VERSION,
+                info.file_count,
                 info.entry_count,
                 info.unique_tag_count,
             ))

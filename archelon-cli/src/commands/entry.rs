@@ -17,9 +17,6 @@ use std::{
 pub enum EntryCommand {
     /// List entries; optionally filter by period, field selectors, task status, and tags
     List {
-        /// Directory to search (defaults to journal root, then current directory)
-        path: Option<PathBuf>,
-
         /// Time range to filter against. Without field selectors (--task-due, --event-span,
         /// --created-at, --updated-at) the period is applied to all timestamp fields (OR).
         /// Add field selectors to restrict matching to specific fields.
@@ -208,7 +205,7 @@ impl From<EntryFields> for CoreEntryFields {
 
 pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
     match cmd {
-        EntryCommand::List { path, period, task_due, event_span, created_at, updated_at, task_status, tags, overdue, task_started, sort_by, sort_order, json } => {
+        EntryCommand::List { period, task_due, event_span, created_at, updated_at, task_status, tags, overdue, task_started, sort_by, sort_order, json } => {
             // Resolve week_start from journal config (needed for this_week parsing)
             let week_start = open_journal(journal_dir)
                 .and_then(|j| j.config().map_err(Into::into))
@@ -230,7 +227,7 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
                 sort_order: sort_order.parse::<SortOrder>().map_err(anyhow::Error::msg)?,
             };
 
-            let entries = ops::list_entries(journal_dir, path.as_deref(), &filter)?;
+            let entries = ops::list_entries(journal_dir, &filter)?;
             print_entries(&entries, filter.has_any_filter(), json)
         }
         EntryCommand::Show { entry } => show(&resolve_entry(journal_dir, &entry)?),

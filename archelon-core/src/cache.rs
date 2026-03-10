@@ -20,8 +20,13 @@
 //!
 //! # Schema
 //!
-//! - `entries`: core metadata.  `id INTEGER PRIMARY KEY` uses CarettaId as i64
-//!   via the `caretta-id` crate's `rusqlite` feature.
+//! - `files`: tracks every `.md` file ever scanned (path + mtime).  Covers both
+//!   managed entries and non-managed files (e.g. `README.md`).  A file whose mtime
+//!   is unchanged is skipped entirely on subsequent syncs — preventing repeated
+//!   parse-failure warnings for unmanaged files.
+//! - `entries`: managed-entry metadata.  `id INTEGER PRIMARY KEY` uses CarettaId as
+//!   i64.  `path` has an FK to `files(path) ON DELETE CASCADE` so removing a row
+//!   from `files` automatically removes the corresponding entry.
 //! - `tags`: many-to-many tag index for efficient tag filtering.
 //! - `entries_fts`: FTS5 virtual table (trigram tokenizer) over `title` + `body`
 //!   for full-text search. Trigram enables substring search and CJK text with no spaces.
@@ -56,11 +61,15 @@ pub const SCHEMA_VERSION: i32 = 1;
 // ── schema ────────────────────────────────────────────────────────────────────
 
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS files (
+    path       TEXT    PRIMARY KEY,
+    file_mtime INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS entries (
     id              INTEGER PRIMARY KEY,
     parent_id       INTEGER REFERENCES entries(id),
-    path            TEXT    NOT NULL UNIQUE,
-    file_mtime      INTEGER NOT NULL,
+    path            TEXT    NOT NULL UNIQUE REFERENCES files(path) ON DELETE CASCADE,
     title           TEXT    NOT NULL DEFAULT '',
     created_at      TEXT,
     updated_at      TEXT,
@@ -127,6 +136,8 @@ pub fn rebuild_cache(journal: &Journal) -> Result<Connection> {
 pub struct CacheInfo {
     pub db_path: PathBuf,
     pub schema_version: i32,
+    /// Total `.md` files tracked (managed entries + unmanaged files like README.md).
+    pub file_count: u64,
     pub entry_count: u64,
     pub unique_tag_count: u64,
 }
@@ -136,11 +147,13 @@ pub fn cache_info(journal: &Journal, conn: &Connection) -> Result<CacheInfo> {
     let db_path = journal.cache_db_path()?;
     let schema_version =
         conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i32>(0))?;
+    let file_count =
+        conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, u64>(0))?;
     let entry_count =
         conn.query_row("SELECT COUNT(*) FROM entries", [], |row| row.get::<_, u64>(0))?;
     let unique_tag_count =
         conn.query_row("SELECT COUNT(DISTINCT tag) FROM tags", [], |row| row.get::<_, u64>(0))?;
-    Ok(CacheInfo { db_path, schema_version, entry_count, unique_tag_count })
+    Ok(CacheInfo { db_path, schema_version, file_count, entry_count, unique_tag_count })
 }
 
 // ── open helpers ──────────────────────────────────────────────────────────────
@@ -207,43 +220,68 @@ pub fn sync_cache(journal: &Journal, conn: &Connection) -> Result<()> {
         .iter()
         .map(|(p, _)| p.to_string_lossy().into_owned())
         .collect();
-    let db_entries = query_all_mtimes(conn)?;
 
-    let mut changed = false;
+    // `files` table tracks ALL scanned .md files (managed + unmanaged).
+    // Using it as the mtime store means non-managed files (e.g. README.md) whose
+    // mtime hasn't changed are skipped entirely — no repeated parse-failure warn.
+    let db_files = query_all_mtimes(conn)?;
+
+    let mut entry_changed = false;
 
     conn.execute_batch("BEGIN")?;
 
-    // ── upsert new / modified ────────────────────────────────────────────────
+    // ── upsert new / modified files ──────────────────────────────────────────
     for (path, mtime) in &disk_files {
         let path_str = path.to_string_lossy();
-        let needs_update = db_entries
+        let needs_update = db_files
             .get(path_str.as_ref())
             .map_or(true, |&stored| stored != *mtime);
 
         if needs_update {
+            // Record in `files` first; `entries.path` has an FK to `files.path`.
+            conn.execute(
+                "INSERT OR REPLACE INTO files (path, file_mtime) VALUES (?1, ?2)",
+                params![path_str.as_ref(), mtime],
+            )?;
             match read_entry(path) {
                 Ok(entry) => {
-                    upsert_entry(conn, &entry, *mtime)?;
-                    changed = true;
+                    upsert_entry(conn, &entry)?;
+                    entry_changed = true;
                 }
-                Err(e) => eprintln!("warn: {}: {e}", path.display()),
+                Err(e) => {
+                    // File changed but is not a valid entry — remove any stale entry row.
+                    conn.execute(
+                        "DELETE FROM entries WHERE path = ?1",
+                        [path_str.as_ref()],
+                    )?;
+                    eprintln!("warn: {}: {e}", path.display());
+                }
             }
         }
     }
 
-    // ── delete removed files ─────────────────────────────────────────────────
-    for db_path in db_entries.keys() {
+    // ── delete files removed from disk ───────────────────────────────────────
+    for db_path in db_files.keys() {
         if !disk_paths.contains(db_path.as_str()) {
-            conn.execute("DELETE FROM entries WHERE path = ?1", [db_path])?;
-            changed = true;
+            let was_entry = conn
+                .query_row(
+                    "SELECT 1 FROM entries WHERE path = ?1",
+                    [db_path.as_str()],
+                    |_| Ok(()),
+                )
+                .is_ok();
+            // Deleting from `files` cascades to `entries` and then `tags`.
+            conn.execute("DELETE FROM files WHERE path = ?1", [db_path])?;
+            if was_entry {
+                entry_changed = true;
+            }
         }
     }
 
     conn.execute_batch("COMMIT")?;
 
-    // Rebuild FTS5 index from the entries content table.
-    // Only runs when something actually changed, so clean invocations are fast.
-    if changed {
+    // Rebuild FTS5 only when the entries table actually changed.
+    if entry_changed {
         conn.execute_batch("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")?;
     }
 
@@ -436,7 +474,8 @@ pub fn remove_from_cache(conn: &Connection, path: &Path) -> Result<()> {
         )
         .ok();
 
-    conn.execute("DELETE FROM entries WHERE path = ?1", [path_str.as_ref()])?;
+    // Deleting from `files` cascades to `entries` (and then to `tags`).
+    conn.execute("DELETE FROM files WHERE path = ?1", [path_str.as_ref()])?;
 
     if let Some((id, title, body)) = fts_data {
         // Remove the entry's tokens from the FTS5 index.
@@ -457,8 +496,13 @@ pub fn remove_from_cache(conn: &Connection, path: &Path) -> Result<()> {
 pub fn upsert_entry_from_path(conn: &Connection, path: &Path) -> Result<()> {
     let mtime = file_mtime(path)?;
     let entry = read_entry(path)?;
-    upsert_entry(conn, &entry, mtime)?;
-    // Rebuild FTS5 for just this one entry.
+    let path_str = path.to_string_lossy();
+    // Insert into `files` first; `entries.path` has an FK to `files.path`.
+    conn.execute(
+        "INSERT OR REPLACE INTO files (path, file_mtime) VALUES (?1, ?2)",
+        params![path_str.as_ref(), mtime],
+    )?;
+    upsert_entry(conn, &entry)?;
     conn.execute_batch("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")?;
     Ok(())
 }
@@ -484,30 +528,29 @@ fn file_mtime(path: &Path) -> Result<i64> {
 }
 
 fn query_all_mtimes(conn: &Connection) -> Result<HashMap<String, i64>> {
-    let mut stmt = conn.prepare("SELECT path, file_mtime FROM entries")?;
+    let mut stmt = conn.prepare("SELECT path, file_mtime FROM files")?;
     let result = stmt
         .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?
         .collect::<rusqlite::Result<HashMap<_, _>>>()?;
     Ok(result)
 }
 
-fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry, mtime: i64) -> Result<()> {
+fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
     let fm = &entry.frontmatter;
     let path_str = entry.path.to_string_lossy();
 
     conn.execute(
         "INSERT OR REPLACE INTO entries (
-            id, parent_id, path, file_mtime,
+            id, parent_id, path,
             title, created_at, updated_at,
             is_task, task_status, task_due, task_started_at, task_closed_at,
             is_event, event_start, event_end,
             body
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             fm.id,
             fm.parent_id,
             path_str.as_ref(),
-            mtime,
             fm.title,
             fm.created_at.format("%Y-%m-%dT%H:%M").to_string(),
             fm.updated_at.format("%Y-%m-%dT%H:%M").to_string(),
