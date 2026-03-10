@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use caretta_id::CarettaId;
 use chrono::Datelike as _;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::error::{Error, Result};
 
@@ -117,6 +118,50 @@ impl Journal {
         }
         Ok(dirs)
     }
+
+    /// Return the stable journal ID, generating and persisting it if not yet set.
+    pub fn journal_id(&self) -> Result<Uuid> {
+        let config = self.config()?;
+        if let Some(id) = config.journal.id {
+            return Ok(id);
+        }
+        let id = Uuid::new_v4();
+        self.save_journal_id(id)?;
+        Ok(id)
+    }
+
+    fn save_journal_id(&self, id: Uuid) -> Result<()> {
+        let mut config = self.config()?;
+        config.journal.id = Some(id);
+        let path = self.archelon_dir().join("config.toml");
+        let content = toml::to_string_pretty(&config)
+            .map_err(|e| Error::InvalidConfig(e.to_string()))?;
+        std::fs::write(&path, content)?;
+        Ok(())
+    }
+
+    /// Path to the machine-local SQLite cache for this journal.
+    ///
+    /// Resolves to `$XDG_CACHE_HOME/archelon/{journal_id}/cache.db`
+    /// (or `~/.cache/archelon/...` when `XDG_CACHE_HOME` is not set).
+    /// The cache is intentionally outside the journal directory so it is
+    /// never synced by git, Syncthing, or Nextcloud.
+    pub fn cache_db_path(&self) -> Result<PathBuf> {
+        let id = self.journal_id()?;
+        Ok(xdg_cache_home().join("archelon").join(id.to_string()).join("cache.db"))
+    }
+}
+
+fn xdg_cache_home() -> PathBuf {
+    if let Ok(dir) = std::env::var("XDG_CACHE_HOME") {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join(".cache");
+    }
+    std::env::temp_dir()
 }
 
 fn collect_md_in(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
@@ -148,11 +193,18 @@ pub struct JournalSection {
     /// First day of the week, used by `--this-week`. Defaults to `monday`.
     #[serde(default)]
     pub week_start: WeekStart,
+
+    /// Stable identifier for this journal, used to locate the machine-local
+    /// SQLite cache at `$XDG_CACHE_HOME/archelon/{id}/cache.db`.
+    /// Generated on first cache access and stored here so the cache survives
+    /// directory moves and is never synced by git/Syncthing/Nextcloud.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<Uuid>,
 }
 
 impl Default for JournalSection {
     fn default() -> Self {
-        JournalSection { timezone: "UTC".to_owned(), week_start: WeekStart::Monday }
+        JournalSection { timezone: "UTC".to_owned(), week_start: WeekStart::Monday, id: None }
     }
 }
 
@@ -166,22 +218,6 @@ pub enum WeekStart {
 }
 
 // ── filename helpers ──────────────────────────────────────────────────────────
-
-/// Return `true` if `path` follows the archelon-managed filename convention:
-/// `{7-char-CarettaId}_{slug}.md` or `{7-char-CarettaId}.md`.
-pub fn is_managed_filename(path: &Path) -> bool {
-    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-        return false;
-    };
-    let Some(id_str) = stem.get(..7) else {
-        return false;
-    };
-    if id_str.parse::<CarettaId>().is_err() {
-        return false;
-    }
-    let rest = &stem[7..];
-    rest.is_empty() || rest.starts_with('_')
-}
 
 /// Convert a title to a filename-safe slug.
 ///

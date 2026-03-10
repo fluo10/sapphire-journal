@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use archelon_core::{
+    cache,
     entry_ref::EntryRef,
     journal::Journal,
     ops::{self, EntryFields as CoreEntryFields, EntryFilter, FieldSelector, MatchLabel, SortField, SortOrder},
@@ -16,9 +17,6 @@ use std::{
 pub enum EntryCommand {
     /// List entries; optionally filter by period, field selectors, task status, and tags
     List {
-        /// Directory to search (defaults to journal root, then current directory)
-        path: Option<PathBuf>,
-
         /// Time range to filter against. Without field selectors (--task-due, --event-span,
         /// --created-at, --updated-at) the period is applied to all timestamp fields (OR).
         /// Add field selectors to restrict matching to specific fields.
@@ -203,7 +201,7 @@ impl From<EntryFields> for CoreEntryFields {
 
 pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
     match cmd {
-        EntryCommand::List { path, period, task_due, event_span, created_at, updated_at, task_status, tags, overdue, task_started, sort_by, sort_order, json } => {
+        EntryCommand::List { period, task_due, event_span, created_at, updated_at, task_status, tags, overdue, task_started, sort_by, sort_order, json } => {
             // Resolve week_start from journal config (needed for this_week parsing)
             let week_start = open_journal(journal_dir)
                 .and_then(|j| j.config().map_err(Into::into))
@@ -225,7 +223,7 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
                 sort_order: sort_order.parse::<SortOrder>().map_err(anyhow::Error::msg)?,
             };
 
-            let entries = ops::list_entries(journal_dir, path.as_deref(), &filter)?;
+            let entries = ops::list_entries(journal_dir, &filter)?;
             print_entries(&entries, filter.has_any_filter(), json)
         }
         EntryCommand::Show { entry } => show(&resolve_entry(journal_dir, &entry)?),
@@ -234,7 +232,7 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
             if new {
                 edit_new(journal_dir)
             } else if let Some(e) = entry {
-                edit(&resolve_entry(journal_dir, &e)?)
+                edit(&resolve_entry(journal_dir, &e)?, journal_dir)
             } else {
                 bail!("specify an entry or use --new to create one")
             }
@@ -364,13 +362,16 @@ fn new(journal_dir: Option<&Path>, fields: EntryFields) -> Result<()> {
     let title = fields.title.clone().unwrap_or_default();
     let body = fields.body.clone().unwrap_or_default();
     let dest = ops::create_entry(&journal, &title, body, fields.into())?;
+    if let Ok(conn) = cache::open_cache(&journal) {
+        let _ = cache::upsert_entry_from_path(&conn, &dest);
+    }
     println!("created: {}", dest.display());
     Ok(())
 }
 
 // ── edit ──────────────────────────────────────────────────────────────────────
 
-fn edit(path: &Path) -> Result<()> {
+fn edit(path: &Path, journal_dir: Option<&Path>) -> Result<()> {
     if !path.exists() {
         bail!("{} does not exist", path.display());
     }
@@ -382,9 +383,14 @@ fn edit(path: &Path) -> Result<()> {
     if !status.success() {
         bail!("editor exited with non-zero status");
     }
-    match ops::fix_entry(path, true)? {
-        Some(new_path) => println!("updated: {}", new_path.display()),
-        None => println!("updated: {}", path.display()),
+    let final_path = match ops::fix_entry(path, true)? {
+        Some(new_path) => { println!("updated: {}", new_path.display()); new_path }
+        None           => { println!("updated: {}", path.display()); path.to_path_buf() }
+    };
+    if let Ok(journal) = open_journal(journal_dir) {
+        if let Ok(conn) = cache::open_cache(&journal) {
+            let _ = cache::upsert_entry_from_path(&conn, &final_path);
+        }
     }
     Ok(())
 }
@@ -403,9 +409,12 @@ fn edit_new(journal_dir: Option<&Path>) -> Result<()> {
         bail!("editor exited with non-zero status");
     }
 
-    match ops::fix_entry(&path, true)? {
-        Some(new_path) => println!("created: {}", new_path.display()),
-        None => println!("created: {}", path.display()),
+    let final_path = match ops::fix_entry(&path, true)? {
+        Some(new_path) => { println!("created: {}", new_path.display()); new_path }
+        None           => { println!("created: {}", path.display()); path }
+    };
+    if let Ok(conn) = cache::open_cache(&journal) {
+        let _ = cache::upsert_entry_from_path(&conn, &final_path);
     }
     Ok(())
 }
@@ -429,7 +438,14 @@ fn set(journal_dir: Option<&Path>, path: &Path, fields: EntryFields) -> Result<(
     let _ = journal_dir; // reserved for future use
     let title = fields.title.clone();
     let body = fields.body.clone();
-    if let Some(new_path) = ops::update_entry(path, title, body, fields.into())? {
+    let new_path_opt = ops::update_entry(path, title, body, fields.into())?;
+    let final_path = new_path_opt.as_deref().unwrap_or(path);
+    if let Ok(journal) = open_journal(journal_dir) {
+        if let Ok(conn) = cache::open_cache(&journal) {
+            let _ = cache::upsert_entry_from_path(&conn, final_path);
+        }
+    }
+    if let Some(new_path) = new_path_opt {
         println!("updated and renamed: {}", new_path.display());
     } else {
         println!("updated: {}", path.display());
@@ -486,6 +502,12 @@ fn entry_path(journal_dir: Option<&Path>, entry: Option<&str>, new: bool) -> Res
 fn remove(journal_dir: Option<&Path>, entry: &str) -> Result<()> {
     let path = resolve_entry(journal_dir, entry)?;
     ops::remove_entry(&path)?;
+    // Keep the cache consistent after explicit deletion.
+    if let Ok(journal) = open_journal(journal_dir) {
+        if let Ok(conn) = archelon_core::cache::open_cache(&journal) {
+            let _ = archelon_core::cache::remove_from_cache(&conn, &path);
+        }
+    }
     println!("removed: {}", path.display());
     Ok(())
 }

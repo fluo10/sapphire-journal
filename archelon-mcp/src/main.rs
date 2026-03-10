@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use clap::Parser;
 use archelon_core::{
+    cache,
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
     ops::{self, EntryFields, EntryFilter, FieldSelector, SortField, SortOrder},
@@ -303,7 +304,7 @@ impl ArchelonServer {
             };
 
             let has_filter = filter.has_any_filter();
-            let entries = ops::list_entries(self.journal_dir.as_deref(), None, &filter)?;
+            let entries = ops::list_entries(self.journal_dir.as_deref(), &filter)?;
 
             let records: Vec<serde_json::Value> = entries
                 .iter()
@@ -467,7 +468,61 @@ impl ArchelonServer {
         (|| -> anyhow::Result<String> {
             let path = self.resolve_entry(&p.entry)?;
             ops::remove_entry(&path)?;
+            // Keep the cache consistent after explicit deletion.
+            if let Ok(journal) = self.open_journal() {
+                if let Ok(conn) = cache::open_cache(&journal) {
+                    let _ = cache::remove_from_cache(&conn, &path);
+                }
+            }
             Ok(format!("removed: {}", path.display()))
+        })()
+        .map_err(|e| e.to_string())
+    }
+
+    #[tool(description = "Show cache location, schema version, and entry/tag counts.")]
+    fn cache_info(&self, _: Parameters<serde_json::Value>) -> Result<String, String> {
+        (|| -> anyhow::Result<String> {
+            let journal = self.open_journal()?;
+            let conn = cache::open_cache(&journal)?;
+            let info = cache::cache_info(&journal, &conn)?;
+            Ok(format!(
+                "path: {}\nschema version: v{} (app: v{})\nfiles tracked: {}\nentries: {}\nunique tags: {}",
+                info.db_path.display(),
+                info.schema_version,
+                cache::SCHEMA_VERSION,
+                info.file_count,
+                info.entry_count,
+                info.unique_tag_count,
+            ))
+        })()
+        .map_err(|e| e.to_string())
+    }
+
+    #[tool(description = "Incrementally sync the cache with the current journal state. \
+        Re-indexes files whose mtime has changed and removes entries for deleted files. \
+        Returns the number of entries in the cache after sync.")]
+    fn cache_sync(&self, _: Parameters<serde_json::Value>) -> Result<String, String> {
+        (|| -> anyhow::Result<String> {
+            let journal = self.open_journal()?;
+            let conn = cache::open_cache(&journal)?;
+            cache::sync_cache(&journal, &conn)?;
+            let info = cache::cache_info(&journal, &conn)?;
+            Ok(format!("synced: {} entries", info.entry_count))
+        })()
+        .map_err(|e| e.to_string())
+    }
+
+    #[tool(description = "Rebuild the local SQLite cache from scratch. \
+        Use this after updating archelon when the schema has changed, \
+        or when the cache has become inconsistent. \
+        Returns the number of entries indexed.")]
+    fn cache_rebuild(&self, _: Parameters<serde_json::Value>) -> Result<String, String> {
+        (|| -> anyhow::Result<String> {
+            let journal = self.open_journal()?;
+            let conn = cache::rebuild_cache(&journal)?;
+            cache::sync_cache(&journal, &conn)?;
+            let info = cache::cache_info(&journal, &conn)?;
+            Ok(format!("rebuilt: {} entries indexed", info.entry_count))
         })()
         .map_err(|e| e.to_string())
     }

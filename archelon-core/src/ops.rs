@@ -12,10 +12,11 @@ use caretta_id::CarettaId;
 use chrono::{Datelike as _, NaiveDateTime};
 
 use crate::{
+    cache,
     entry::{Entry, EventMeta, Frontmatter, TaskMeta},
     entry_ref::EntryRef,
     error::{Error, Result},
-    journal::{is_managed_filename, Journal, slugify},
+    journal::{Journal, slugify},
     parser::{read_entry, render_entry},
     period::Period,
 };
@@ -259,17 +260,27 @@ impl MatchLabel {
 /// entry is returned with an empty label list.
 pub fn list_entries(
     journal_dir: Option<&Path>,
-    path: Option<&Path>,
     filter: &EntryFilter,
 ) -> Result<Vec<(Entry, Vec<MatchLabel>)>> {
-    let paths = collect_entries(journal_dir, path)?;
+    let journal = if let Some(dir) = journal_dir {
+        Journal::from_root(dir.to_path_buf())?
+    } else {
+        Journal::find()?
+    };
+
+    // Try the cache first; the sync also keeps it up-to-date as a side effect.
+    if let Ok(conn) = cache::open_cache(&journal) {
+        let _ = cache::sync_cache(&journal, &conn);
+        if let Ok(entries) = cache::list_entries_from_cache(&conn) {
+            return apply_filter_and_sort(entries, filter);
+        }
+    }
+
+    // Fallback: read from disk when the cache is unavailable.
+    let paths = journal.collect_entries()?;
     let has_filter = filter.has_any_filter();
     let mut result = Vec::new();
-
     for p in &paths {
-        if !is_managed_filename(p) {
-            continue;
-        }
         let entry = match read_entry(p) {
             Ok(e) => e,
             Err(e) => {
@@ -283,14 +294,31 @@ pub fn list_entries(
         }
         result.push((entry, labels));
     }
-
     if let Some(field) = filter.sort_by {
         result.sort_by(|(a, _), (b, _)| {
             let ord = sort_cmp(a, b, field);
             if filter.sort_order == SortOrder::Desc { ord.reverse() } else { ord }
         });
     }
+    Ok(result)
+}
 
+fn apply_filter_and_sort(entries: Vec<Entry>, filter: &EntryFilter) -> Result<Vec<(Entry, Vec<MatchLabel>)>> {
+    let has_filter = filter.has_any_filter();
+    let mut result = Vec::new();
+    for entry in entries {
+        let (include, labels) = filter.matches(&entry);
+        if has_filter && !include {
+            continue;
+        }
+        result.push((entry, labels));
+    }
+    if let Some(field) = filter.sort_by {
+        result.sort_by(|(a, _), (b, _)| {
+            let ord = sort_cmp(a, b, field);
+            if filter.sort_order == SortOrder::Desc { ord.reverse() } else { ord }
+        });
+    }
     Ok(result)
 }
 
@@ -330,40 +358,6 @@ fn cmp_opt<T: Ord>(a: Option<T>, b: Option<T>) -> Ordering {
     }
 }
 
-/// Collect `.md` file paths for listing.
-///
-/// Priority:
-/// 1. `path` argument — scan only that directory
-/// 2. `journal_dir` argument — use journal root + year subdirs
-/// 3. Auto-detect journal from CWD
-/// 4. Fall back to `"."`
-pub fn collect_entries(journal_dir: Option<&Path>, path: Option<&Path>) -> Result<Vec<PathBuf>> {
-    if let Some(v) = path {
-        let mut paths: Vec<_> = std::fs::read_dir(v)?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
-            .collect();
-        paths.sort();
-        return Ok(paths);
-    }
-
-    if let Some(dir) = journal_dir {
-        return Journal::from_root(dir.to_path_buf())?.collect_entries();
-    }
-
-    if let Ok(journal) = Journal::find() {
-        return journal.collect_entries();
-    }
-
-    let mut paths: Vec<_> = std::fs::read_dir(".")?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
-        .collect();
-    paths.sort();
-    Ok(paths)
-}
 
 // ── EntryFields ───────────────────────────────────────────────────────────────
 
@@ -431,6 +425,7 @@ pub fn create_entry(
     let now = chrono::Local::now().naive_local();
     let frontmatter = Frontmatter {
         id,
+        parent_id: None,
         title: title.to_owned(),
         slug: fields.slug.unwrap_or_default(),
         tags,
@@ -583,7 +578,9 @@ pub fn resolve_entry(entry_ref: &EntryRef, journal_dir: Option<&Path>) -> Result
             } else {
                 Journal::find()?
             };
-            journal.find_entry_by_id(id)
+            let conn = cache::open_cache(&journal)?;
+            cache::sync_cache(&journal, &conn)?;
+            cache::find_entry_by_id(&conn, id)
         }
     }
 }
@@ -593,8 +590,6 @@ pub fn resolve_entry(entry_ref: &EntryRef, journal_dir: Option<&Path>) -> Result
 /// A problem reported by [`check_entry`].
 #[derive(Debug, Clone)]
 pub enum CheckIssue {
-    /// The file does not follow the archelon-managed filename convention.
-    UnmanagedFilename,
     /// The filename does not match the ID + title/slug derived from the frontmatter.
     FilenameMismatch {
         /// The filename the entry *should* have.
@@ -605,8 +600,6 @@ pub enum CheckIssue {
 impl CheckIssue {
     pub fn as_str(&self) -> String {
         match self {
-            CheckIssue::UnmanagedFilename =>
-                "not a managed entry (filename lacks a valid CarettaId prefix)".to_owned(),
             CheckIssue::FilenameMismatch { expected_filename } =>
                 format!("filename mismatch — should be `{expected_filename}`"),
         }
@@ -620,10 +613,6 @@ impl CheckIssue {
 /// Returns a (possibly empty) list of [`CheckIssue`]s.
 /// An empty list means the entry passes all checks.
 pub fn check_entry(path: &Path) -> Result<Vec<CheckIssue>> {
-    if !is_managed_filename(path) {
-        return Ok(vec![CheckIssue::UnmanagedFilename]);
-    }
-
     let entry = read_entry(path)?;
     let expected = entry_filename_from_frontmatter(entry.frontmatter.id, &entry.frontmatter);
     let actual = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
@@ -692,13 +681,6 @@ fn fix_entry_mut(entry: &mut Entry, touch: bool) -> Result<Option<PathBuf>> {
 /// Returns `Some(new_path)` if the file was renamed, `None` if it was already correct.
 /// Returns `Err` if the file is not a managed entry.
 pub fn fix_entry(path: &Path, touch: bool) -> Result<Option<PathBuf>> {
-    if !is_managed_filename(path) {
-        return Err(Error::InvalidEntry(format!(
-            "{}: not a managed entry (filename lacks a valid CarettaId prefix)",
-            path.display()
-        )));
-    }
-
     let mut entry = read_entry(path)?;
     fix_entry_mut(&mut entry, touch)
 }

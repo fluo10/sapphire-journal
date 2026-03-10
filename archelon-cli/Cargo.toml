@@ -5,6 +5,8 @@ version.workspace = true
 description.workspace = true
 license.workspace = true
 repository.workspace = true
+categories = ["command-line-utilities", "text-processing"]
+keywords = ["markdown", "task-management", "notes", "cli", "todo"]
 
 [[bin]]
 name = "archelon"

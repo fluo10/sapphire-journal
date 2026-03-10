@@ -5,12 +5,17 @@ version.workspace = true
 description.workspace = true
 license.workspace = true
 repository.workspace = true
+categories = ["text-processing", "filesystem", "data-structures"]
+keywords = ["markdown", "task-management", "notes", "frontmatter", "plain-text"]
 
 [dependencies]
-caretta-id = { version = "0.10", features = ["serde"] }
+caretta-id = { version = "0.10", features = ["serde", "rusqlite"] }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 toml = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 indexmap = { version = "2", features = ["serde"] }
 thiserror = "2"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
