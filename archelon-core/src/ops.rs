@@ -16,7 +16,7 @@ use crate::{
     entry::{Entry, EventMeta, Frontmatter, TaskMeta},
     entry_ref::EntryRef,
     error::{Error, Result},
-    journal::{is_managed_filename, Journal, slugify},
+    journal::{Journal, slugify},
     parser::{read_entry, render_entry},
     period::Period,
 };
@@ -248,6 +248,76 @@ impl MatchLabel {
     }
 }
 
+// ── tree ──────────────────────────────────────────────────────────────────────
+
+/// A node in an entry hierarchy returned by [`build_entry_tree`].
+pub struct EntryTreeNode {
+    pub entry: Entry,
+    pub labels: Vec<MatchLabel>,
+    pub children: Vec<EntryTreeNode>,
+}
+
+/// Organise a flat list of `(entry, labels)` pairs into a forest (list of
+/// root trees) based on each entry's `parent_id`.
+///
+/// An entry is treated as a root when its `parent_id` is `None` **or** when
+/// its parent is not present in the provided list.  Sibling order within each
+/// level mirrors the order of the input slice (i.e. the sort order chosen by
+/// the caller is preserved).
+pub fn build_entry_tree(entries: Vec<(Entry, Vec<MatchLabel>)>) -> Vec<EntryTreeNode> {
+    use std::collections::HashMap;
+
+    // Build an index: CarettaId → position in the input slice.
+    let id_index: HashMap<caretta_id::CarettaId, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, (e, _))| (e.frontmatter.id, i))
+        .collect();
+
+    // Determine which entries are roots (parent absent or parent not in list).
+    let is_root: Vec<bool> = entries
+        .iter()
+        .map(|(e, _)| {
+            e.frontmatter
+                .parent_id
+                .map_or(true, |pid| !id_index.contains_key(&pid))
+        })
+        .collect();
+
+    // Build children lists: parent_index → [child_indices] in input order.
+    let mut children_of: Vec<Vec<usize>> = vec![Vec::new(); entries.len()];
+    for (i, (e, _)) in entries.iter().enumerate() {
+        if let Some(pid) = e.frontmatter.parent_id {
+            if let Some(&parent_i) = id_index.get(&pid) {
+                children_of[parent_i].push(i);
+            }
+        }
+    }
+
+    // Move entries out of the Vec into a parallel structure of Options so we
+    // can take ownership during recursive construction without cloning.
+    let mut slots: Vec<Option<(Entry, Vec<MatchLabel>)>> =
+        entries.into_iter().map(Some).collect();
+
+    fn build_node(
+        idx: usize,
+        slots: &mut Vec<Option<(Entry, Vec<MatchLabel>)>>,
+        children_of: &Vec<Vec<usize>>,
+    ) -> EntryTreeNode {
+        let (entry, labels) = slots[idx].take().unwrap();
+        let children = children_of[idx]
+            .iter()
+            .map(|&ci| build_node(ci, slots, children_of))
+            .collect();
+        EntryTreeNode { entry, labels, children }
+    }
+
+    (0..slots.len())
+        .filter(|&i| is_root[i])
+        .map(|i| build_node(i, &mut slots, &children_of))
+        .collect()
+}
+
 // ── list ──────────────────────────────────────────────────────────────────────
 
 /// Collect and filter journal entries.
@@ -281,9 +351,6 @@ pub fn list_entries(
     let has_filter = filter.has_any_filter();
     let mut result = Vec::new();
     for p in &paths {
-        if !is_managed_filename(p) {
-            continue;
-        }
         let entry = match read_entry(p) {
             Ok(e) => e,
             Err(e) => {
@@ -430,7 +497,7 @@ pub fn create_entry(
         id,
         parent_id: None,
         title: title.to_owned(),
-        slug: fields.slug,
+        slug: fields.slug.unwrap_or_default(),
         tags,
         created_at: now,
         updated_at: now,
@@ -470,7 +537,7 @@ pub fn update_entry(path: &Path, title: Option<String>, body: Option<String>, fi
         entry.body = b;
     }
     if let Some(s) = fields.slug {
-        entry.frontmatter.slug = Some(s);
+        entry.frontmatter.slug = s;
     }
     if let Some(ts) = fields.tags {
         entry.frontmatter.tags = ts;
@@ -593,8 +660,6 @@ pub fn resolve_entry(entry_ref: &EntryRef, journal_dir: Option<&Path>) -> Result
 /// A problem reported by [`check_entry`].
 #[derive(Debug, Clone)]
 pub enum CheckIssue {
-    /// The file does not follow the archelon-managed filename convention.
-    UnmanagedFilename,
     /// The filename does not match the ID + title/slug derived from the frontmatter.
     FilenameMismatch {
         /// The filename the entry *should* have.
@@ -605,8 +670,6 @@ pub enum CheckIssue {
 impl CheckIssue {
     pub fn as_str(&self) -> String {
         match self {
-            CheckIssue::UnmanagedFilename =>
-                "not a managed entry (filename lacks a valid CarettaId prefix)".to_owned(),
             CheckIssue::FilenameMismatch { expected_filename } =>
                 format!("filename mismatch — should be `{expected_filename}`"),
         }
@@ -620,10 +683,6 @@ impl CheckIssue {
 /// Returns a (possibly empty) list of [`CheckIssue`]s.
 /// An empty list means the entry passes all checks.
 pub fn check_entry(path: &Path) -> Result<Vec<CheckIssue>> {
-    if !is_managed_filename(path) {
-        return Ok(vec![CheckIssue::UnmanagedFilename]);
-    }
-
     let entry = read_entry(path)?;
     let expected = entry_filename_from_frontmatter(entry.frontmatter.id, &entry.frontmatter);
     let actual = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
@@ -692,13 +751,6 @@ fn fix_entry_mut(entry: &mut Entry, touch: bool) -> Result<Option<PathBuf>> {
 /// Returns `Some(new_path)` if the file was renamed, `None` if it was already correct.
 /// Returns `Err` if the file is not a managed entry.
 pub fn fix_entry(path: &Path, touch: bool) -> Result<Option<PathBuf>> {
-    if !is_managed_filename(path) {
-        return Err(Error::InvalidEntry(format!(
-            "{}: not a managed entry (filename lacks a valid CarettaId prefix)",
-            path.display()
-        )));
-    }
-
     let mut entry = read_entry(path)?;
     fix_entry_mut(&mut entry, touch)
 }
@@ -715,9 +767,13 @@ pub fn remove_entry(path: &Path) -> Result<()> {
 /// Build the canonical filename for an entry using the frontmatter slug (if set)
 /// or `slugify(title)` as a fallback.
 fn entry_filename_from_frontmatter(id: CarettaId, fm: &Frontmatter) -> String {
-    let slug = fm.slug.clone().unwrap_or_else(|| {
-        if fm.title.is_empty() { String::new() } else { slugify(&fm.title) }
-    });
+    let slug = if !fm.slug.is_empty() {
+        fm.slug.clone()
+    } else if fm.title.is_empty() {
+        String::new()
+    } else {
+        slugify(&fm.title)
+    };
     if slug.is_empty() {
         format!("{id}.md")
     } else {

@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS entries (
     parent_id       INTEGER REFERENCES entries(id),
     path            TEXT    NOT NULL UNIQUE REFERENCES files(path) ON DELETE CASCADE,
     title           TEXT    NOT NULL DEFAULT '',
+    slug            TEXT    NOT NULL DEFAULT '',
     created_at      TEXT,
     updated_at      TEXT,
     is_task         INTEGER NOT NULL DEFAULT 0,
@@ -376,7 +377,7 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
     };
 
     let mut stmt = conn.prepare(
-        "SELECT id, parent_id, path, title, created_at, updated_at,
+        "SELECT id, parent_id, path, title, slug, created_at, updated_at,
                 is_task, task_status, task_due, task_started_at, task_closed_at,
                 is_event, event_start, event_end, body
          FROM entries ORDER BY id",
@@ -391,21 +392,22 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
-                row.get::<_, i32>(6)?,
-                row.get::<_, Option<String>>(7)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, i32>(7)?,
                 row.get::<_, Option<String>>(8)?,
                 row.get::<_, Option<String>>(9)?,
                 row.get::<_, Option<String>>(10)?,
-                row.get::<_, i32>(11)?,
-                row.get::<_, Option<String>>(12)?,
+                row.get::<_, Option<String>>(11)?,
+                row.get::<_, i32>(12)?,
                 row.get::<_, Option<String>>(13)?,
-                row.get::<_, String>(14)?,
+                row.get::<_, Option<String>>(14)?,
+                row.get::<_, String>(15)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
     let mut result = Vec::with_capacity(rows.len());
-    for (id, parent_id, path, title, created_at, updated_at,
+    for (id, parent_id, path, title, slug, created_at, updated_at,
          is_task, task_status, task_due, task_started_at, task_closed_at,
          is_event, event_start, event_end, body) in rows
     {
@@ -436,7 +438,7 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
             id,
             parent_id,
             title,
-            slug: None,
+            slug,
             tags,
             created_at: parse_dt(&created_at),
             updated_at: parse_dt(&updated_at),
@@ -542,16 +544,17 @@ fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO entries (
             id, parent_id, path,
-            title, created_at, updated_at,
+            title, slug, created_at, updated_at,
             is_task, task_status, task_due, task_started_at, task_closed_at,
             is_event, event_start, event_end,
             body
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             fm.id,
             fm.parent_id,
             path_str.as_ref(),
             fm.title,
+            fm.slug,
             fm.created_at.format("%Y-%m-%dT%H:%M").to_string(),
             fm.updated_at.format("%Y-%m-%dT%H:%M").to_string(),
             fm.task.is_some() as i32,

@@ -16,9 +16,9 @@ pub struct Frontmatter {
     #[serde(default)]
     pub title: String,
 
-    /// Optional slug override. If absent, the slug is derived from the filename.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub slug: Option<String>,
+    /// Optional slug override. If empty, the slug is derived from the title.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub slug: String,
 
     /// Timestamp when the entry was first created. Set automatically by `new`.
     #[serde(default, with = "naive_datetime_serde")]

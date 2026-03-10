@@ -219,22 +219,6 @@ pub enum WeekStart {
 
 // ── filename helpers ──────────────────────────────────────────────────────────
 
-/// Return `true` if `path` follows the archelon-managed filename convention:
-/// `{7-char-CarettaId}_{slug}.md` or `{7-char-CarettaId}.md`.
-pub fn is_managed_filename(path: &Path) -> bool {
-    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-        return false;
-    };
-    let Some(id_str) = stem.get(..7) else {
-        return false;
-    };
-    if id_str.parse::<CarettaId>().is_err() {
-        return false;
-    }
-    let rest = &stem[7..];
-    rest.is_empty() || rest.starts_with('_')
-}
-
 /// Convert a title to a filename-safe slug.
 ///
 /// Lowercases the string, replaces whitespace with `_`, and strips any

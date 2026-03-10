@@ -1,9 +1,5 @@
 use std::path::Path;
 
-use caretta_id::CarettaId;
-use chrono::NaiveDateTime;
-use indexmap::IndexMap;
-
 use crate::{
     entry::{Entry, Frontmatter},
     error::{Error, Result},
@@ -30,39 +26,14 @@ pub fn read_entry(path: &Path) -> Result<Entry> {
     parse_entry(path, &source)
 }
 
-fn id_from_path(path: &Path) -> Option<CarettaId> {
-    let stem = path.file_stem()?.to_str()?;
-    stem.get(..7)?.parse().ok()
-}
-
-fn bare_frontmatter(path: &Path) -> Result<Frontmatter> {
-    let id = id_from_path(path).ok_or_else(|| {
-        Error::InvalidEntry(
-            "no frontmatter and filename does not contain a valid CarettaId".into(),
-        )
-    })?;
-    Ok(Frontmatter {
-        id,
-        parent_id: None,
-        title: String::new(),
-        slug: None,
-        created_at: NaiveDateTime::default(),
-        updated_at: NaiveDateTime::default(),
-        tags: Vec::new(),
-        task: None,
-        event: None,
-        extra: IndexMap::new(),
-    })
-}
-
-fn split_frontmatter<'a>(path: &Path, source: &'a str) -> Result<(Frontmatter, &'a str)> {
+fn split_frontmatter<'a>(_path: &Path, source: &'a str) -> Result<(Frontmatter, &'a str)> {
     let Some(rest) = source.strip_prefix(FENCE) else {
-        return Ok((bare_frontmatter(path)?, source));
+        return Err(Error::InvalidEntry("missing frontmatter block".into()));
     };
 
     // The opening `---` must be followed by a newline.
     let Some(rest) = rest.strip_prefix('\n') else {
-        return Ok((bare_frontmatter(path)?, source));
+        return Err(Error::InvalidEntry("missing frontmatter block".into()));
     };
 
     let Some(end) = rest.find(&format!("\n{FENCE}")) else {
@@ -121,14 +92,6 @@ mod tests {
         assert_eq!(entry.frontmatter.title, "Hello");
         assert_eq!(entry.frontmatter.tags, vec!["rust", "cli"]);
         assert_eq!(entry.body, "some body\n");
-    }
-
-    #[test]
-    fn parses_entry_without_frontmatter() {
-        let src = "just a body\n";
-        let entry = parse_entry(&managed_path(), src).unwrap();
-        assert!(entry.frontmatter.title.is_empty());
-        assert_eq!(entry.body, "just a body\n");
     }
 
     #[test]
