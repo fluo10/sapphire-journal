@@ -2,10 +2,11 @@ use anyhow::{bail, Context, Result};
 use archelon_core::{
     cache,
     entry_ref::EntryRef,
-    journal::Journal,
-    ops::{self, EntryFields as CoreEntryFields, EntryFilter, FieldSelector, MatchLabel, SortField, SortOrder},
+    journal::{Journal, WeekStart},
+    ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryTreeNode, FieldSelector, MatchLabel, SortField, SortOrder},
     period::{parse_datetime, parse_datetime_end, parse_period},
 };
+
 use chrono::NaiveDateTime;
 use clap::{Args, Subcommand};
 use std::{
@@ -13,67 +14,104 @@ use std::{
     process::Command,
 };
 
+/// Filter and sort arguments shared by `entry list` and `entry tree`.
+#[derive(Args)]
+pub struct EntryFilterArgs {
+    /// Time range to filter against. Without field selectors (--task-due, --event-span,
+    /// --created-at, --updated-at) the period is applied to all timestamp fields (OR).
+    /// Add field selectors to restrict matching to specific fields.
+    ///
+    /// PERIOD formats: today | this_week | this_month | none |
+    /// YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
+    #[arg(long, value_name = "PERIOD")]
+    pub period: Option<String>,
+
+    /// Restrict --period to task due date.
+    /// Without --period: include entries that have a task_due set.
+    #[arg(long)]
+    pub task_due: bool,
+
+    /// Restrict --period to event span (overlap semantics).
+    /// Without --period: include entries that have an event set.
+    #[arg(long)]
+    pub event_span: bool,
+
+    /// Restrict --period to created_at timestamp.
+    #[arg(long)]
+    pub created_at: bool,
+
+    /// Restrict --period to updated_at timestamp.
+    #[arg(long)]
+    pub updated_at: bool,
+
+    /// Filter by task status (AND with timestamp filters).
+    /// Comma-separated for multiple values, e.g. open,in_progress
+    #[arg(long, value_name = "STATUS[,...]", value_delimiter = ',', num_args = 1..)]
+    pub task_status: Option<Vec<String>>,
+
+    /// AND filter: include only entries that have ALL specified tags.
+    /// Comma-separated, e.g. work,urgent
+    #[arg(long, value_name = "TAG[,...]", value_delimiter = ',', num_args = 1..)]
+    pub tags: Option<Vec<String>>,
+
+    /// Include overdue tasks (due in the past, not yet closed). OR'd with period filters.
+    #[arg(long)]
+    pub overdue: bool,
+
+    /// Include tasks that have been started (started_at set) and not yet closed.
+    /// When combined with --period, only tasks started on or before the period end are included.
+    /// OR'd with period filters.
+    #[arg(long)]
+    pub task_started: bool,
+
+    /// Sort results by a field.
+    /// Values: id | title | task_status | created_at | updated_at | task_due | event_start | event_end
+    #[arg(long, value_name = "FIELD")]
+    pub sort_by: Option<String>,
+
+    /// Sort direction: asc (default) or desc
+    #[arg(long, value_name = "ORDER", default_value = "asc")]
+    pub sort_order: String,
+}
+
+fn build_filter(args: &EntryFilterArgs, week_start: WeekStart) -> Result<EntryFilter> {
+    let parse = |s: &str| parse_period(s, week_start).map_err(anyhow::Error::msg);
+    Ok(EntryFilter {
+        period: args.period.as_deref().map(parse).transpose()?,
+        fields: FieldSelector {
+            task_due: args.task_due,
+            event_span: args.event_span,
+            created_at: args.created_at,
+            updated_at: args.updated_at,
+        },
+        task_status: args.task_status.clone().unwrap_or_default(),
+        tags: args.tags.clone().unwrap_or_default(),
+        overdue: args.overdue,
+        task_started: args.task_started,
+        sort_by: args.sort_by.as_deref()
+            .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
+            .transpose()?,
+        sort_order: args.sort_order.parse::<SortOrder>().map_err(anyhow::Error::msg)?,
+    })
+}
+
 #[derive(Subcommand)]
 pub enum EntryCommand {
     /// List entries; optionally filter by period, field selectors, task status, and tags
     List {
-        /// Time range to filter against. Without field selectors (--task-due, --event-span,
-        /// --created-at, --updated-at) the period is applied to all timestamp fields (OR).
-        /// Add field selectors to restrict matching to specific fields.
-        ///
-        /// PERIOD formats: today | this_week | this_month | none |
-        /// YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
-        #[arg(long, value_name = "PERIOD")]
-        period: Option<String>,
-
-        /// Restrict --period to task due date.
-        /// Without --period: include entries that have a task_due set.
-        #[arg(long)]
-        task_due: bool,
-
-        /// Restrict --period to event span (overlap semantics).
-        /// Without --period: include entries that have an event set.
-        #[arg(long)]
-        event_span: bool,
-
-        /// Restrict --period to created_at timestamp.
-        #[arg(long)]
-        created_at: bool,
-
-        /// Restrict --period to updated_at timestamp.
-        #[arg(long)]
-        updated_at: bool,
-
-        /// Filter by task status (AND with timestamp filters).
-        /// Comma-separated for multiple values, e.g. open,in_progress
-        #[arg(long, value_name = "STATUS[,...]", value_delimiter = ',', num_args = 1..)]
-        task_status: Option<Vec<String>>,
-
-        /// AND filter: include only entries that have ALL specified tags.
-        /// Comma-separated, e.g. work,urgent
-        #[arg(long, value_name = "TAG[,...]", value_delimiter = ',', num_args = 1..)]
-        tags: Option<Vec<String>>,
-
-        /// Include overdue tasks (due in the past, not yet closed). OR'd with period filters.
-        #[arg(long)]
-        overdue: bool,
-
-        /// Include tasks that have been started (started_at set) and not yet closed.
-        /// When combined with --period, only tasks started on or before the period end are included.
-        /// OR'd with period filters.
-        #[arg(long)]
-        task_started: bool,
-
-        /// Sort results by a field.
-        /// Values: id | title | task_status | created_at | updated_at | task_due | event_start | event_end
-        #[arg(long, value_name = "FIELD")]
-        sort_by: Option<String>,
-
-        /// Sort direction: asc (default) or desc
-        #[arg(long, value_name = "ORDER", default_value = "asc")]
-        sort_order: String,
+        #[command(flatten)]
+        filter: EntryFilterArgs,
 
         /// Output all matching entries as JSON (metadata + body) for AI/machine consumption
+        #[arg(long)]
+        json: bool,
+    },
+    /// Display entries as a parent-child tree; supports the same filters as `entry list`
+    Tree {
+        #[command(flatten)]
+        filter: EntryFilterArgs,
+
+        /// Output the tree as JSON (nested `children` arrays) for machine consumption
         #[arg(long)]
         json: bool,
     },
@@ -201,30 +239,19 @@ impl From<EntryFields> for CoreEntryFields {
 
 pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
     match cmd {
-        EntryCommand::List { period, task_due, event_span, created_at, updated_at, task_status, tags, overdue, task_started, sort_by, sort_order, json } => {
-            // Resolve week_start from journal config (needed for this_week parsing)
-            let week_start = open_journal(journal_dir)
-                .and_then(|j| j.config().map_err(Into::into))
-                .map(|c| c.journal.week_start)
-                .unwrap_or_default();
-
-            let parse = |s: &str| parse_period(s, week_start).map_err(anyhow::Error::msg);
-
-            let filter = EntryFilter {
-                period: period.as_deref().map(parse).transpose()?,
-                fields: FieldSelector { task_due, event_span, created_at, updated_at },
-                task_status: task_status.unwrap_or_default(),
-                tags: tags.unwrap_or_default(),
-                overdue,
-                task_started,
-                sort_by: sort_by.as_deref()
-                    .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
-                    .transpose()?,
-                sort_order: sort_order.parse::<SortOrder>().map_err(anyhow::Error::msg)?,
-            };
-
+        EntryCommand::List { filter: filter_args, json } => {
+            let week_start = week_start(journal_dir);
+            let filter = build_filter(&filter_args, week_start)?;
             let entries = ops::list_entries(journal_dir, &filter)?;
             print_entries(&entries, filter.has_any_filter(), json)
+        }
+        EntryCommand::Tree { filter: filter_args, json } => {
+            let week_start = week_start(journal_dir);
+            let filter = build_filter(&filter_args, week_start)?;
+            let entries = ops::list_entries(journal_dir, &filter)?;
+            let has_filter = filter.has_any_filter();
+            let roots = ops::build_entry_tree(entries);
+            print_tree(&roots, has_filter, json)
         }
         EntryCommand::Show { entry } => show(&resolve_entry(journal_dir, &entry)?),
         EntryCommand::New { fields } => new(journal_dir, fields),
@@ -252,6 +279,13 @@ fn open_journal(journal_dir: Option<&Path>) -> Result<Journal> {
         None => Journal::find()
             .context("not in an archelon journal — run `archelon init` to initialize one"),
     }
+}
+
+fn week_start(journal_dir: Option<&Path>) -> WeekStart {
+    open_journal(journal_dir)
+        .and_then(|j| j.config().map_err(Into::into))
+        .map(|c| c.journal.week_start)
+        .unwrap_or_default()
 }
 
 // ── list output ───────────────────────────────────────────────────────────────
@@ -316,6 +350,75 @@ fn print_entries(
     let status_w = rows.iter().map(|(_, s, _)| s.len()).max().unwrap_or(0);
     for (id, status, title) in &rows {
         println!("{:<id_w$}  {:<status_w$}  {title}", id, status);
+    }
+    Ok(())
+}
+
+// ── tree output ───────────────────────────────────────────────────────────────
+
+fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool) -> Result<()> {
+    if json {
+        fn node_to_json(node: &EntryTreeNode, has_filter: bool) -> serde_json::Value {
+            let entry = &node.entry;
+            let mut v = serde_json::json!({
+                "id": entry.id().to_string(),
+                "path": entry.path.display().to_string(),
+                "title": entry.title(),
+                "slug": entry.frontmatter.slug,
+                "created_at": entry.frontmatter.created_at,
+                "updated_at": entry.frontmatter.updated_at,
+                "tags": entry.frontmatter.tags,
+                "task": entry.frontmatter.task,
+                "event": entry.frontmatter.event,
+                "body": entry.body,
+                "children": node.children.iter().map(|c| node_to_json(c, has_filter)).collect::<Vec<_>>(),
+            });
+            if has_filter {
+                v["match_labels"] = serde_json::json!(
+                    node.labels.iter().map(|l| l.as_str()).collect::<Vec<_>>()
+                );
+            }
+            v
+        }
+        let records: Vec<_> = roots.iter().map(|n| node_to_json(n, has_filter)).collect();
+        println!("{}", serde_json::to_string_pretty(&records)?);
+        return Ok(());
+    }
+
+    fn render_node(node: &EntryTreeNode, has_filter: bool, prefix: &str, is_last: bool) {
+        let connector = if is_last { "└─" } else { "├─" };
+        let id = node.entry.id().to_string();
+        let status = if has_filter && !node.labels.is_empty() {
+            node.labels.iter().map(|l| l.as_str()).collect::<Vec<_>>().join(",")
+        } else {
+            node.entry.frontmatter.task.as_ref()
+                .map(|t| t.status.as_str())
+                .unwrap_or("")
+                .to_owned()
+        };
+        let title = node.entry.title();
+        if prefix.is_empty() {
+            println!("{id}  {status:<12}  {title}");
+        } else {
+            println!("{prefix}{connector} {id}  {status:<12}  {title}");
+        }
+        let child_prefix = if prefix.is_empty() {
+            if is_last { "   ".to_owned() } else { "│  ".to_owned() }
+        } else {
+            format!("{}{}", prefix, if is_last { "   " } else { "│  " })
+        };
+        let n = node.children.len();
+        for (i, child) in node.children.iter().enumerate() {
+            render_node(child, has_filter, &child_prefix, i + 1 == n);
+        }
+    }
+
+    if roots.is_empty() {
+        return Ok(());
+    }
+    let n = roots.len();
+    for (i, root) in roots.iter().enumerate() {
+        render_node(root, has_filter, "", i + 1 == n);
     }
     Ok(())
 }

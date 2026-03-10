@@ -6,7 +6,7 @@ use archelon_core::{
     cache,
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
-    ops::{self, EntryFields, EntryFilter, FieldSelector, SortField, SortOrder},
+    ops::{self, EntryFields, EntryFilter, EntryTreeNode, FieldSelector, SortField, SortOrder},
     parser::read_entry,
     period::{parse_datetime, parse_datetime_end, parse_period},
 };
@@ -111,6 +111,9 @@ struct EntryListParams {
     /// Sort direction: "asc" (default) or "desc"
     sort_order: Option<String>,
 }
+
+/// Same filter parameters as [`EntryListParams`] but for the tree tool.
+type EntryTreeParams = EntryListParams;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct EntryShowParams {
@@ -330,6 +333,68 @@ impl ArchelonServer {
                 })
                 .collect();
 
+            Ok(serde_json::to_string_pretty(&records)?)
+        })()
+        .map_err(|e| e.to_string())
+    }
+
+    #[tool(description = "List journal entries as a JSON tree, preserving parent–child relationships. \
+        Accepts the same filter parameters as entry_list. \
+        Each node contains an `id`, `title`, `task`, `tags`, and a `children` array of nested nodes.")]
+    fn entry_tree(&self, Parameters(p): Parameters<EntryTreeParams>) -> Result<String, String> {
+        (|| -> anyhow::Result<String> {
+            let week_start = self.week_start();
+            let parse = |s: &str| parse_period(s, week_start).map_err(anyhow::Error::msg);
+
+            let filter = EntryFilter {
+                period: p.period.as_deref().map(parse).transpose()?,
+                fields: FieldSelector {
+                    task_due:   p.task_due.unwrap_or(false),
+                    event_span: p.event_span.unwrap_or(false),
+                    created_at: p.created_at.unwrap_or(false),
+                    updated_at: p.updated_at.unwrap_or(false),
+                },
+                task_status: p.task_status.unwrap_or_default(),
+                tags: p.tags.unwrap_or_default(),
+                overdue: p.overdue.unwrap_or(false),
+                task_started: p.task_started.unwrap_or(false),
+                sort_by: p.sort_by.as_deref()
+                    .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
+                    .transpose()?,
+                sort_order: p.sort_order.as_deref()
+                    .map(|s| s.parse::<SortOrder>().map_err(anyhow::Error::msg))
+                    .transpose()?
+                    .unwrap_or_default(),
+            };
+
+            let has_filter = filter.has_any_filter();
+            let entries = ops::list_entries(self.journal_dir.as_deref(), &filter)?;
+            let roots = ops::build_entry_tree(entries);
+
+            fn node_to_json(node: &EntryTreeNode, has_filter: bool) -> serde_json::Value {
+                let entry = &node.entry;
+                let mut v = serde_json::json!({
+                    "id": entry.id().to_string(),
+                    "path": entry.path.display().to_string(),
+                    "title": entry.title(),
+                    "slug": entry.frontmatter.slug,
+                    "created_at": entry.frontmatter.created_at,
+                    "updated_at": entry.frontmatter.updated_at,
+                    "tags": entry.frontmatter.tags,
+                    "task": entry.frontmatter.task,
+                    "event": entry.frontmatter.event,
+                    "body": entry.body,
+                    "children": node.children.iter().map(|c| node_to_json(c, has_filter)).collect::<Vec<_>>(),
+                });
+                if has_filter {
+                    v["match_labels"] = serde_json::json!(
+                        node.labels.iter().map(|l| l.as_str()).collect::<Vec<_>>()
+                    );
+                }
+                v
+            }
+
+            let records: Vec<_> = roots.iter().map(|n| node_to_json(n, has_filter)).collect();
             Ok(serde_json::to_string_pretty(&records)?)
         })()
         .map_err(|e| e.to_string())

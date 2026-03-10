@@ -248,6 +248,76 @@ impl MatchLabel {
     }
 }
 
+// ── tree ──────────────────────────────────────────────────────────────────────
+
+/// A node in an entry hierarchy returned by [`build_entry_tree`].
+pub struct EntryTreeNode {
+    pub entry: Entry,
+    pub labels: Vec<MatchLabel>,
+    pub children: Vec<EntryTreeNode>,
+}
+
+/// Organise a flat list of `(entry, labels)` pairs into a forest (list of
+/// root trees) based on each entry's `parent_id`.
+///
+/// An entry is treated as a root when its `parent_id` is `None` **or** when
+/// its parent is not present in the provided list.  Sibling order within each
+/// level mirrors the order of the input slice (i.e. the sort order chosen by
+/// the caller is preserved).
+pub fn build_entry_tree(entries: Vec<(Entry, Vec<MatchLabel>)>) -> Vec<EntryTreeNode> {
+    use std::collections::HashMap;
+
+    // Build an index: CarettaId → position in the input slice.
+    let id_index: HashMap<caretta_id::CarettaId, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, (e, _))| (e.frontmatter.id, i))
+        .collect();
+
+    // Determine which entries are roots (parent absent or parent not in list).
+    let is_root: Vec<bool> = entries
+        .iter()
+        .map(|(e, _)| {
+            e.frontmatter
+                .parent_id
+                .map_or(true, |pid| !id_index.contains_key(&pid))
+        })
+        .collect();
+
+    // Build children lists: parent_index → [child_indices] in input order.
+    let mut children_of: Vec<Vec<usize>> = vec![Vec::new(); entries.len()];
+    for (i, (e, _)) in entries.iter().enumerate() {
+        if let Some(pid) = e.frontmatter.parent_id {
+            if let Some(&parent_i) = id_index.get(&pid) {
+                children_of[parent_i].push(i);
+            }
+        }
+    }
+
+    // Move entries out of the Vec into a parallel structure of Options so we
+    // can take ownership during recursive construction without cloning.
+    let mut slots: Vec<Option<(Entry, Vec<MatchLabel>)>> =
+        entries.into_iter().map(Some).collect();
+
+    fn build_node(
+        idx: usize,
+        slots: &mut Vec<Option<(Entry, Vec<MatchLabel>)>>,
+        children_of: &Vec<Vec<usize>>,
+    ) -> EntryTreeNode {
+        let (entry, labels) = slots[idx].take().unwrap();
+        let children = children_of[idx]
+            .iter()
+            .map(|&ci| build_node(ci, slots, children_of))
+            .collect();
+        EntryTreeNode { entry, labels, children }
+    }
+
+    (0..slots.len())
+        .filter(|&i| is_root[i])
+        .map(|i| build_node(i, &mut slots, &children_of))
+        .collect()
+}
+
 // ── list ──────────────────────────────────────────────────────────────────────
 
 /// Collect and filter journal entries.
