@@ -25,6 +25,17 @@ pub enum Error {
 
     #[error("invalid config: {0}")]
     InvalidConfig(String),
+
+    #[error("cache error: {0}")]
+    Cache(#[from] rusqlite::Error),
+
+    /// The cache DB was created by a newer version of archelon.
+    /// The user must either update archelon or recreate the cache.
+    #[error(
+        "cache schema v{db_version} is newer than this app supports (v{app_version}); \
+         update archelon, or recreate the cache with `archelon cache rebuild`"
+    )]
+    CacheSchemaTooNew { db_version: i32, app_version: i32 },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -43,6 +43,7 @@ fn bare_frontmatter(path: &Path) -> Result<Frontmatter> {
     })?;
     Ok(Frontmatter {
         id,
+        parent_id: None,
         title: String::new(),
         slug: None,
         created_at: NaiveDateTime::default(),

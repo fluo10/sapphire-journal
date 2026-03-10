@@ -18,6 +18,7 @@
 //! - [`parser`] — Markdown + YAML frontmatter parsing and serialization.
 //! - [`period`] — Time period types used to filter entries by timestamp ranges.
 
+pub mod cache;
 pub mod entry;
 pub mod entry_ref;
 pub mod error;

@@ -29,6 +29,11 @@ enum Command {
         #[command(subcommand)]
         action: commands::entry::EntryCommand,
     },
+    /// Manage the local SQLite cache
+    Cache {
+        #[command(subcommand)]
+        action: commands::cache::CacheCommand,
+    },
 }
 
 fn main() -> Result<()> {
@@ -37,6 +42,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Init { path } => commands::init::run(path)?,
         Command::Entry { action } => commands::entry::run(cli.journal_dir.as_deref(), action)?,
+        Command::Cache { action } => commands::cache::run(cli.journal_dir.as_deref(), action)?,
     }
 
     Ok(())

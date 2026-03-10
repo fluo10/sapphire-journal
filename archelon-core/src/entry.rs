@@ -9,6 +9,10 @@ use std::path::PathBuf;
 pub struct Frontmatter {
     pub id: CarettaId,
 
+    /// Parent entry ID for hierarchical (bullet-journal nested) relationships.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<CarettaId>,
+
     #[serde(default)]
     pub title: String,
 
