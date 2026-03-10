@@ -1,5 +1,8 @@
 # archelon-mcp
 
+> **Deprecated**: `archelon-mcp` is superseded by the `archelon mcp` subcommand in the [`archelon`](../archelon/) crate.
+> Please use `cargo install archelon` and run `archelon mcp` instead.
+
 MCP (Model Context Protocol) server for [archelon](https://github.com/fluo10/archelon) — lets AI agents read and write journal entries over stdio.
 
 ## Installation
@@ -48,7 +51,8 @@ The server communicates over stdin/stdout using the MCP protocol. Run it as a su
 {
   "mcpServers": {
     "archelon": {
-      "command": "archelon-mcp",
+      "command": "archelon",
+      "args": ["mcp"],
       "env": {
         "ARCHELON_JOURNAL_DIR": "/path/to/your/journal"
       }

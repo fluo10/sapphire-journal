@@ -38,37 +38,17 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            package: archelon-cli
             binary: archelon
-            asset_name: archelon-cli-linux-x86_64
+            asset_name: archelon-linux-x86_64
           - os: macos-latest
-            package: archelon-cli
             binary: archelon
-            asset_name: archelon-cli-macos-aarch64
+            asset_name: archelon-macos-aarch64
           - os: windows-latest
-            package: archelon-cli
             binary: archelon.exe
-            asset_name: archelon-cli-windows-x86_64.exe
+            asset_name: archelon-windows-x86_64.exe
           - os: ubuntu-24.04-arm
-            package: archelon-cli
             binary: archelon
-            asset_name: archelon-cli-linux-aarch64
-          - os: ubuntu-24.04-arm
-            package: archelon-mcp
-            binary: archelon-mcp
-            asset_name: archelon-mcp-linux-aarch64
-          - os: ubuntu-latest
-            package: archelon-mcp
-            binary: archelon-mcp
-            asset_name: archelon-mcp-linux-x86_64
-          - os: macos-latest
-            package: archelon-mcp
-            binary: archelon-mcp
-            asset_name: archelon-mcp-macos-aarch64
-          - os: windows-latest
-            package: archelon-mcp
-            binary: archelon-mcp.exe
-            asset_name: archelon-mcp-windows-x86_64.exe
+            asset_name: archelon-linux-aarch64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -76,7 +56,7 @@ jobs:
           ref: ${{ github.event.pull_request.merge_commit_sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p ${{ matrix.package }}
+      - run: cargo build --release -p archelon
 
       - name: Rename binary (Unix)
         if: runner.os != 'Windows'
@@ -99,16 +79,16 @@ jobs:
         include:
           - os: ubuntu-latest
             vsce_target: linux-x64
-            artifact: archelon-cli-linux-x86_64
+            artifact: archelon-linux-x86_64
           - os: ubuntu-24.04-arm
             vsce_target: linux-arm64
-            artifact: archelon-cli-linux-aarch64
+            artifact: archelon-linux-aarch64
           - os: macos-latest
             vsce_target: darwin-arm64
-            artifact: archelon-cli-macos-aarch64
+            artifact: archelon-macos-aarch64
           - os: windows-latest
             vsce_target: win32-x64
-            artifact: archelon-cli-windows-x86_64.exe
+            artifact: archelon-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

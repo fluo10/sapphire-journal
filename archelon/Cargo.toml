@@ -1,16 +1,10 @@
 [package]
-name = "archelon-mcp"
-version.workspace = true
+name = "archelon"
 edition.workspace = true
-description = "[DEPRECATED] MCP server for archelon — use archelon mcp instead"
+version.workspace = true
+description.workspace = true
 license.workspace = true
 repository.workspace = true
-categories = ["command-line-utilities", "text-processing"]
-keywords = ["markdown", "task-management", "notes", "mcp", "mcp-server"]
-
-[package.metadata.binstall]
-pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target_os }-{ target_arch }{ binary-ext }"
-pkg-fmt = "bin"
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }

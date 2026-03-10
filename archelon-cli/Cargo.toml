@@ -2,7 +2,7 @@
 name = "archelon-cli"
 edition.workspace = true
 version.workspace = true
-description.workspace = true
+description = "[DEPRECATED] CLI for archelon — use the archelon crate instead"
 license.workspace = true
 repository.workspace = true
 categories = ["command-line-utilities", "text-processing"]
@@ -18,7 +18,7 @@ pkg-fmt = "bin"
 bin-dir = "{ bin }{ binary-ext }"
 
 [dependencies]
-archelon-core = { path = "../archelon-core", version = "0.3.0" }
+archelon-core = { path = "../archelon-core", version = "0.4.0-alpha" }
 clap = { version = "4", features = ["derive", "env"] }
 anyhow = "1"
 chrono = { version = "0.4" }

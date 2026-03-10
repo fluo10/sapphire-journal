@@ -87,18 +87,18 @@ irm https://raw.githubusercontent.com/fluo10/archelon/main/install.ps1 | iex
 ### cargo-binstall
 
 ```sh
-cargo binstall archelon-cli archelon-mcp
+cargo binstall archelon
 ```
 
 ### From source
 
 ```sh
-cargo install archelon-cli archelon-mcp
+cargo install archelon
 ```
 
 ## CLI usage
 
-See [archelon-cli/README.md](archelon-cli/README.md) for the full command reference.
+See [archelon/README.md](archelon/README.md) for the full command reference.
 
 A **journal** is any directory tree that contains a `.archelon/` directory.
 `archelon` locates it by walking up from the current directory, the same way `git` finds `.git/`.
@@ -117,9 +117,10 @@ Download the platform-specific VSIX (with the CLI binary bundled) from the [Rele
 
 ```
 archelon/
-├── archelon-core/    # Data model, Markdown parser/serializer, (future) SQLite cache
-├── archelon-cli/     # CLI binary built with clap
-├── archelon-mcp/     # MCP server for AI agent integration
+├── archelon-core/    # Data model, Markdown parser/serializer, SQLite cache
+├── archelon/         # Unified binary: CLI + MCP server (archelon mcp)
+├── archelon-cli/     # [DEPRECATED] use the archelon crate instead
+├── archelon-mcp/     # [DEPRECATED] use archelon mcp instead
 └── archelon-vscode/  # VS Code extension
 ```
 
