@@ -74,17 +74,21 @@ CREATE TABLE IF NOT EXISTS entries (
     slug            TEXT    NOT NULL DEFAULT '',
     created_at      TEXT,
     updated_at      TEXT,
-    is_task         INTEGER NOT NULL DEFAULT 0,
     task_status     TEXT,
     task_due        TEXT,
     task_started_at TEXT,
     task_closed_at  TEXT,
-    is_event        INTEGER NOT NULL DEFAULT 0,
     event_start     TEXT,
     event_end       TEXT,
     body            TEXT    NOT NULL DEFAULT ''
 );
-CREATE INDEX IF NOT EXISTS idx_entries_parent ON entries(parent_id);
+CREATE INDEX IF NOT EXISTS idx_entries_parent     ON entries(parent_id);
+CREATE INDEX IF NOT EXISTS idx_entries_title      ON entries(title);
+CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at);
+CREATE INDEX IF NOT EXISTS idx_entries_updated_at ON entries(updated_at);
+CREATE INDEX IF NOT EXISTS idx_entries_task_status ON entries(task_status);
+CREATE INDEX IF NOT EXISTS idx_entries_task_due   ON entries(task_due);
+CREATE INDEX IF NOT EXISTS idx_entries_event_start ON entries(event_start);
 
 CREATE TABLE IF NOT EXISTS tags (
     entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
@@ -427,8 +431,8 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
 
     let mut stmt = conn.prepare(
         "SELECT id, parent_id, path, title, slug, created_at, updated_at,
-                is_task, task_status, task_due, task_started_at, task_closed_at,
-                is_event, event_start, event_end, body
+                task_status, task_due, task_started_at, task_closed_at,
+                event_start, event_end, body
          FROM entries ORDER BY id",
     )?;
 
@@ -442,45 +446,35 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
                 row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
                 row.get::<_, String>(6)?,
-                row.get::<_, i32>(7)?,
+                row.get::<_, Option<String>>(7)?,
                 row.get::<_, Option<String>>(8)?,
                 row.get::<_, Option<String>>(9)?,
                 row.get::<_, Option<String>>(10)?,
                 row.get::<_, Option<String>>(11)?,
-                row.get::<_, i32>(12)?,
-                row.get::<_, Option<String>>(13)?,
-                row.get::<_, Option<String>>(14)?,
-                row.get::<_, String>(15)?,
+                row.get::<_, Option<String>>(12)?,
+                row.get::<_, String>(13)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
     let mut result = Vec::with_capacity(rows.len());
     for (id, parent_id, path, title, slug, created_at, updated_at,
-         is_task, task_status, task_due, task_started_at, task_closed_at,
-         is_event, event_start, event_end, body) in rows
+         task_status, task_due, task_started_at, task_closed_at,
+         event_start, event_end, body) in rows
     {
         let tags = tag_map.remove(&id).unwrap_or_default();
 
-        let task = if is_task != 0 {
-            Some(TaskMeta {
-                status: task_status.unwrap_or_else(|| "open".to_owned()),
-                due: parse_dt_opt(task_due),
-                started_at: parse_dt_opt(task_started_at),
-                closed_at: parse_dt_opt(task_closed_at),
-                extra: IndexMap::new(),
-            })
-        } else {
-            None
-        };
+        let task = task_status.map(|status| TaskMeta {
+            status,
+            due: parse_dt_opt(task_due),
+            started_at: parse_dt_opt(task_started_at),
+            closed_at: parse_dt_opt(task_closed_at),
+            extra: IndexMap::new(),
+        });
 
-        let event = if is_event != 0 {
-            match (parse_dt_opt(event_start), parse_dt_opt(event_end)) {
-                (Some(start), Some(end)) => Some(EventMeta { start, end, extra: IndexMap::new() }),
-                _ => None,
-            }
-        } else {
-            None
+        let event = match (parse_dt_opt(event_start), parse_dt_opt(event_end)) {
+            (Some(start), Some(end)) => Some(EventMeta { start, end, extra: IndexMap::new() }),
+            _ => None,
         };
 
         let frontmatter = Frontmatter {
@@ -572,11 +566,11 @@ fn fetch_full_entry(
     use crate::entry::{Entry, EventMeta, Frontmatter, TaskMeta};
 
     let (parent_id, path_str, title, slug, created_at, updated_at,
-         is_task, task_status, task_due, task_started_at, task_closed_at,
-         is_event, event_start, event_end, body) = conn.query_row(
+         task_status, task_due, task_started_at, task_closed_at,
+         event_start, event_end, body) = conn.query_row(
         "SELECT parent_id, path, title, slug, created_at, updated_at,
-                is_task, task_status, task_due, task_started_at, task_closed_at,
-                is_event, event_start, event_end, body
+                task_status, task_due, task_started_at, task_closed_at,
+                event_start, event_end, body
          FROM entries WHERE id = ?1",
         [id],
         |row| {
@@ -587,15 +581,13 @@ fn fetch_full_entry(
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
-                row.get::<_, i32>(6)?,
+                row.get::<_, Option<String>>(6)?,
                 row.get::<_, Option<String>>(7)?,
                 row.get::<_, Option<String>>(8)?,
                 row.get::<_, Option<String>>(9)?,
                 row.get::<_, Option<String>>(10)?,
-                row.get::<_, i32>(11)?,
-                row.get::<_, Option<String>>(12)?,
-                row.get::<_, Option<String>>(13)?,
-                row.get::<_, String>(14)?,
+                row.get::<_, Option<String>>(11)?,
+                row.get::<_, String>(12)?,
             ))
         },
     )?;
@@ -612,25 +604,17 @@ fn fetch_full_entry(
         s.as_deref().and_then(|s| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").ok())
     };
 
-    let task = if is_task != 0 {
-        Some(TaskMeta {
-            status: task_status.unwrap_or_else(|| "open".to_owned()),
-            due: parse_dt_opt(task_due),
-            started_at: parse_dt_opt(task_started_at),
-            closed_at: parse_dt_opt(task_closed_at),
-            extra: IndexMap::new(),
-        })
-    } else {
-        None
-    };
+    let task = task_status.map(|status| TaskMeta {
+        status,
+        due: parse_dt_opt(task_due),
+        started_at: parse_dt_opt(task_started_at),
+        closed_at: parse_dt_opt(task_closed_at),
+        extra: IndexMap::new(),
+    });
 
-    let event = if is_event != 0 {
-        match (parse_dt_opt(event_start), parse_dt_opt(event_end)) {
-            (Some(start), Some(end)) => Some(EventMeta { start, end, extra: IndexMap::new() }),
-            _ => None,
-        }
-    } else {
-        None
+    let event = match (parse_dt_opt(event_start), parse_dt_opt(event_end)) {
+        (Some(start), Some(end)) => Some(EventMeta { start, end, extra: IndexMap::new() }),
+        _ => None,
     };
 
     let frontmatter = Frontmatter {
@@ -683,10 +667,10 @@ fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
         "INSERT OR REPLACE INTO entries (
             id, parent_id, path,
             title, slug, created_at, updated_at,
-            is_task, task_status, task_due, task_started_at, task_closed_at,
-            is_event, event_start, event_end,
+            task_status, task_due, task_started_at, task_closed_at,
+            event_start, event_end,
             body
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             fm.id,
             fm.parent_id,
@@ -695,7 +679,6 @@ fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
             fm.slug,
             fm.created_at.format("%Y-%m-%dT%H:%M").to_string(),
             fm.updated_at.format("%Y-%m-%dT%H:%M").to_string(),
-            fm.task.is_some() as i32,
             fm.task.as_ref().map(|t| t.status.clone()),
             fm.task.as_ref().and_then(|t| t.due)
                 .map(|d| d.format("%Y-%m-%dT%H:%M").to_string()),
@@ -703,7 +686,6 @@ fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
                 .map(|d| d.format("%Y-%m-%dT%H:%M").to_string()),
             fm.task.as_ref().and_then(|t| t.closed_at)
                 .map(|d| d.format("%Y-%m-%dT%H:%M").to_string()),
-            fm.event.is_some() as i32,
             fm.event.as_ref().map(|e| e.start.format("%Y-%m-%dT%H:%M").to_string()),
             fm.event.as_ref().map(|e| e.end.format("%Y-%m-%dT%H:%M").to_string()),
             entry.body,

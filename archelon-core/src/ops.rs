@@ -35,7 +35,6 @@ pub enum SortField {
     UpdatedAt,
     TaskDue,
     EventStart,
-    EventEnd,
 }
 
 impl FromStr for SortField {
@@ -49,10 +48,9 @@ impl FromStr for SortField {
             "updated_at"   => Ok(Self::UpdatedAt),
             "task_due"     => Ok(Self::TaskDue),
             "event_start"  => Ok(Self::EventStart),
-            "event_end"    => Ok(Self::EventEnd),
             other => Err(format!(
                 "unknown sort field `{other}`; expected one of: \
-                 id, title, task_status, created_at, updated_at, task_due, event_start, event_end"
+                 id, title, task_status, created_at, updated_at, task_due, event_start"
             )),
         }
     }
@@ -411,10 +409,6 @@ fn sort_cmp(a: &Entry, b: &Entry, field: SortField) -> Ordering {
         SortField::EventStart => cmp_opt(
             a.frontmatter.event.as_ref().map(|e| e.start),
             b.frontmatter.event.as_ref().map(|e| e.start),
-        ),
-        SortField::EventEnd   => cmp_opt(
-            a.frontmatter.event.as_ref().map(|e| e.end),
-            b.frontmatter.event.as_ref().map(|e| e.end),
         ),
     }
 }
