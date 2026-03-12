@@ -397,15 +397,15 @@ pub fn find_entry_by_title(
     }
 }
 
-/// Read all entries from the cache as [`Entry`] structs.
+/// Read all entries from the cache as [`EntryHeader`] structs (no body).
 ///
 /// Both a sync and a cache-open are expected to have been done by the caller.
 /// `slug` and unknown frontmatter fields are not stored in the cache; they
 /// default to `None`/empty in the returned structs.
-pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::Entry>> {
+pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::EntryHeader>> {
     use chrono::NaiveDateTime;
     use indexmap::IndexMap;
-    use crate::entry::{Entry, EventMeta, Frontmatter, TaskMeta};
+    use crate::entry::{EntryHeader, EventMeta, Frontmatter, TaskMeta};
 
     // Fetch all tags in one query to avoid N+1 queries.
     let mut tag_map: HashMap<CarettaId, Vec<String>> = HashMap::new();
@@ -432,7 +432,7 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
     let mut stmt = conn.prepare(
         "SELECT id, parent_id, path, title, slug, created_at, updated_at,
                 task_status, task_due, task_started_at, task_closed_at,
-                event_start, event_end, body
+                event_start, event_end
          FROM entries ORDER BY id",
     )?;
 
@@ -452,7 +452,6 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
                 row.get::<_, Option<String>>(10)?,
                 row.get::<_, Option<String>>(11)?,
                 row.get::<_, Option<String>>(12)?,
-                row.get::<_, String>(13)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -460,7 +459,7 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
     let mut result = Vec::with_capacity(rows.len());
     for (id, parent_id, path, title, slug, created_at, updated_at,
          task_status, task_due, task_started_at, task_closed_at,
-         event_start, event_end, body) in rows
+         event_start, event_end) in rows
     {
         let tags = tag_map.remove(&id).unwrap_or_default();
 
@@ -490,7 +489,7 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
             extra: IndexMap::new(),
         };
 
-        result.push(Entry { path: PathBuf::from(path), frontmatter, body });
+        result.push(EntryHeader { path: PathBuf::from(path), frontmatter });
     }
 
     Ok(result)

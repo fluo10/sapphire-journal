@@ -313,7 +313,7 @@ fn week_start(journal_dir: Option<&Path>) -> WeekStart {
 // ── list output ───────────────────────────────────────────────────────────────
 
 fn print_entries(
-    entries: &[(archelon_core::entry::Entry, Vec<MatchLabel>)],
+    entries: &[(archelon_core::entry::EntryHeader, Vec<MatchLabel>)],
     has_filter: bool,
     json: bool,
     emoji: bool,
@@ -338,7 +338,6 @@ fn print_entries(
                     "tags": entry.frontmatter.tags,
                     "task": entry.frontmatter.task,
                     "event": entry.frontmatter.event,
-                    "body": entry.body,
                     "symbols": syms.iter().map(|s| serde_json::json!({"emoji": s.emoji, "label": s.label})).collect::<Vec<_>>(),
                 });
                 if has_filter {
@@ -355,7 +354,7 @@ fn print_entries(
 
     let rows: Vec<(String, String, String)> = entries
         .iter()
-        .map(|(entry, _labels)| {
+        .map(|(entry, _)| {
             let id = entry.id().to_string();
             let slot = if emoji {
                 let syms = archelon_core::emoji::entry_symbols(
@@ -418,7 +417,6 @@ fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool, emoji: bool
                 "tags": entry.frontmatter.tags,
                 "task": entry.frontmatter.task,
                 "event": entry.frontmatter.event,
-                "body": entry.body,
                 "symbols": syms.iter().map(|s| serde_json::json!({"emoji": s.emoji, "label": s.label})).collect::<Vec<_>>(),
                 "children": node.children.iter().map(|c| node_to_json(c, has_filter)).collect::<Vec<_>>(),
             });

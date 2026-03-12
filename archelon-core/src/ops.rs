@@ -14,7 +14,7 @@ use rusqlite::Connection;
 
 use crate::{
     cache,
-    entry::{Entry, EventMeta, Frontmatter, TaskMeta},
+    entry::{Entry, EntryHeader, EventMeta, Frontmatter, TaskMeta},
     entry_ref::EntryRef,
     error::{Error, Result},
     journal::{Journal, slugify},
@@ -144,7 +144,7 @@ impl EntryFilter {
     ///
     /// Returns `(include, labels)` where `labels` lists which timestamp fields
     /// matched (empty when no timestamp filter is active).
-    pub fn matches(&self, entry: &Entry) -> (bool, Vec<MatchLabel>) {
+    pub fn matches(&self, entry: &EntryHeader) -> (bool, Vec<MatchLabel>) {
         let mut labels = Vec::new();
 
         let timestamp_ok = if self.has_timestamp_filter() {
@@ -251,7 +251,7 @@ impl MatchLabel {
 
 /// A node in an entry hierarchy returned by [`build_entry_tree`].
 pub struct EntryTreeNode {
-    pub entry: Entry,
+    pub entry: EntryHeader,
     pub labels: Vec<MatchLabel>,
     pub children: Vec<EntryTreeNode>,
 }
@@ -263,7 +263,7 @@ pub struct EntryTreeNode {
 /// its parent is not present in the provided list.  Sibling order within each
 /// level mirrors the order of the input slice (i.e. the sort order chosen by
 /// the caller is preserved).
-pub fn build_entry_tree(entries: Vec<(Entry, Vec<MatchLabel>)>) -> Vec<EntryTreeNode> {
+pub fn build_entry_tree(entries: Vec<(EntryHeader, Vec<MatchLabel>)>) -> Vec<EntryTreeNode> {
     use std::collections::HashMap;
 
     // Build an index: CarettaId → position in the input slice.
@@ -295,12 +295,12 @@ pub fn build_entry_tree(entries: Vec<(Entry, Vec<MatchLabel>)>) -> Vec<EntryTree
 
     // Move entries out of the Vec into a parallel structure of Options so we
     // can take ownership during recursive construction without cloning.
-    let mut slots: Vec<Option<(Entry, Vec<MatchLabel>)>> =
+    let mut slots: Vec<Option<(EntryHeader, Vec<MatchLabel>)>> =
         entries.into_iter().map(Some).collect();
 
     fn build_node(
         idx: usize,
-        slots: &mut Vec<Option<(Entry, Vec<MatchLabel>)>>,
+        slots: &mut Vec<Option<(EntryHeader, Vec<MatchLabel>)>>,
         children_of: &Vec<Vec<usize>>,
     ) -> EntryTreeNode {
         let (entry, labels) = slots[idx].take().unwrap();
@@ -330,7 +330,7 @@ pub fn build_entry_tree(entries: Vec<(Entry, Vec<MatchLabel>)>) -> Vec<EntryTree
 pub fn list_entries(
     journal_dir: Option<&Path>,
     filter: &EntryFilter,
-) -> Result<Vec<(Entry, Vec<MatchLabel>)>> {
+) -> Result<Vec<(EntryHeader, Vec<MatchLabel>)>> {
     let journal = if let Some(dir) = journal_dir {
         Journal::from_root(dir.to_path_buf())?
     } else {
@@ -350,18 +350,18 @@ pub fn list_entries(
     let has_filter = filter.has_any_filter();
     let mut result = Vec::new();
     for p in &paths {
-        let entry = match read_entry(p) {
-            Ok(e) => e,
+        let header = match read_entry(p) {
+            Ok(e) => EntryHeader::from(e),
             Err(e) => {
                 eprintln!("warn: {} — {e}", p.display());
                 continue;
             }
         };
-        let (include, labels) = filter.matches(&entry);
+        let (include, labels) = filter.matches(&header);
         if has_filter && !include {
             continue;
         }
-        result.push((entry, labels));
+        result.push((header, labels));
     }
     if let Some(field) = filter.sort_by {
         result.sort_by(|(a, _), (b, _)| {
@@ -372,7 +372,7 @@ pub fn list_entries(
     Ok(result)
 }
 
-fn apply_filter_and_sort(entries: Vec<Entry>, filter: &EntryFilter) -> Result<Vec<(Entry, Vec<MatchLabel>)>> {
+fn apply_filter_and_sort(entries: Vec<EntryHeader>, filter: &EntryFilter) -> Result<Vec<(EntryHeader, Vec<MatchLabel>)>> {
     let has_filter = filter.has_any_filter();
     let mut result = Vec::new();
     for entry in entries {
@@ -391,7 +391,7 @@ fn apply_filter_and_sort(entries: Vec<Entry>, filter: &EntryFilter) -> Result<Ve
     Ok(result)
 }
 
-fn sort_cmp(a: &Entry, b: &Entry, field: SortField) -> Ordering {
+fn sort_cmp(a: &EntryHeader, b: &EntryHeader, field: SortField) -> Ordering {
     match field {
         SortField::Id => a.id().cmp(&b.id()),
         SortField::Title => a.title().cmp(b.title()),
