@@ -1,5 +1,6 @@
 {
   "name": "archelon-vscode",
+  "packageManager": "pnpm@10.30.3",
   "displayName": "Archelon",
   "publisher": "fluo10",
   "description": "VS Code extension for the Archelon journal",

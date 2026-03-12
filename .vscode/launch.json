@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Extension (archelon-vscode)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/archelon-vscode"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/archelon-vscode/out/**/*.js"
+      ],
+      "preLaunchTask": "Build All (Rust + TypeScript)"
+    }
+  ]
+}

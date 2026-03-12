@@ -1,0 +1,67 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Rust (archelon)",
+      "type": "shell",
+      "command": "cargo build -p archelon",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": "$rustc"
+    },
+    {
+      "label": "Copy binary to archelon-vscode/bin",
+      "type": "shell",
+      "command": "mkdir -p archelon-vscode/bin && cp target/debug/archelon archelon-vscode/bin/archelon",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": "Build Rust (archelon)",
+      "problemMatcher": []
+    },
+    {
+      "label": "Compile TypeScript (archelon-vscode)",
+      "type": "shell",
+      "command": "pnpm compile",
+      "options": {
+        "cwd": "${workspaceFolder}/archelon-vscode"
+      },
+      "group": "build",
+      "problemMatcher": "$tsc"
+    },
+    {
+      "label": "Build All (Rust + TypeScript)",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Copy binary to archelon-vscode/bin",
+        "Compile TypeScript (archelon-vscode)"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Watch TypeScript (archelon-vscode)",
+      "type": "shell",
+      "command": "pnpm watch",
+      "options": {
+        "cwd": "${workspaceFolder}/archelon-vscode"
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "typescript",
+        "fileLocation": "relative",
+        "pattern": "$tsc",
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Starting compilation",
+          "endsPattern": "Watching for file changes"
+        }
+      }
+    }
+  ]
+}
