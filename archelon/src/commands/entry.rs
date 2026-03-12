@@ -105,6 +105,11 @@ pub enum EntryCommand {
         /// Output all matching entries as JSON (metadata + body) for AI/machine consumption
         #[arg(long)]
         json: bool,
+
+        /// Disable emoji and show a plain text label for entry type / task status instead.
+        /// JSON output always includes an `emoji` field regardless of this flag.
+        #[arg(long)]
+        no_emoji: bool,
     },
     /// Display entries as a parent-child tree; supports the same filters as `entry list`
     Tree {
@@ -114,6 +119,11 @@ pub enum EntryCommand {
         /// Output the tree as JSON (nested `children` arrays) for machine consumption
         #[arg(long)]
         json: bool,
+
+        /// Disable emoji and show a plain text label for entry type / task status instead.
+        /// JSON output always includes an `emoji` field regardless of this flag.
+        #[arg(long)]
+        no_emoji: bool,
     },
     /// Show the contents of an entry
     Show {
@@ -251,19 +261,19 @@ impl From<EntryFields> for CoreEntryFields {
 
 pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
     match cmd {
-        EntryCommand::List { filter: filter_args, json } => {
+        EntryCommand::List { filter: filter_args, json, no_emoji } => {
             let week_start = week_start(journal_dir);
             let filter = build_filter(&filter_args, week_start)?;
             let entries = ops::list_entries(journal_dir, &filter)?;
-            print_entries(&entries, filter.has_any_filter(), json)
+            print_entries(&entries, filter.has_any_filter(), json, !no_emoji)
         }
-        EntryCommand::Tree { filter: filter_args, json } => {
+        EntryCommand::Tree { filter: filter_args, json, no_emoji } => {
             let week_start = week_start(journal_dir);
             let filter = build_filter(&filter_args, week_start)?;
             let entries = ops::list_entries(journal_dir, &filter)?;
             let has_filter = filter.has_any_filter();
             let roots = ops::build_entry_tree(entries);
-            print_tree(&roots, has_filter, json)
+            print_tree(&roots, has_filter, json, !no_emoji)
         }
         EntryCommand::Show { entry } => show(&resolve_entry(journal_dir, &entry)?),
         EntryCommand::New { fields } => new(journal_dir, fields),
@@ -306,11 +316,18 @@ fn print_entries(
     entries: &[(archelon_core::entry::Entry, Vec<MatchLabel>)],
     has_filter: bool,
     json: bool,
+    emoji: bool,
 ) -> Result<()> {
     if json {
         let records: Vec<serde_json::Value> = entries
             .iter()
             .map(|(entry, labels)| {
+                let syms = archelon_core::emoji::entry_symbols(
+                    entry.frontmatter.task.as_ref(),
+                    entry.frontmatter.event.as_ref(),
+                    entry.frontmatter.created_at,
+                    entry.frontmatter.updated_at,
+                );
                 let mut v = serde_json::json!({
                     "id": entry.id().to_string(),
                     "path": entry.path.display().to_string(),
@@ -322,6 +339,7 @@ fn print_entries(
                     "task": entry.frontmatter.task,
                     "event": entry.frontmatter.event,
                     "body": entry.body,
+                    "symbols": syms.iter().map(|s| serde_json::json!({"emoji": s.emoji, "label": s.label})).collect::<Vec<_>>(),
                 });
                 if has_filter {
                     v["match_labels"] = serde_json::json!(
@@ -337,10 +355,16 @@ fn print_entries(
 
     let rows: Vec<(String, String, String)> = entries
         .iter()
-        .map(|(entry, labels)| {
+        .map(|(entry, _labels)| {
             let id = entry.id().to_string();
-            let status = if has_filter && !labels.is_empty() {
-                labels.iter().map(|l| l.as_str()).collect::<Vec<_>>().join(",")
+            let slot = if emoji {
+                let syms = archelon_core::emoji::entry_symbols(
+                    entry.frontmatter.task.as_ref(),
+                    entry.frontmatter.event.as_ref(),
+                    entry.frontmatter.created_at,
+                    entry.frontmatter.updated_at,
+                );
+                archelon_core::emoji::symbols_text(&syms)
             } else {
                 entry
                     .frontmatter
@@ -350,7 +374,7 @@ fn print_entries(
                     .unwrap_or("")
                     .to_owned()
             };
-            (id, status, entry.title().to_owned())
+            (id, slot, entry.title().to_owned())
         })
         .collect();
 
@@ -359,19 +383,31 @@ fn print_entries(
     }
 
     let id_w = rows.iter().map(|(id, _, _)| id.len()).max().unwrap_or(7);
-    let status_w = rows.iter().map(|(_, s, _)| s.len()).max().unwrap_or(0);
-    for (id, status, title) in &rows {
-        println!("{:<id_w$}  {:<status_w$}  {title}", id, status);
+    if emoji {
+        for (id, slot, title) in &rows {
+            println!("{slot}  {:<id_w$}  {title}", id);
+        }
+    } else {
+        let status_w = rows.iter().map(|(_, s, _)| s.len()).max().unwrap_or(0);
+        for (id, slot, title) in &rows {
+            println!("{:<id_w$}  {:<status_w$}  {title}", id, slot);
+        }
     }
     Ok(())
 }
 
 // ── tree output ───────────────────────────────────────────────────────────────
 
-fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool) -> Result<()> {
+fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool, emoji: bool) -> Result<()> {
     if json {
         fn node_to_json(node: &EntryTreeNode, has_filter: bool) -> serde_json::Value {
             let entry = &node.entry;
+            let syms = archelon_core::emoji::entry_symbols(
+                entry.frontmatter.task.as_ref(),
+                entry.frontmatter.event.as_ref(),
+                entry.frontmatter.created_at,
+                entry.frontmatter.updated_at,
+            );
             let mut v = serde_json::json!({
                 "id": entry.id().to_string(),
                 "path": entry.path.display().to_string(),
@@ -383,6 +419,7 @@ fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool) -> Result<(
                 "task": entry.frontmatter.task,
                 "event": entry.frontmatter.event,
                 "body": entry.body,
+                "symbols": syms.iter().map(|s| serde_json::json!({"emoji": s.emoji, "label": s.label})).collect::<Vec<_>>(),
                 "children": node.children.iter().map(|c| node_to_json(c, has_filter)).collect::<Vec<_>>(),
             });
             if has_filter {
@@ -397,11 +434,18 @@ fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool) -> Result<(
         return Ok(());
     }
 
-    fn render_node(node: &EntryTreeNode, has_filter: bool, prefix: &str, is_last: bool) {
+    fn render_node(node: &EntryTreeNode, has_filter: bool, emoji: bool, prefix: &str, is_last: bool) {
+        let _ = has_filter; // match_labels not shown in text output
         let connector = if is_last { "└─" } else { "├─" };
         let id = node.entry.id().to_string();
-        let status = if has_filter && !node.labels.is_empty() {
-            node.labels.iter().map(|l| l.as_str()).collect::<Vec<_>>().join(",")
+        let slot = if emoji {
+            let syms = archelon_core::emoji::entry_symbols(
+                node.entry.frontmatter.task.as_ref(),
+                node.entry.frontmatter.event.as_ref(),
+                node.entry.frontmatter.created_at,
+                node.entry.frontmatter.updated_at,
+            );
+            archelon_core::emoji::symbols_text(&syms)
         } else {
             node.entry.frontmatter.task.as_ref()
                 .map(|t| t.status.as_str())
@@ -409,10 +453,16 @@ fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool) -> Result<(
                 .to_owned()
         };
         let title = node.entry.title();
-        if prefix.is_empty() {
-            println!("{id}  {status:<12}  {title}");
+        if emoji {
+            if prefix.is_empty() {
+                println!("{slot}  {id}  {title}");
+            } else {
+                println!("{prefix}{connector} {slot}  {id}  {title}");
+            }
+        } else if prefix.is_empty() {
+            println!("{id}  {slot:<12}  {title}");
         } else {
-            println!("{prefix}{connector} {id}  {status:<12}  {title}");
+            println!("{prefix}{connector} {id}  {slot:<12}  {title}");
         }
         let child_prefix = if prefix.is_empty() {
             if is_last { "   ".to_owned() } else { "│  ".to_owned() }
@@ -421,7 +471,7 @@ fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool) -> Result<(
         };
         let n = node.children.len();
         for (i, child) in node.children.iter().enumerate() {
-            render_node(child, has_filter, &child_prefix, i + 1 == n);
+            render_node(child, has_filter, emoji, &child_prefix, i + 1 == n);
         }
     }
 
@@ -430,7 +480,7 @@ fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool) -> Result<(
     }
     let n = roots.len();
     for (i, root) in roots.iter().enumerate() {
-        render_node(root, has_filter, "", i + 1 == n);
+        render_node(root, has_filter, emoji, "", i + 1 == n);
     }
     Ok(())
 }

@@ -5,27 +5,18 @@ import { findJournalRoot } from './journal';
 
 export type ViewMode = 'tree' | 'list';
 
-function entryEmoji(record: EntryRecord): string {
-    if (record.event) { return '📅'; }
-    if (record.task) {
-        const s = record.task.status.toLowerCase();
-        if (s === 'done' || s === 'completed') { return '✅'; }
-        if (s === 'cancelled' || s === 'canceled') { return '❌'; }
-        if (s === 'in_progress' || s === 'wip') { return '🔄'; }
-        return '⬜';
-    }
-    return '📝';
-}
-
 export class EntryItem extends vscode.TreeItem {
     constructor(
         public readonly record: EntryRecord,
         public readonly children: EntryRecord[],
     ) {
+        const typeSymbol = record.symbols?.[record.symbols.length - 1]?.emoji ?? '📝';
+        const freshnessSymbol = record.symbols && record.symbols.length > 1 ? record.symbols[0].emoji : '　';
+        const emojiSlot = `${freshnessSymbol}${typeSymbol}`;
         super(
-            `${entryEmoji(record)} ${record.title || '(untitled)'}`,
+            `${emojiSlot} ${record.title || '(untitled)'}`,
             children.length > 0
-                ? vscode.TreeItemCollapsibleState.Collapsed
+                ? vscode.TreeItemCollapsibleState.Expanded
                 : vscode.TreeItemCollapsibleState.None,
         );
 

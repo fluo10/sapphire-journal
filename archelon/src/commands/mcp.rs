@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use archelon_core::{
     cache,
+    emoji,
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
     ops::{self, EntryFields, EntryFilter, EntryTreeNode, FieldSelector, SortField, SortOrder},
@@ -318,6 +319,12 @@ impl ArchelonServer {
             let records: Vec<serde_json::Value> = entries
                 .iter()
                 .map(|(entry, labels)| {
+                    let syms = emoji::entry_symbols(
+                        entry.frontmatter.task.as_ref(),
+                        entry.frontmatter.event.as_ref(),
+                        entry.frontmatter.created_at,
+                        entry.frontmatter.updated_at,
+                    );
                     let mut v = serde_json::json!({
                         "id": entry.id().to_string(),
                         "path": entry.path.display().to_string(),
@@ -329,6 +336,7 @@ impl ArchelonServer {
                         "task": entry.frontmatter.task,
                         "event": entry.frontmatter.event,
                         "body": entry.body,
+                        "symbols": syms.iter().map(|s| serde_json::json!({"emoji": s.emoji, "label": s.label})).collect::<Vec<_>>(),
                     });
                     if has_filter {
                         v["match_labels"] = serde_json::json!(
@@ -379,6 +387,12 @@ impl ArchelonServer {
 
             fn node_to_json(node: &EntryTreeNode, has_filter: bool) -> serde_json::Value {
                 let entry = &node.entry;
+                let syms = archelon_core::emoji::entry_symbols(
+                    entry.frontmatter.task.as_ref(),
+                    entry.frontmatter.event.as_ref(),
+                    entry.frontmatter.created_at,
+                    entry.frontmatter.updated_at,
+                );
                 let mut v = serde_json::json!({
                     "id": entry.id().to_string(),
                     "path": entry.path.display().to_string(),
@@ -390,6 +404,7 @@ impl ArchelonServer {
                     "task": entry.frontmatter.task,
                     "event": entry.frontmatter.event,
                     "body": entry.body,
+                    "symbols": syms.iter().map(|s| serde_json::json!({"emoji": s.emoji, "label": s.label})).collect::<Vec<_>>(),
                     "children": node.children.iter().map(|c| node_to_json(c, has_filter)).collect::<Vec<_>>(),
                 });
                 if has_filter {
