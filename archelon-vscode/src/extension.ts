@@ -21,6 +21,7 @@ export function activate(context: vscode.ExtensionContext) {
     const treeProvider = new EntryTreeProvider();
     const treeView = vscode.window.createTreeView('archelon.entries', {
         treeDataProvider: treeProvider,
+        dragAndDropController: treeProvider,
         showCollapseAll: false,
     });
     context.subscriptions.push(treeView);

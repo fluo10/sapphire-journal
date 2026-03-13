@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { EntryRecord, SortField, SortOrder, listEntries, treeEntries } from './cli';
+import { EntryRecord, SortField, SortOrder, listEntries, setEntryParent, treeEntries } from './cli';
 import { findJournalRoot } from './journal';
 
 export type ViewMode = 'tree' | 'list';
@@ -58,7 +58,11 @@ export class EntryItem extends vscode.TreeItem {
     }
 }
 
-export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem> {
+const ENTRY_MIME_TYPE = 'application/vnd.code.tree.archelon.entries';
+
+export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vscode.TreeDragAndDropController<EntryItem> {
+    readonly dragMimeTypes = [ENTRY_MIME_TYPE];
+    readonly dropMimeTypes = [ENTRY_MIME_TYPE];
     private _onDidChangeTreeData = new vscode.EventEmitter<EntryItem | undefined | void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
@@ -135,6 +139,36 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem> {
         }
 
         return this._toItems(roots);
+    }
+
+    handleDrag(source: readonly EntryItem[], dataTransfer: vscode.DataTransfer): void {
+        dataTransfer.set(ENTRY_MIME_TYPE, new vscode.DataTransferItem(
+            source.map(s => ({ id: s.record.id, path: s.record.path }))
+        ));
+    }
+
+    async handleDrop(target: EntryItem | undefined, dataTransfer: vscode.DataTransfer): Promise<void> {
+        if (!target) { return; }
+        const item = dataTransfer.get(ENTRY_MIME_TYPE);
+        if (!item) { return; }
+        const sources: { id: string; path: string }[] = item.value;
+
+        const cwd = this._getCwd();
+        if (!cwd) { return; }
+
+        const errors: string[] = [];
+        for (const src of sources) {
+            if (src.id === target.record.id) { continue; }
+            try {
+                await setEntryParent(src.path, target.record.id, cwd);
+            } catch (err) {
+                errors.push(`@${src.id}: ${err}`);
+            }
+        }
+        if (errors.length > 0) {
+            vscode.window.showErrorMessage(`Archelon: failed to reparent — ${errors.join(', ')}`);
+        }
+        this.refresh();
     }
 
     private _toItems(records: EntryRecord[]): EntryItem[] {

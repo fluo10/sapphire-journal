@@ -78,6 +78,14 @@ export async function removeEntry(entry: string, cwd: string): Promise<void> {
     await execFileAsync(bin(), ['entry', 'remove', entry], { cwd });
 }
 
+/**
+ * Run `archelon entry set <entryPath> --parent @<parentId>`.
+ * Throws on non-zero exit.
+ */
+export async function setEntryParent(entryPath: string, parentId: string, cwd: string): Promise<void> {
+    await execFileAsync(bin(), ['entry', 'set', entryPath, '--parent', `@${parentId}`], { cwd });
+}
+
 export interface EntryRecord {
     id: string;
     path: string;
