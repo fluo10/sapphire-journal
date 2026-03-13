@@ -116,6 +116,32 @@ impl Entry {
     }
 }
 
+/// Metadata-only view of an entry — path and frontmatter without the body.
+///
+/// Returned by list operations to avoid loading large bodies into memory
+/// and to keep JSON output compact (e.g. for AI consumers).
+#[derive(Debug, Clone)]
+pub struct EntryHeader {
+    pub path: PathBuf,
+    pub frontmatter: Frontmatter,
+}
+
+impl EntryHeader {
+    pub fn id(&self) -> CarettaId {
+        self.frontmatter.id
+    }
+
+    pub fn title(&self) -> &str {
+        &self.frontmatter.title
+    }
+}
+
+impl From<Entry> for EntryHeader {
+    fn from(entry: Entry) -> Self {
+        EntryHeader { path: entry.path, frontmatter: entry.frontmatter }
+    }
+}
+
 /// Custom serde module for `NaiveDateTime` using minute-precision format (`YYYY-MM-DDTHH:MM`).
 ///
 /// Serializes to `%Y-%m-%dT%H:%M`. Deserializes from:

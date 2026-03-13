@@ -103,7 +103,7 @@ export async function listEntries(cwd: string, sortBy?: SortField, sortOrder?: S
     return JSON.parse(stdout) as EntryRecord[];
 }
 
-export type SortField = 'id' | 'title' | 'task_status' | 'created_at' | 'updated_at' | 'task_due' | 'event_start' | 'event_end';
+export type SortField = 'id' | 'title' | 'task_status' | 'created_at' | 'updated_at' | 'task_due' | 'event_start';
 export type SortOrder = 'asc' | 'desc';
 
 /**

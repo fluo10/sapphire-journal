@@ -42,7 +42,6 @@ export function activate(context: vscode.ExtensionContext) {
                 { label: 'Task status',  field: 'task_status' },
                 { label: 'Task due',     field: 'task_due' },
                 { label: 'Event start',  field: 'event_start' },
-                { label: 'Event end',    field: 'event_end' },
             ];
             const picked = await vscode.window.showQuickPick(fields, {
                 placeHolder: 'Sort entries by…',
