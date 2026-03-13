@@ -6,7 +6,7 @@ use archelon_core::{
     emoji,
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
-    ops::{self, EntryFields, EntryFilter, EntryTreeNode, FieldSelector, SortField, SortOrder},
+    ops::{self, EntryFields, EntryFilter, EntryTreeNode, FieldSelector, SortField, SortOrder, UpdateOption},
     parser::read_entry,
     period::{parse_datetime, parse_datetime_end, parse_period},
 };
@@ -211,7 +211,7 @@ fn parse_entry_fields(
     Ok(EntryFields {
         title: None,
         body: None,
-        parent: None,
+        parent: UpdateOption::Unchanged,
         slug,
         tags: tags.as_deref().map(|s| {
             s.split(',')
@@ -471,7 +471,10 @@ impl ArchelonServer {
             let fields = EntryFields {
                 title: p.title,
                 body: p.body,
-                parent: p.parent.as_deref().map(EntryRef::parse),
+                parent: match p.parent.as_deref() {
+                    Some(s) => UpdateOption::Set(EntryRef::parse(s)),
+                    None => UpdateOption::Unchanged,
+                },
                 ..fields
             };
             let dest = ops::create_entry(&journal, &conn, fields)?;
@@ -515,7 +518,10 @@ impl ArchelonServer {
             let fields = EntryFields {
                 title: p.title,
                 body: p.body,
-                parent: p.parent.as_deref().map(EntryRef::parse),
+                parent: match p.parent.as_deref() {
+                    Some(s) => UpdateOption::Set(EntryRef::parse(s)),
+                    None => UpdateOption::Unchanged,
+                },
                 ..fields
             };
             let msg = if let Some(new_path) = ops::update_entry(&path, &conn, fields)? {

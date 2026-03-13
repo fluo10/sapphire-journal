@@ -22,6 +22,19 @@ use crate::{
     period::Period,
 };
 
+// ── UpdateOption ──────────────────────────────────────────────────────────────
+
+/// Represents the three possible states for an optional field in an update
+/// operation: set it to a new value, clear it (set to `None`), or leave it
+/// unchanged.
+#[derive(Debug, Default)]
+pub enum UpdateOption<T> {
+    Set(T),
+    Clear,
+    #[default]
+    Unchanged,
+}
+
 // ── SortField / SortOrder ─────────────────────────────────────────────────────
 
 /// Which field to sort entries by in [`list_entries`].
@@ -436,9 +449,9 @@ pub struct EntryFields {
     pub title: Option<String>,
     pub body: Option<String>,
     /// Parent entry reference.  Resolved to a `CarettaId` via the cache at
-    /// write time.  `None` means "leave parent unchanged" in update; "no
-    /// parent" in create.
-    pub parent: Option<EntryRef>,
+    /// write time.  `Unchanged` means "leave parent unchanged" in update; "no
+    /// parent" in create.  `Clear` sets `parent_id` to `None`.
+    pub parent: UpdateOption<EntryRef>,
     pub slug: Option<String>,
     /// `None` = leave tags unchanged; `Some([])` = clear all tags.
     pub tags: Option<Vec<String>>,
@@ -490,7 +503,10 @@ pub fn create_entry(journal: &Journal, conn: &Connection, fields: EntryFields) -
     }
 
     // ── resolve parent ─────────────────────────────────────────────────────
-    let parent_id = resolve_parent_id(conn, fields.parent.as_ref())?;
+    let parent_id = match &fields.parent {
+        UpdateOption::Set(r) => resolve_parent_id(conn, Some(r))?,
+        UpdateOption::Clear | UpdateOption::Unchanged => None,
+    };
 
     let tags = fields.tags.unwrap_or_default();
 
@@ -580,8 +596,14 @@ pub fn update_entry(path: &Path, conn: &Connection, fields: EntryFields) -> Resu
     if let Some(b) = fields.body {
         entry.body = b;
     }
-    if let Some(parent_ref) = fields.parent.as_ref() {
-        entry.frontmatter.parent_id = Some(resolve_parent_id(conn, Some(parent_ref))?.unwrap());
+    match &fields.parent {
+        UpdateOption::Set(r) => {
+            entry.frontmatter.parent_id = Some(resolve_parent_id(conn, Some(r))?.unwrap());
+        }
+        UpdateOption::Clear => {
+            entry.frontmatter.parent_id = None;
+        }
+        UpdateOption::Unchanged => {}
     }
     if let Some(s) = fields.slug {
         entry.frontmatter.slug = s;

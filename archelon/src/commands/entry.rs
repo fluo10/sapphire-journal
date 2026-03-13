@@ -3,7 +3,7 @@ use archelon_core::{
     cache,
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
-    ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryTreeNode, FieldSelector, MatchLabel, SortField, SortOrder},
+    ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryTreeNode, FieldSelector, MatchLabel, SortField, SortOrder, UpdateOption},
     period::{parse_datetime, parse_datetime_end, parse_period},
 };
 
@@ -151,6 +151,10 @@ pub enum EntryCommand {
 
         #[command(flatten)]
         fields: EntryFields,
+
+        /// Remove the parent relationship (make this a root entry)
+        #[arg(long, conflicts_with = "parent")]
+        no_parent: bool,
     },
     /// Check whether an entry's frontmatter and filename are valid
     Check {
@@ -246,7 +250,10 @@ impl From<EntryFields> for CoreEntryFields {
         Self {
             title: f.title,
             body: f.body,
-            parent: f.parent.as_deref().map(EntryRef::parse),
+            parent: match f.parent.as_deref() {
+                Some(s) => UpdateOption::Set(EntryRef::parse(s)),
+                None => UpdateOption::Unchanged,
+            },
             slug: f.slug,
             tags: f.tags,
             task_due: f.task_due,
@@ -286,7 +293,7 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
                 bail!("specify an entry or use --new to create one")
             }
         }
-        EntryCommand::Set { entry, fields } => set(journal_dir, &resolve_entry(journal_dir, &entry)?, fields),
+        EntryCommand::Set { entry, fields, no_parent } => set(journal_dir, &resolve_entry(journal_dir, &entry)?, fields, no_parent),
         EntryCommand::Check { entry } => check(journal_dir, &entry),
         EntryCommand::Fix { entry, touch } => fix(journal_dir, &entry, touch),
         EntryCommand::Path { entry, new, parent } => entry_path(journal_dir, entry.as_deref(), new, parent.as_deref()),
@@ -582,7 +589,7 @@ fn edit_new(journal_dir: Option<&Path>) -> Result<()> {
 
 // ── set ───────────────────────────────────────────────────────────────────────
 
-fn set(journal_dir: Option<&Path>, path: &Path, fields: EntryFields) -> Result<()> {
+fn set(journal_dir: Option<&Path>, path: &Path, fields: EntryFields, no_parent: bool) -> Result<()> {
     if fields.title.is_none()
         && fields.body.is_none()
         && fields.parent.is_none()
@@ -594,13 +601,18 @@ fn set(journal_dir: Option<&Path>, path: &Path, fields: EntryFields) -> Result<(
         && fields.task_closed_at.is_none()
         && fields.event_start.is_none()
         && fields.event_end.is_none()
+        && !no_parent
     {
         bail!("nothing to update — specify at least one field");
     }
     let journal = open_journal(journal_dir)?;
     let conn = cache::open_cache(&journal)?;
     cache::sync_cache(&journal, &conn)?;
-    let new_path_opt = ops::update_entry(path, &conn, fields.into())?;
+    let mut core_fields: CoreEntryFields = fields.into();
+    if no_parent {
+        core_fields.parent = UpdateOption::Clear;
+    }
+    let new_path_opt = ops::update_entry(path, &conn, core_fields)?;
     let final_path = new_path_opt.as_deref().unwrap_or(path);
     let _ = cache::upsert_entry_from_path(&conn, final_path);
     if let Some(new_path) = new_path_opt {
