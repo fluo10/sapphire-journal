@@ -74,9 +74,13 @@ struct EntryListParams {
     /// YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
     period: Option<String>,
 
-    /// Restrict period matching to task due date.
-    /// Without period: include entries that have a task_due set.
-    task_due: Option<bool>,
+    /// Include incomplete tasks whose due date falls within (or before) the period.
+    /// Without period: include tasks whose due date is in the past and closed_at is absent.
+    task_overdue: Option<bool>,
+
+    /// Include incomplete tasks that were started within (or before) the period.
+    /// Without period: include all tasks that have started_at set and closed_at absent.
+    task_in_progress: Option<bool>,
 
     /// Restrict period matching to event span (overlap semantics).
     /// Without period: include entries that have an event set.
@@ -95,14 +99,6 @@ struct EntryListParams {
     /// AND filter: include only entries that have ALL of these tags.
     /// Provide as an array, e.g. ["work", "urgent"]
     tags: Option<Vec<String>>,
-
-    /// OR filter with period: include tasks whose due date is in the past and closed_at is absent.
-    /// Can be combined with period; either condition is sufficient for inclusion.
-    overdue: Option<bool>,
-
-    /// OR filter with period: include tasks that have started_at set, closed_at absent,
-    /// and (when period is given) started_at ≤ period end.
-    task_started: Option<bool>,
 
     /// Field to sort results by.
     /// Accepted values: id | title | task_status | created_at | updated_at | task_due | event_start | event_end
@@ -282,11 +278,11 @@ impl ArchelonServer {
 
     #[tool(description = "List journal entries as JSON. \
         Use `period` to specify a time range. \
-        Use field selectors (task_due, event_span, created_at, updated_at) to restrict which fields \
-        the period applies to; omitting all selectors applies the period to all fields (OR). \
-        Without a period, field selectors filter entries where that field is present. \
-        event_span uses interval-overlap semantics so in-progress events are included. \
-        task_status, tags, and overdue are independent AND/OR filters.")]
+        Use field selectors (task_overdue, task_in_progress, event_span, created_at, updated_at) \
+        to restrict which conditions apply; omitting all selectors applies the period to all \
+        timestamp fields (OR). Without a period, field selectors filter entries where that \
+        condition is met. event_span uses interval-overlap semantics so in-progress events are \
+        included. task_status and tags are independent AND filters.")]
     fn entry_list(&self, Parameters(p): Parameters<EntryListParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let week_start = self.week_start();
@@ -295,18 +291,18 @@ impl ArchelonServer {
             let filter = EntryFilter {
                 period: p.period.as_deref().map(parse).transpose()?,
                 fields: FieldSelector {
-                    task_due:   p.task_due.unwrap_or(false),
-                    event_span: p.event_span.unwrap_or(false),
-                    created_at: p.created_at.unwrap_or(false),
-                    updated_at: p.updated_at.unwrap_or(false),
+                    task_overdue:    p.task_overdue.unwrap_or(false),
+                    task_in_progress: p.task_in_progress.unwrap_or(false),
+                    event_span:      p.event_span.unwrap_or(false),
+                    created_at:      p.created_at.unwrap_or(false),
+                    updated_at:      p.updated_at.unwrap_or(false),
                 },
                 task_status: p.task_status.unwrap_or_default(),
                 tags: p.tags.unwrap_or_default(),
-                overdue: p.overdue.unwrap_or(false),
-                task_started: p.task_started.unwrap_or(false),
                 sort_by: p.sort_by.as_deref()
                     .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
-                    .transpose()?,
+                    .transpose()?
+                    .unwrap_or_default(),
                 sort_order: p.sort_order.as_deref()
                     .map(|s| s.parse::<SortOrder>().map_err(anyhow::Error::msg))
                     .transpose()?
@@ -362,18 +358,18 @@ impl ArchelonServer {
             let filter = EntryFilter {
                 period: p.period.as_deref().map(parse).transpose()?,
                 fields: FieldSelector {
-                    task_due:   p.task_due.unwrap_or(false),
-                    event_span: p.event_span.unwrap_or(false),
-                    created_at: p.created_at.unwrap_or(false),
-                    updated_at: p.updated_at.unwrap_or(false),
+                    task_overdue:    p.task_overdue.unwrap_or(false),
+                    task_in_progress: p.task_in_progress.unwrap_or(false),
+                    event_span:      p.event_span.unwrap_or(false),
+                    created_at:      p.created_at.unwrap_or(false),
+                    updated_at:      p.updated_at.unwrap_or(false),
                 },
                 task_status: p.task_status.unwrap_or_default(),
                 tags: p.tags.unwrap_or_default(),
-                overdue: p.overdue.unwrap_or(false),
-                task_started: p.task_started.unwrap_or(false),
                 sort_by: p.sort_by.as_deref()
                     .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
-                    .transpose()?,
+                    .transpose()?
+                    .unwrap_or_default(),
                 sort_order: p.sort_order.as_deref()
                     .map(|s| s.parse::<SortOrder>().map_err(anyhow::Error::msg))
                     .transpose()?

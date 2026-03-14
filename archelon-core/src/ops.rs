@@ -38,9 +38,16 @@ pub enum UpdateOption<T> {
 // ── SortField / SortOrder ─────────────────────────────────────────────────────
 
 /// Which field to sort entries by in [`list_entries`].
+///
+/// The default variant is `Unsorted`, which preserves the order returned by the
+/// cache or filesystem (no sort applied).  Callers that want to bypass Rust-side
+/// sorting — for example to perform locale-aware title sorting in a frontend —
+/// should leave `sort_by` as `Unsorted` and sort the results themselves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortField {
+    /// No sort — preserve cache / filesystem order.
     #[default]
+    Unsorted,
     Id,
     Title,
     TaskStatus,
@@ -90,25 +97,42 @@ impl FromStr for SortOrder {
 
 // ── FieldSelector ─────────────────────────────────────────────────────────────
 
-/// Selects which timestamp fields [`EntryFilter::period`] applies to.
+/// Selects which timestamp fields and semantic task conditions apply.
 ///
-/// When all fields are `false` (the default), `period` applies to all fields
-/// simultaneously (OR across all).  Setting one or more fields to `true`
-/// restricts the period check to only those fields.
-///
+/// **Period-field selectors** (`event_span`, `created_at`, `updated_at`): when all are
+/// `false` (the default), `period` applies to all timestamp fields simultaneously (OR).
+/// Setting one or more to `true` restricts the period check to only those fields.
 /// Without a `period`, a `true` flag means "the field must be present (set)".
+///
+/// **Semantic task selectors** (`task_overdue`, `task_in_progress`): always explicit;
+/// never included in the "apply to all fields" fallback.
+///
+/// - `task_overdue`: include tasks where `closed_at` is absent and `due ≤ period_end`
+///   (or `due < now` when no period is set).
+/// - `task_in_progress`: include tasks where `closed_at` is absent and
+///   `started_at ≤ period_end` (or `started_at` is set when no period).
 #[derive(Debug, Default, Clone)]
 pub struct FieldSelector {
-    pub task_due: bool,
+    pub task_overdue: bool,
+    pub task_in_progress: bool,
     pub event_span: bool,
     pub created_at: bool,
     pub updated_at: bool,
 }
 
 impl FieldSelector {
-    /// Returns `true` when no field is explicitly selected (i.e. all are `false`).
+    /// Returns `true` when no field of any kind is selected.
     pub fn is_empty(&self) -> bool {
-        !self.task_due && !self.event_span && !self.created_at && !self.updated_at
+        !self.task_overdue && !self.task_in_progress
+            && !self.event_span && !self.created_at && !self.updated_at
+    }
+
+    /// Returns `true` when no period-field selector is active.
+    ///
+    /// Used internally to decide whether `period` should apply to all timestamp
+    /// fields (the "all" fallback) or only to explicitly selected ones.
+    fn period_fields_empty(&self) -> bool {
+        !self.event_span && !self.created_at && !self.updated_at
     }
 }
 
@@ -132,21 +156,15 @@ pub struct EntryFilter {
     pub task_status: Vec<String>,
     /// AND condition: entry must contain ALL of these tags (empty = no constraint).
     pub tags: Vec<String>,
-    /// OR condition with timestamp filters: include tasks whose `due` is in the past
-    /// and `closed_at` is absent.
-    pub overdue: bool,
-    /// OR condition with timestamp filters: include tasks that have `started_at` set,
-    /// `closed_at` absent, and (when a period is active) `started_at` ≤ period end.
-    pub task_started: bool,
-    /// Field to sort results by (`None` = keep filesystem order).
-    pub sort_by: Option<SortField>,
+    /// Field to sort results by (default: `Unsorted` = preserve cache/filesystem order).
+    pub sort_by: SortField,
     /// Sort direction (default: ascending).
     pub sort_order: SortOrder,
 }
 
 impl EntryFilter {
     pub fn has_timestamp_filter(&self) -> bool {
-        self.period.is_some() || !self.fields.is_empty() || self.overdue || self.task_started
+        self.period.is_some() || !self.fields.is_empty()
     }
 
     pub fn has_any_filter(&self) -> bool {
@@ -161,50 +179,57 @@ impl EntryFilter {
         let mut labels = Vec::new();
 
         let timestamp_ok = if self.has_timestamp_filter() {
-            let task_due_val    = entry.frontmatter.task.as_ref().and_then(|t| t.due);
             let event_start_val = entry.frontmatter.event.as_ref().map(|e| e.start);
             let event_end_val   = entry.frontmatter.event.as_ref().map(|e| e.end);
             let created_val     = Some(entry.frontmatter.created_at);
             let updated_val     = Some(entry.frontmatter.updated_at);
 
             if let Some(p) = &self.period {
-                // No field selectors → apply to all fields simultaneously
-                let all = self.fields.is_empty();
-                if (all || self.fields.task_due)   && p.matches(task_due_val)                        { labels.push(MatchLabel::TaskDue); }
+                // No period-field selectors → apply period to all timestamp fields simultaneously
+                let all = self.fields.period_fields_empty();
                 if (all || self.fields.event_span) && p.overlaps_event(event_start_val, event_end_val) { labels.push(MatchLabel::EventSpan); }
-                if (all || self.fields.created_at) && p.matches(created_val)                         { labels.push(MatchLabel::CreatedAt); }
-                if (all || self.fields.updated_at) && p.matches(updated_val)                         { labels.push(MatchLabel::UpdatedAt); }
-            } else {
-                // No period: field flags → check that the field exists (is set)
-                if self.fields.task_due   && task_due_val.is_some()                                   { labels.push(MatchLabel::TaskDue); }
-                if self.fields.event_span && (event_start_val.is_some() || event_end_val.is_some())   { labels.push(MatchLabel::EventSpan); }
-                // created_at / updated_at are always set on every entry → no useful existence check
-            }
+                if (all || self.fields.created_at) && p.matches(created_val)                           { labels.push(MatchLabel::CreatedAt); }
+                if (all || self.fields.updated_at) && p.matches(updated_val)                           { labels.push(MatchLabel::UpdatedAt); }
 
-            // overdue: task with due in the past and no closed_at
-            if self.overdue {
-                let is_overdue = entry.frontmatter.task.as_ref().is_some_and(|t| {
-                    t.due.is_some_and(|due| due < chrono::Local::now().naive_local())
-                        && t.closed_at.is_none()
-                });
-                if is_overdue {
-                    labels.push(MatchLabel::Overdue);
+                // task_overdue: incomplete task with due ≤ period end
+                if self.fields.task_overdue {
+                    if let Period::Range(_, end) = p {
+                        let is_overdue = entry.frontmatter.task.as_ref().is_some_and(|t| {
+                            t.closed_at.is_none() && t.due.is_some_and(|due| due <= *end)
+                        });
+                        if is_overdue { labels.push(MatchLabel::TaskOverdue); }
+                    }
                 }
-            }
 
-            // task_started: task with started_at set, no closed_at, and started_at ≤ period end
-            if self.task_started {
-                let period_end = match &self.period {
-                    Some(Period::Range(_, end)) => Some(*end),
-                    _ => None,
-                };
-                let is_started = entry.frontmatter.task.as_ref().is_some_and(|t| {
-                    t.started_at.is_some()
-                        && t.closed_at.is_none()
-                        && period_end.map_or(true, |end| t.started_at.unwrap() <= end)
-                });
-                if is_started {
-                    labels.push(MatchLabel::TaskStarted);
+                // task_in_progress: incomplete task with started_at ≤ period end
+                if self.fields.task_in_progress {
+                    if let Period::Range(_, end) = p {
+                        let is_in_progress = entry.frontmatter.task.as_ref().is_some_and(|t| {
+                            t.closed_at.is_none() && t.started_at.is_some_and(|sa| sa <= *end)
+                        });
+                        if is_in_progress { labels.push(MatchLabel::TaskInProgress); }
+                    }
+                }
+            } else {
+                // No period: period-field flags → check that the field exists (is set)
+                if self.fields.event_span && (event_start_val.is_some() || event_end_val.is_some()) { labels.push(MatchLabel::EventSpan); }
+                // created_at / updated_at are always set on every entry → no useful existence check
+
+                // task_overdue: incomplete task with due < now
+                if self.fields.task_overdue {
+                    let now = chrono::Local::now().naive_local();
+                    let is_overdue = entry.frontmatter.task.as_ref().is_some_and(|t| {
+                        t.closed_at.is_none() && t.due.is_some_and(|due| due < now)
+                    });
+                    if is_overdue { labels.push(MatchLabel::TaskOverdue); }
+                }
+
+                // task_in_progress: incomplete task with started_at set
+                if self.fields.task_in_progress {
+                    let is_in_progress = entry.frontmatter.task.as_ref().is_some_and(|t| {
+                        t.closed_at.is_none() && t.started_at.is_some()
+                    });
+                    if is_in_progress { labels.push(MatchLabel::TaskInProgress); }
                 }
             }
 
@@ -238,24 +263,24 @@ impl EntryFilter {
 /// Identifies which timestamp field caused an entry to match a filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchLabel {
-    TaskDue,
-    TaskStarted,
+    /// Task is incomplete (`closed_at` absent) and `due ≤ period_end` (or `due < now`).
+    TaskOverdue,
+    /// Task is incomplete (`closed_at` absent) and `started_at ≤ period_end` (or `started_at` set).
+    TaskInProgress,
     /// The filter period overlaps the event's [start, end] span.
     EventSpan,
     CreatedAt,
     UpdatedAt,
-    Overdue,
 }
 
 impl MatchLabel {
     pub fn as_str(self) -> &'static str {
         match self {
-            MatchLabel::TaskDue     => "TASK_DUE",
-            MatchLabel::TaskStarted => "TASK_STARTED",
-            MatchLabel::EventSpan   => "EVENT_SPAN",
-            MatchLabel::CreatedAt   => "CREATED",
-            MatchLabel::UpdatedAt   => "UPDATED",
-            MatchLabel::Overdue     => "OVERDUE",
+            MatchLabel::TaskOverdue    => "TASK_OVERDUE",
+            MatchLabel::TaskInProgress => "TASK_IN_PROGRESS",
+            MatchLabel::EventSpan      => "EVENT_SPAN",
+            MatchLabel::CreatedAt      => "CREATED",
+            MatchLabel::UpdatedAt      => "UPDATED",
         }
     }
 }
@@ -376,9 +401,9 @@ pub fn list_entries(
         }
         result.push((header, labels));
     }
-    if let Some(field) = filter.sort_by {
+    if filter.sort_by != SortField::Unsorted {
         result.sort_by(|(a, _), (b, _)| {
-            let ord = sort_cmp(a, b, field);
+            let ord = sort_cmp(a, b, filter.sort_by);
             if filter.sort_order == SortOrder::Desc { ord.reverse() } else { ord }
         });
     }
@@ -395,9 +420,9 @@ fn apply_filter_and_sort(entries: Vec<EntryHeader>, filter: &EntryFilter) -> Res
         }
         result.push((entry, labels));
     }
-    if let Some(field) = filter.sort_by {
+    if filter.sort_by != SortField::Unsorted {
         result.sort_by(|(a, _), (b, _)| {
-            let ord = sort_cmp(a, b, field);
+            let ord = sort_cmp(a, b, filter.sort_by);
             if filter.sort_order == SortOrder::Desc { ord.reverse() } else { ord }
         });
     }
@@ -406,6 +431,7 @@ fn apply_filter_and_sort(entries: Vec<EntryHeader>, filter: &EntryFilter) -> Res
 
 fn sort_cmp(a: &EntryHeader, b: &EntryHeader, field: SortField) -> Ordering {
     match field {
+        SortField::Unsorted => Ordering::Equal,
         SortField::Id => a.id().cmp(&b.id()),
         SortField::Title => a.title().cmp(b.title()),
         SortField::TaskStatus => {
