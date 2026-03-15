@@ -82,17 +82,26 @@ archelon entry list [PATH] [OPTIONS]
 Timestamp filters (OR'd across fields):
 
 ```bash
---period PERIOD               # shorthand: applies to all timestamp fields
+archelon entry list [PERIOD]      # positional PERIOD applies to all timestamp fields
 --task-due PERIOD             # filter by task due date
 --event-span PERIOD           # filter by event span overlap (in-progress events included)
 --created-at PERIOD           # filter by created_at
 --updated-at PERIOD           # filter by updated_at
---overdue                     # include tasks whose due date is past and not closed
+--all-periods                 # match entries regardless of period
 ```
 
-PERIOD formats: `today` | `this_week` | `this_month` | `YYYY-MM-DD` | `YYYY-MM-DD,YYYY-MM-DD` | `YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM`
+PERIOD formats: `today` | `yesterday` | `this_week` | `last_week` | `this_month` | `last_month` | `YYYY-MM-DD` | `YYYY-MM-DD,YYYY-MM-DD` | `YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM`
 
-Other filters (AND'd on top of timestamp filters):
+Task state filters:
+
+```bash
+--task-overdue                # tasks whose due date is past and not closed
+--task-in-progress            # tasks currently in_progress
+--task-unstarted              # tasks with status open and no started_at
+--active                      # composite: overdue OR in-progress
+```
+
+Other filters (AND'd on top):
 
 ```bash
 --task-status open,in_progress   # comma-separated status values
@@ -231,7 +240,7 @@ archelon mcp
 | `entry_tree` | List entries as a nested JSON tree (parent-child hierarchy) |
 | `entry_show` | Show the contents of an entry by ID prefix or file path |
 | `entry_new` | Create a new journal entry |
-| `entry_set` | Update frontmatter fields of an existing entry |
+| `entry_modify` | Update frontmatter fields of an existing entry |
 | `entry_check` | Validate an entry's frontmatter and filename |
 | `entry_fix` | Rename an entry file to match its frontmatter |
 | `entry_remove` | Delete an entry file |
@@ -250,13 +259,16 @@ Timestamp filters are **OR'd** across fields; `task_status` and `tags` are **AND
 | `event_span` | Filter by event span overlap: matches entries whose event [start, end] overlaps the period |
 | `created_at` | Filter by created_at |
 | `updated_at` | Filter by updated_at |
-| `overdue` | Include tasks whose due date is past and not closed |
+| `task_overdue` | Include tasks whose due date is past and not closed |
+| `task_in_progress` | Include tasks currently in_progress |
+| `task_unstarted` | Include tasks with status open and no started_at |
+| `active` | Composite: overdue OR in-progress |
 | `task_status` | Array of statuses to include, e.g. `["open", "in_progress"]` |
 | `tags` | Array of tags; entry must have ALL specified tags |
 | `sort_by` | Field to sort by: `id` \| `title` \| `task_status` \| `created_at` \| `updated_at` \| `task_due` \| `event_start` \| `event_end` |
 | `sort_order` | `"asc"` (default) or `"desc"` |
 
-PERIOD format: `today` \| `this_week` \| `this_month` \| `YYYY-MM-DD` \| `YYYY-MM-DD,YYYY-MM-DD` \| `YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM`
+PERIOD format: `today` \| `this_week` \| `this_month` \| `yesterday` \| `last_week` \| `last_month` \| `YYYY-MM-DD` \| `YYYY-MM-DD,YYYY-MM-DD` \| `YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM`
 
 ## License
 

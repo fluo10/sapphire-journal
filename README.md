@@ -108,10 +108,14 @@ Use `archelon init` to create one.
 
 The `archelon-vscode` extension integrates with the editor:
 
-- **Auto-fix on save** — runs `entry fix --touch` automatically, keeping filenames and timestamps in sync
-- **New Entry**, **Open Entry by ID**, **Remove Entry**, **List Entries** commands available from the Command Palette
+- **Auto-fix on save** — runs `entry fix` automatically, keeping filenames and year directories in sync
+- **Hierarchical tree view** — entries displayed as a parent-child tree with type icons, ThemeIcon status decorations, period filter, and tree/list toggle
+- **Drag-and-drop reparenting** — drag entries in the tree to reassign parent
+- **New Entry**, **New Child Entry**, **Open Entry by ID**, **Remove Entry**, **List Entries** commands available from the Command Palette and context menu
+- **Rich tooltips** — hover over tree items to see full entry details
 
-Download the platform-specific VSIX (with the CLI binary bundled) from the [Releases](https://github.com/fluo10/archelon/releases) page.
+Available on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=fluo10.archelon-vscode) and [Open VSX Registry](https://open-vsx.org/extension/fluo10/archelon-vscode).
+Platform-specific VSIX files (with the CLI binary bundled) are also on the [Releases](https://github.com/fluo10/archelon/releases) page.
 
 ## Project structure
 
@@ -124,8 +128,7 @@ archelon/
 
 ## Status
 
-Early development — CLI and MCP server are functional for basic entry management. VS Code extension available as a VSIX.
-SQLite caching is planned.
+Early development — CLI and MCP server are functional for entry management including hierarchy and full-text search. VS Code extension available on the Marketplace and Open VSX.
 
 ## License
 

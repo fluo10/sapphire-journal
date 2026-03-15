@@ -4,7 +4,7 @@
   "displayName": "Archelon",
   "publisher": "fluo10",
   "description": "VS Code extension for the Archelon journal",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/fluo10/archelon"

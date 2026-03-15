@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-03-15
+
+### Added
+
+- Unified `archelon` binary combining CLI and MCP server; `archelon-cli` and `archelon-mcp` crates removed
+- SQLite cache with schema versioning and `cache` subcommands (`info`, `sync`, `rebuild`); FTS5 full-text search index is built but UI-side search is not yet implemented (planned)
+- Entry hierarchy: `parent_id` frontmatter field, `--parent` flag for `entry new` / `entry modify`, `--no-parent` flag to clear parent
+- `entry tree` command and `entry_tree` MCP tool — displays entries in a parent-child hierarchy (supports same filters as `entry list`)
+- `new-child-entry` VS Code command and `--parent` flag for `entry path --new`
+- Title-based entry lookup: `@title` syntax as an alternative to ID prefix
+- Duplicate title detection with configurable `duplicate_title` policy (`warn` | `allow` | `deny`)
+- `--task-overdue`, `--task-in-progress`, `--task-unstarted` field selectors for `entry list` / MCP `entry_list`
+- `--active` composite flag: matches tasks that are overdue or in-progress
+- `--all-periods` flag for `entry list`; period is now a positional argument; extended period keywords
+- Symbol system for entry list output: freshness and overdue indicators in a 2-slot prefix
+- VS Code: ThemeIcon decorations in tree view replacing emoji prefixes
+- VS Code: entry type icons, period filter, and view improvements
+- VS Code: context menu, rich tooltips, and tree/list toggle in the sidebar
+- VS Code: drag-and-drop reparenting in the tree view
+- VS Code: published to VS Code Marketplace and Open VSX Registry
+
+### Changed
+
+- `entry set` renamed to `entry modify` (CLI and MCP tool `entry_set` → `entry_modify`)
+- JSON output fields: `status_labels` → `flags`, `match_labels` → `match_flags`
+- Period selector no longer falls back to all-fields when any specific selector is explicitly set
+- Default `duplicate_title` policy changed from `allow` to `warn`
+- VS Code: `--active` flag used by default in `listEntries` and `treeEntries`
+
+### Fixed
+
+- `entry fix`: entry is moved to the correct year directory when the year derived from `created_at` differs from its current location
+- ID collision retry is now applied to `sync_cache` as well as `create_entry`
+- Fullwidth middle dot used instead of fullwidth space as placeholder in `symbols_text`
+- VS Code: installed extension is disabled in the dev host to prevent conflicts
+
+### Removed
+
+- `archelon-cli` and `archelon-mcp` crates (functionality merged into `archelon`)
+- `entry fix --touch` flag
+
 ## [0.3.0] - 2026-03-09
 
 ### Added
