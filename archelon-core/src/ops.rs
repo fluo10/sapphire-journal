@@ -97,22 +97,20 @@ impl FromStr for SortOrder {
 
 // ── FieldSelector ─────────────────────────────────────────────────────────────
 
-/// Selects which timestamp fields and semantic task conditions apply.
+/// Selects which fields and semantic task conditions to filter on.
 ///
-/// **Period-field selectors** (`event_span`, `created_at`, `updated_at`): when all are
-/// `false` (the default), `period` applies to all timestamp fields simultaneously (OR).
-/// Setting one or more to `true` restricts the period check to only those fields.
-/// Without a `period`, a `true` flag means "the field must be present (set)".
+/// When **all** fields are `false` (the default) and a `period` is set, the period is
+/// applied to every timestamp field simultaneously (OR — "all-fields" fallback).  Setting
+/// any field to `true` disables that fallback so only the selected conditions apply.
 ///
-/// **Semantic task selectors** (`task_overdue`, `task_in_progress`): always explicit;
-/// never included in the "apply to all fields" fallback.
+/// **Period-field selectors** (`event_span`, `created_at`, `updated_at`): restrict period
+/// matching to specific timestamp fields.  Without a `period`, a `true` flag means "the
+/// field must be present (set)".
 ///
-/// - `task_overdue`: include tasks where `closed_at` is absent and `due ≤ period_end`
-///   (or `due < now` when no period is set).
-/// - `task_in_progress`: include tasks where `closed_at` is absent and
-///   `started_at ≤ period_end` (or `started_at` is set when no period).
-/// - `task_unstarted`: include tasks where both `started_at` and `closed_at` are absent
-///   (task exists but has not been started). Period is not applied.
+/// **Semantic task selectors** — use the period end as a cutoff where applicable:
+/// - `task_overdue`: `closed_at` absent **and** `due ≤ period_end` (or `due < now`).
+/// - `task_in_progress`: `closed_at` absent **and** `started_at ≤ period_end` (or set).
+/// - `task_unstarted`: `started_at` and `closed_at` both absent; period is not applied.
 #[derive(Debug, Default, Clone)]
 pub struct FieldSelector {
     pub task_overdue: bool,
@@ -125,17 +123,28 @@ pub struct FieldSelector {
 
 impl FieldSelector {
     /// Returns `true` when no field of any kind is selected.
+    ///
+    /// When this returns `true` and a `period` is set, the period is applied to all
+    /// timestamp fields simultaneously (OR — "all-fields" fallback).
     pub fn is_empty(&self) -> bool {
         !self.task_overdue && !self.task_in_progress && !self.task_unstarted
             && !self.event_span && !self.created_at && !self.updated_at
     }
 
-    /// Returns `true` when no period-field selector is active.
+    /// Return a selector with all fields enabled — equivalent to the `--active` CLI flag.
     ///
-    /// Used internally to decide whether `period` should apply to all timestamp
-    /// fields (the "all" fallback) or only to explicitly selected ones.
-    fn period_fields_empty(&self) -> bool {
-        !self.event_span && !self.created_at && !self.updated_at
+    /// Combines `task_overdue`, `task_in_progress`, `event_span`, `created_at`, and
+    /// `updated_at`.  `task_unstarted` is intentionally excluded because unstarted tasks
+    /// carry no timestamp relationship to the period.
+    pub fn active() -> Self {
+        Self {
+            task_overdue:     true,
+            task_in_progress: true,
+            task_unstarted:   false,
+            event_span:       true,
+            created_at:       true,
+            updated_at:       true,
+        }
     }
 }
 
@@ -188,8 +197,9 @@ impl EntryFilter {
             let updated_val     = Some(entry.frontmatter.updated_at);
 
             if let Some(p) = &self.period {
-                // No period-field selectors → apply period to all timestamp fields simultaneously
-                let all = self.fields.period_fields_empty();
+                // No selectors at all → apply period to all timestamp fields simultaneously (OR).
+                // Any explicit selector (including semantic task selectors) disables this fallback.
+                let all = self.fields.is_empty();
                 if (all || self.fields.event_span) && p.overlaps_event(event_start_val, event_end_val) { labels.push(MatchLabel::EventSpan); }
                 if (all || self.fields.created_at) && p.matches(created_val)                           { labels.push(MatchLabel::CreatedAt); }
                 if (all || self.fields.updated_at) && p.matches(updated_val)                           { labels.push(MatchLabel::UpdatedAt); }

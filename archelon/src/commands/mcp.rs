@@ -74,6 +74,11 @@ struct EntryListParams {
     /// YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
     period: Option<String>,
 
+    /// Enable all selectors at once: task_overdue, task_in_progress, event_span,
+    /// created_at, updated_at. Produces a Bullet Journal-style log view when combined
+    /// with a period. Individual selectors can still be set on top.
+    active: Option<bool>,
+
     /// Include incomplete tasks whose due date falls within (or before) the period.
     /// Without period: include tasks whose due date is in the past and closed_at is absent.
     task_overdue: Option<bool>,
@@ -294,13 +299,16 @@ impl ArchelonServer {
 
             let filter = EntryFilter {
                 period: p.period.as_deref().map(parse).transpose()?,
-                fields: FieldSelector {
-                    task_overdue:     p.task_overdue.unwrap_or(false),
-                    task_in_progress: p.task_in_progress.unwrap_or(false),
-                    task_unstarted:   p.task_unstarted.unwrap_or(false),
-                    event_span:       p.event_span.unwrap_or(false),
-                    created_at:       p.created_at.unwrap_or(false),
-                    updated_at:       p.updated_at.unwrap_or(false),
+                fields: {
+                    let base = if p.active.unwrap_or(false) { FieldSelector::active() } else { FieldSelector::default() };
+                    FieldSelector {
+                        task_overdue:     base.task_overdue     || p.task_overdue.unwrap_or(false),
+                        task_in_progress: base.task_in_progress || p.task_in_progress.unwrap_or(false),
+                        task_unstarted:   base.task_unstarted   || p.task_unstarted.unwrap_or(false),
+                        event_span:       base.event_span       || p.event_span.unwrap_or(false),
+                        created_at:       base.created_at       || p.created_at.unwrap_or(false),
+                        updated_at:       base.updated_at       || p.updated_at.unwrap_or(false),
+                    }
                 },
                 task_status: p.task_status.unwrap_or_default(),
                 tags: p.tags.unwrap_or_default(),
@@ -362,13 +370,16 @@ impl ArchelonServer {
 
             let filter = EntryFilter {
                 period: p.period.as_deref().map(parse).transpose()?,
-                fields: FieldSelector {
-                    task_overdue:     p.task_overdue.unwrap_or(false),
-                    task_in_progress: p.task_in_progress.unwrap_or(false),
-                    task_unstarted:   p.task_unstarted.unwrap_or(false),
-                    event_span:       p.event_span.unwrap_or(false),
-                    created_at:       p.created_at.unwrap_or(false),
-                    updated_at:       p.updated_at.unwrap_or(false),
+                fields: {
+                    let base = if p.active.unwrap_or(false) { FieldSelector::active() } else { FieldSelector::default() };
+                    FieldSelector {
+                        task_overdue:     base.task_overdue     || p.task_overdue.unwrap_or(false),
+                        task_in_progress: base.task_in_progress || p.task_in_progress.unwrap_or(false),
+                        task_unstarted:   base.task_unstarted   || p.task_unstarted.unwrap_or(false),
+                        event_span:       base.event_span       || p.event_span.unwrap_or(false),
+                        created_at:       base.created_at       || p.created_at.unwrap_or(false),
+                        updated_at:       base.updated_at       || p.updated_at.unwrap_or(false),
+                    }
                 },
                 task_status: p.task_status.unwrap_or_default(),
                 tags: p.tags.unwrap_or_default(),

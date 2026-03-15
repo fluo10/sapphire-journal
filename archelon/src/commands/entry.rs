@@ -17,14 +17,19 @@ use std::{
 /// Filter and sort arguments shared by `entry list` and `entry tree`.
 #[derive(Args)]
 pub struct EntryFilterArgs {
-    /// Time range to filter against. Without field selectors (--task-due, --event-span,
-    /// --created-at, --updated-at) the period is applied to all timestamp fields (OR).
-    /// Add field selectors to restrict matching to specific fields.
+    /// Time range to filter against. Without field selectors the period is applied to all
+    /// timestamp fields simultaneously (OR). Add selectors to restrict matching.
     ///
     /// PERIOD formats: today | this_week | this_month | none |
     /// YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
     #[arg(long, value_name = "PERIOD")]
     pub period: Option<String>,
+
+    /// Enable all selectors at once: task_overdue, task_in_progress, event_span,
+    /// created_at, updated_at. With --period this produces a Bullet Journal-style
+    /// daily/weekly/monthly log view. Individual flags can still be added on top.
+    #[arg(long)]
+    pub active: bool,
 
     /// Include incomplete tasks whose due date falls within (or before) the period.
     /// Without --period: include tasks whose due date is in the past and are not yet closed.
@@ -78,13 +83,16 @@ fn build_filter(args: &EntryFilterArgs, week_start: WeekStart) -> Result<EntryFi
     let parse = |s: &str| parse_period(s, week_start).map_err(anyhow::Error::msg);
     Ok(EntryFilter {
         period: args.period.as_deref().map(parse).transpose()?,
-        fields: FieldSelector {
-            task_overdue: args.task_overdue,
-            task_in_progress: args.task_in_progress,
-            task_unstarted: args.task_unstarted,
-            event_span: args.event_span,
-            created_at: args.created_at,
-            updated_at: args.updated_at,
+        fields: {
+            let base = if args.active { FieldSelector::active() } else { FieldSelector::default() };
+            FieldSelector {
+                task_overdue:     base.task_overdue     || args.task_overdue,
+                task_in_progress: base.task_in_progress || args.task_in_progress,
+                task_unstarted:   base.task_unstarted   || args.task_unstarted,
+                event_span:       base.event_span       || args.event_span,
+                created_at:       base.created_at       || args.created_at,
+                updated_at:       base.updated_at       || args.updated_at,
+            }
         },
         task_status: args.task_status.clone().unwrap_or_default(),
         tags: args.tags.clone().unwrap_or_default(),
