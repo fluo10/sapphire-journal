@@ -573,8 +573,10 @@ impl ArchelonServer {
         Reports the rename or confirms the filename is already correct.")]
     fn entry_fix(&self, Parameters(p): Parameters<EntryFixParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
+            let journal = self.open_journal()?;
+            let conn = cache::open_cache(&journal)?;
             let path = self.resolve_entry(&p.entry)?;
-            match ops::fix_entry(&path, p.touch)? {
+            match ops::fix_entry(&path, p.touch, &conn)? {
                 Some(new_path) => Ok(format!(
                     "renamed: {} → {}",
                     path.file_name().unwrap_or_default().to_string_lossy(),

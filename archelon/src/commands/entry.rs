@@ -577,14 +577,21 @@ fn edit(path: &Path, journal_dir: Option<&Path>) -> Result<()> {
     if !status.success() {
         bail!("editor exited with non-zero status");
     }
-    let final_path = match ops::fix_entry(path, true)? {
-        Some(new_path) => { println!("updated: {}", new_path.display()); new_path }
-        None           => { println!("updated: {}", path.display()); path.to_path_buf() }
-    };
-    if let Ok(journal) = open_journal(journal_dir) {
+    let (final_path, conn_opt) = if let Ok(journal) = open_journal(journal_dir) {
         if let Ok(conn) = cache::open_cache(&journal) {
-            let _ = cache::upsert_entry_from_path(&conn, &final_path);
+            let fp = match ops::fix_entry(path, true, &conn)? {
+                Some(new_path) => { println!("updated: {}", new_path.display()); new_path }
+                None           => { println!("updated: {}", path.display()); path.to_path_buf() }
+            };
+            (fp, Some(conn))
+        } else {
+            (path.to_path_buf(), None)
         }
+    } else {
+        (path.to_path_buf(), None)
+    };
+    if let Some(conn) = conn_opt {
+        let _ = cache::upsert_entry_from_path(&conn, &final_path);
     }
     Ok(())
 }
@@ -603,13 +610,12 @@ fn edit_new(journal_dir: Option<&Path>) -> Result<()> {
         bail!("editor exited with non-zero status");
     }
 
-    let final_path = match ops::fix_entry(&path, true)? {
+    let conn = cache::open_cache(&journal)?;
+    let final_path = match ops::fix_entry(&path, true, &conn)? {
         Some(new_path) => { println!("created: {}", new_path.display()); new_path }
         None           => { println!("created: {}", path.display()); path }
     };
-    if let Ok(conn) = cache::open_cache(&journal) {
-        let _ = cache::upsert_entry_from_path(&conn, &final_path);
-    }
+    let _ = cache::upsert_entry_from_path(&conn, &final_path);
     Ok(())
 }
 
@@ -667,8 +673,10 @@ fn check(journal_dir: Option<&Path>, entry: &str) -> Result<()> {
 // ── fix ───────────────────────────────────────────────────────────────────────
 
 fn fix(journal_dir: Option<&Path>, entry: &str, touch: bool) -> Result<()> {
+    let journal = open_journal(journal_dir)?;
+    let conn = cache::open_cache(&journal)?;
     let path = resolve_entry(journal_dir, entry)?;
-    match ops::fix_entry(&path, touch)? {
+    match ops::fix_entry(&path, touch, &conn)? {
         Some(new_path) => println!(
             "renamed: {} → {}",
             path.file_name().unwrap_or_default().to_string_lossy(),

@@ -797,7 +797,9 @@ pub fn update_entry(path: &Path, conn: &Connection, fields: EntryFields) -> Resu
         }
     }
 
-    fix_entry_mut(&mut entry, true)
+    // update_entry always changes content explicitly, so externally_modified is
+    // irrelevant here — touch=true handles the updated_at bump.
+    fix_entry_mut(&mut entry, true, false)
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -955,27 +957,31 @@ fn sync_closed_at(entry: &mut Entry) {
     }
 }
 
-/// Core fix logic on an already-loaded entry: sync `closed_at`, optionally update
+/// Core fix logic on an already-loaded entry: sync timestamps, optionally update
 /// `updated_at`, write the file, and rename it if the filename no longer matches the
 /// frontmatter.
 ///
-/// `touch`: if `true`, refresh `updated_at` to the current time before writing.
+/// `touch`: if `true`, always refresh `updated_at` regardless of changes.
+/// `externally_modified`: if `true`, the file was edited outside archelon since the
+/// last cache sync, so `updated_at` should be bumped even without `--touch`.
 ///
 /// Returns `Some(new_path)` if the file was renamed, `None` otherwise.
-fn fix_entry_mut(entry: &mut Entry, touch: bool) -> Result<Option<PathBuf>> {
+fn fix_entry_mut(
+    entry: &mut Entry,
+    touch: bool,
+    externally_modified: bool,
+) -> Result<Option<PathBuf>> {
+    // Snapshot before sync to detect changes made by sync_started_at / sync_closed_at.
+    let pre_sync = render_entry(entry);
     sync_started_at(entry);
     sync_closed_at(entry);
+    let sync_changed = render_entry(entry) != pre_sync;
 
-    // Render after timestamp sync but before updating updated_at, then compare
-    // with the file on disk.
-    // - --touch: always update updated_at and write (flag is explicitly for this).
-    // - no --touch: update updated_at and write only when content actually changed,
-    //   so that unchanged entries don't get a new mtime or a bumped updated_at.
-    let rendered = render_entry(entry);
-    let current = std::fs::read_to_string(&entry.path).unwrap_or_default();
-    let content_changed = rendered != current;
-
-    if touch || content_changed {
+    // Write (and bump updated_at) when:
+    // - --touch: explicit user intent
+    // - sync_changed: a timestamp was auto-filled
+    // - externally_modified: the file was edited outside archelon
+    if touch || sync_changed || externally_modified {
         entry.frontmatter.updated_at = chrono::Local::now().naive_local();
         std::fs::write(&entry.path, render_entry(entry))?;
     }
@@ -1013,16 +1019,23 @@ fn fix_entry_mut(entry: &mut Entry, touch: bool) -> Result<Option<PathBuf>> {
     Ok(Some(new_path))
 }
 
-/// Normalize an entry: sync `closed_at`, rename the file to match its frontmatter
-/// ID and title/slug, and optionally refresh `updated_at`.
+/// Normalize an entry: sync timestamps, rename the file to match its frontmatter
+/// ID and title/slug, and refresh `updated_at` when something actually changed.
 ///
-/// `touch`: if `true`, update `updated_at` to the current time.
+/// `touch`: if `true`, always update `updated_at` regardless of changes.
+/// `conn`: cache connection used to detect whether the file was externally modified
+/// since the last cache sync.
 ///
 /// Returns `Some(new_path)` if the file was renamed, `None` if it was already correct.
 /// Returns `Err` if the file is not a managed entry.
-pub fn fix_entry(path: &Path, touch: bool) -> Result<Option<PathBuf>> {
+pub fn fix_entry(path: &Path, touch: bool, conn: &Connection) -> Result<Option<PathBuf>> {
+    let cached_mtime = cache::get_cached_mtime(conn, path)?;
+    let current_mtime = cache::file_mtime(path)?;
+    // Treat "not in cache yet" as modified so a brand-new entry always gets its
+    // updated_at set correctly on the first fix.
+    let externally_modified = cached_mtime.map_or(true, |c| c != current_mtime);
     let mut entry = read_entry(path)?;
-    fix_entry_mut(&mut entry, touch)
+    fix_entry_mut(&mut entry, touch, externally_modified)
 }
 
 // ── remove ────────────────────────────────────────────────────────────────────

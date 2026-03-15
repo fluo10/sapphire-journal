@@ -672,12 +672,25 @@ fn collect_with_mtime(journal: &Journal) -> Result<Vec<(PathBuf, i64)>> {
     Ok(result)
 }
 
-fn file_mtime(path: &Path) -> Result<i64> {
+pub(crate) fn file_mtime(path: &Path) -> Result<i64> {
     Ok(std::fs::metadata(path)?
         .modified()?
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0))
+}
+
+/// Return the mtime stored in the cache for `path`, or `None` if the path is
+/// not yet recorded (i.e. the entry has never been seen by a cache sync).
+pub(crate) fn get_cached_mtime(conn: &Connection, path: &Path) -> Result<Option<i64>> {
+    let path_str = path.to_string_lossy();
+    conn.query_row(
+        "SELECT file_mtime FROM files WHERE path = ?1",
+        params![path_str.as_ref()],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(Error::Cache)
 }
 
 fn query_all_mtimes(conn: &Connection) -> Result<HashMap<String, i64>> {
