@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use caretta_id::CarettaId;
 use chrono::Datelike as _;
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -200,10 +201,6 @@ pub struct JournalConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalSection {
-    /// IANA timezone name. Used when frontmatter timestamps have no timezone.
-    /// Defaults to `"UTC"`.
-    pub timezone: String,
-
     /// First day of the week, used by `--this-week`. Defaults to `monday`.
     #[serde(default)]
     pub week_start: WeekStart,
@@ -228,16 +225,20 @@ pub struct JournalSection {
     /// journal root.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entries_dir: Option<String>,
+
+    /// Unknown fields preserved for round-trip compatibility.
+    #[serde(flatten)]
+    pub extra: IndexMap<String, toml::Value>,
 }
 
 impl Default for JournalSection {
     fn default() -> Self {
         JournalSection {
-            timezone: "UTC".to_owned(),
             week_start: WeekStart::Monday,
             id: None,
             duplicate_title: DuplicateTitlePolicy::default(),
             entries_dir: None,
+            extra: IndexMap::new(),
         }
     }
 }
