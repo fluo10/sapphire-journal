@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use caretta_id::CarettaId;
 use chrono::Datelike as _;
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -54,6 +55,18 @@ impl Journal {
         self.root.join(ARCHELON_DIR)
     }
 
+    /// Path to the directory that directly contains year subdirectories.
+    ///
+    /// Returns `root.join(entries_dir)` when `entries_dir` is configured in
+    /// `.archelon/config.toml`, otherwise returns `root` itself.
+    pub fn entries_root(&self) -> Result<PathBuf> {
+        let config = self.config()?;
+        Ok(match config.journal.entries_dir {
+            Some(ref dir) if !dir.is_empty() => self.root.join(dir),
+            _ => self.root.clone(),
+        })
+    }
+
     /// Read the journal config from `.archelon/config.toml`.
     /// Returns the default config if the file does not exist.
     pub fn config(&self) -> Result<JournalConfig> {
@@ -72,7 +85,7 @@ impl Journal {
     /// if more than one file matches.
     pub fn find_entry_by_id(&self, id_prefix: &str) -> Result<PathBuf> {
         let mut matches = Vec::new();
-        for dir in std::iter::once(self.root.clone()).chain(self.year_subdirs()?) {
+        for dir in std::iter::once(self.entries_root()?).chain(self.year_subdirs()?) {
             let Ok(rd) = std::fs::read_dir(&dir) else { continue };
             for entry in rd.filter_map(|e| e.ok()) {
                 let p = entry.path();
@@ -95,8 +108,9 @@ impl Journal {
 
     /// Collect all `.md` entry files in the journal: root + year subdirectories.
     pub fn collect_entries(&self) -> Result<Vec<PathBuf>> {
+        let entries_root = self.entries_root()?;
         let mut paths = Vec::new();
-        collect_md_in(&self.root, &mut paths)?;
+        collect_md_in(&entries_root, &mut paths)?;
         for subdir in self.year_subdirs()? {
             collect_md_in(&subdir, &mut paths)?;
         }
@@ -105,8 +119,9 @@ impl Journal {
     }
 
     fn year_subdirs(&self) -> Result<Vec<PathBuf>> {
+        let root = self.entries_root()?;
         let mut dirs = Vec::new();
-        for entry in std::fs::read_dir(&self.root)?.filter_map(|e| e.ok()) {
+        for entry in std::fs::read_dir(&root)?.filter_map(|e| e.ok()) {
             let p = entry.path();
             if p.is_dir() {
                 if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
@@ -186,10 +201,6 @@ pub struct JournalConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalSection {
-    /// IANA timezone name. Used when frontmatter timestamps have no timezone.
-    /// Defaults to `"UTC"`.
-    pub timezone: String,
-
     /// First day of the week, used by `--this-week`. Defaults to `monday`.
     #[serde(default)]
     pub week_start: WeekStart,
@@ -208,15 +219,26 @@ pub struct JournalSection {
     /// - `error`: sync fails immediately with [`Error::DuplicateTitle`].
     #[serde(default)]
     pub duplicate_title: DuplicateTitlePolicy,
+
+    /// Sub-directory (relative to the journal root) where year directories are
+    /// created.  When unset, year directories are placed directly under the
+    /// journal root.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entries_dir: Option<String>,
+
+    /// Unknown fields preserved for round-trip compatibility.
+    #[serde(flatten)]
+    pub extra: IndexMap<String, toml::Value>,
 }
 
 impl Default for JournalSection {
     fn default() -> Self {
         JournalSection {
-            timezone: "UTC".to_owned(),
             week_start: WeekStart::Monday,
             id: None,
             duplicate_title: DuplicateTitlePolicy::default(),
+            entries_dir: None,
+            extra: IndexMap::new(),
         }
     }
 }

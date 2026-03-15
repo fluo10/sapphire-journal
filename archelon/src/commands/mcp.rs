@@ -264,12 +264,10 @@ impl ArchelonServer {
 
             std::fs::create_dir(&archelon_dir).context("failed to create .archelon directory")?;
 
-            let tz = detect_timezone();
-            std::fs::write(
-                archelon_dir.join("config.toml"),
-                format!("[journal]\ntimezone = \"{tz}\"\n"),
-            )
-            .context("failed to write .archelon/config.toml")?;
+            let config = toml::to_string_pretty(&archelon_core::journal::JournalConfig::default())
+                .context("failed to serialize default config")?;
+            std::fs::write(archelon_dir.join("config.toml"), config)
+                .context("failed to write .archelon/config.toml")?;
             std::fs::write(archelon_dir.join(".gitignore"), "cache/\n")
                 .context("failed to write .archelon/.gitignore")?;
 
@@ -661,21 +659,6 @@ impl ServerHandler for ArchelonServer {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-fn detect_timezone() -> String {
-    if let Ok(tz) = std::env::var("TZ") {
-        if !tz.is_empty() {
-            return tz;
-        }
-    }
-    if let Ok(contents) = std::fs::read_to_string("/etc/timezone") {
-        let tz = contents.trim().to_owned();
-        if !tz.is_empty() {
-            return tz;
-        }
-    }
-    "UTC".to_owned()
-}
 
 // ── main ──────────────────────────────────────────────────────────────────────
 
