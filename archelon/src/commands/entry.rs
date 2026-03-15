@@ -367,7 +367,7 @@ fn print_entries(
                     "tags": entry.frontmatter.tags,
                     "task": entry.frontmatter.task,
                     "event": entry.frontmatter.event,
-                    "symbols": syms.iter().map(|s| serde_json::json!({"emoji": s.emoji, "label": s.label})).collect::<Vec<_>>(),
+                    "status_labels": syms.iter().map(|s| s.label).collect::<Vec<_>>(),
                 });
                 if has_filter {
                     v["match_labels"] = serde_json::json!(
@@ -446,7 +446,7 @@ fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool, emoji: bool
                 "tags": entry.frontmatter.tags,
                 "task": entry.frontmatter.task,
                 "event": entry.frontmatter.event,
-                "symbols": syms.iter().map(|s| serde_json::json!({"emoji": s.emoji, "label": s.label})).collect::<Vec<_>>(),
+                "status_labels": syms.iter().map(|s| s.label).collect::<Vec<_>>(),
                 "children": node.children.iter().map(|c| node_to_json(c, has_filter)).collect::<Vec<_>>(),
             });
             if has_filter {

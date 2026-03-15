@@ -94,7 +94,7 @@ export interface EntryRecord {
     updated_at: string;
     task?: { status: string; due?: string; closed_at?: string } | null;
     event?: { start: string; end: string } | null;
-    symbols?: Array<{ emoji: string; label: string }>;
+    status_labels?: string[];
     children?: EntryRecord[];
 }
 
