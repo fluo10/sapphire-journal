@@ -111,10 +111,13 @@ impl FromStr for SortOrder {
 ///   (or `due < now` when no period is set).
 /// - `task_in_progress`: include tasks where `closed_at` is absent and
 ///   `started_at ≤ period_end` (or `started_at` is set when no period).
+/// - `task_unstarted`: include tasks where both `started_at` and `closed_at` are absent
+///   (task exists but has not been started). Period is not applied.
 #[derive(Debug, Default, Clone)]
 pub struct FieldSelector {
     pub task_overdue: bool,
     pub task_in_progress: bool,
+    pub task_unstarted: bool,
     pub event_span: bool,
     pub created_at: bool,
     pub updated_at: bool,
@@ -123,7 +126,7 @@ pub struct FieldSelector {
 impl FieldSelector {
     /// Returns `true` when no field of any kind is selected.
     pub fn is_empty(&self) -> bool {
-        !self.task_overdue && !self.task_in_progress
+        !self.task_overdue && !self.task_in_progress && !self.task_unstarted
             && !self.event_span && !self.created_at && !self.updated_at
     }
 
@@ -210,6 +213,14 @@ impl EntryFilter {
                         if is_in_progress { labels.push(MatchLabel::TaskInProgress); }
                     }
                 }
+
+                // task_unstarted: task that exists but has not been started (period not applied)
+                if self.fields.task_unstarted {
+                    let is_unstarted = entry.frontmatter.task.as_ref().is_some_and(|t| {
+                        t.started_at.is_none() && t.closed_at.is_none()
+                    });
+                    if is_unstarted { labels.push(MatchLabel::TaskUnstarted); }
+                }
             } else {
                 // No period: period-field flags → check that the field exists (is set)
                 if self.fields.event_span && (event_start_val.is_some() || event_end_val.is_some()) { labels.push(MatchLabel::EventSpan); }
@@ -230,6 +241,14 @@ impl EntryFilter {
                         t.closed_at.is_none() && t.started_at.is_some()
                     });
                     if is_in_progress { labels.push(MatchLabel::TaskInProgress); }
+                }
+
+                // task_unstarted: task that exists but has not been started
+                if self.fields.task_unstarted {
+                    let is_unstarted = entry.frontmatter.task.as_ref().is_some_and(|t| {
+                        t.started_at.is_none() && t.closed_at.is_none()
+                    });
+                    if is_unstarted { labels.push(MatchLabel::TaskUnstarted); }
                 }
             }
 
@@ -267,6 +286,8 @@ pub enum MatchLabel {
     TaskOverdue,
     /// Task is incomplete (`closed_at` absent) and `started_at ≤ period_end` (or `started_at` set).
     TaskInProgress,
+    /// Task exists but `started_at` and `closed_at` are both absent.
+    TaskUnstarted,
     /// The filter period overlaps the event's [start, end] span.
     EventSpan,
     CreatedAt,
@@ -278,6 +299,7 @@ impl MatchLabel {
         match self {
             MatchLabel::TaskOverdue    => "TASK_OVERDUE",
             MatchLabel::TaskInProgress => "TASK_IN_PROGRESS",
+            MatchLabel::TaskUnstarted  => "TASK_UNSTARTED",
             MatchLabel::EventSpan      => "EVENT_SPAN",
             MatchLabel::CreatedAt      => "CREATED",
             MatchLabel::UpdatedAt      => "UPDATED",

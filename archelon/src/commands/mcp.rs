@@ -82,6 +82,10 @@ struct EntryListParams {
     /// Without period: include all tasks that have started_at set and closed_at absent.
     task_in_progress: Option<bool>,
 
+    /// Include tasks that have not been started yet (started_at and closed_at both absent).
+    /// Period is not applied to this filter.
+    task_unstarted: Option<bool>,
+
     /// Restrict period matching to event span (overlap semantics).
     /// Without period: include entries that have an event set.
     event_span: Option<bool>,
@@ -291,11 +295,12 @@ impl ArchelonServer {
             let filter = EntryFilter {
                 period: p.period.as_deref().map(parse).transpose()?,
                 fields: FieldSelector {
-                    task_overdue:    p.task_overdue.unwrap_or(false),
+                    task_overdue:     p.task_overdue.unwrap_or(false),
                     task_in_progress: p.task_in_progress.unwrap_or(false),
-                    event_span:      p.event_span.unwrap_or(false),
-                    created_at:      p.created_at.unwrap_or(false),
-                    updated_at:      p.updated_at.unwrap_or(false),
+                    task_unstarted:   p.task_unstarted.unwrap_or(false),
+                    event_span:       p.event_span.unwrap_or(false),
+                    created_at:       p.created_at.unwrap_or(false),
+                    updated_at:       p.updated_at.unwrap_or(false),
                 },
                 task_status: p.task_status.unwrap_or_default(),
                 tags: p.tags.unwrap_or_default(),
@@ -358,11 +363,12 @@ impl ArchelonServer {
             let filter = EntryFilter {
                 period: p.period.as_deref().map(parse).transpose()?,
                 fields: FieldSelector {
-                    task_overdue:    p.task_overdue.unwrap_or(false),
+                    task_overdue:     p.task_overdue.unwrap_or(false),
                     task_in_progress: p.task_in_progress.unwrap_or(false),
-                    event_span:      p.event_span.unwrap_or(false),
-                    created_at:      p.created_at.unwrap_or(false),
-                    updated_at:      p.updated_at.unwrap_or(false),
+                    task_unstarted:   p.task_unstarted.unwrap_or(false),
+                    event_span:       p.event_span.unwrap_or(false),
+                    created_at:       p.created_at.unwrap_or(false),
+                    updated_at:       p.updated_at.unwrap_or(false),
                 },
                 task_status: p.task_status.unwrap_or_default(),
                 tags: p.tags.unwrap_or_default(),

@@ -36,6 +36,11 @@ pub struct EntryFilterArgs {
     #[arg(long)]
     pub task_in_progress: bool,
 
+    /// Include tasks that have not been started yet (started_at and closed_at both absent).
+    /// Period is not applied to this filter.
+    #[arg(long)]
+    pub task_unstarted: bool,
+
     /// Restrict --period to event span (overlap semantics).
     /// Without --period: include entries that have an event set.
     #[arg(long)]
@@ -76,6 +81,7 @@ fn build_filter(args: &EntryFilterArgs, week_start: WeekStart) -> Result<EntryFi
         fields: FieldSelector {
             task_overdue: args.task_overdue,
             task_in_progress: args.task_in_progress,
+            task_unstarted: args.task_unstarted,
             event_span: args.event_span,
             created_at: args.created_at,
             updated_at: args.updated_at,
