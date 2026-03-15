@@ -455,10 +455,10 @@ fn print_entries(
                     "tags": entry.frontmatter.tags,
                     "task": entry.frontmatter.task,
                     "event": entry.frontmatter.event,
-                    "status_labels": syms.iter().map(|s| s.label).collect::<Vec<_>>(),
+                    "flags": syms.iter().map(|s| s.label).collect::<Vec<_>>(),
                 });
                 if has_filter {
-                    v["match_labels"] = serde_json::json!(
+                    v["match_flags"] = serde_json::json!(
                         labels.iter().map(|l| l.as_str()).collect::<Vec<_>>()
                     );
                 }
@@ -517,11 +517,11 @@ fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool, mode: Displ
                 "tags": entry.frontmatter.tags,
                 "task": entry.frontmatter.task,
                 "event": entry.frontmatter.event,
-                "status_labels": syms.iter().map(|s| s.label).collect::<Vec<_>>(),
+                "flags": syms.iter().map(|s| s.label).collect::<Vec<_>>(),
                 "children": node.children.iter().map(|c| node_to_json(c, has_filter)).collect::<Vec<_>>(),
             });
             if has_filter {
-                v["match_labels"] = serde_json::json!(
+                v["match_flags"] = serde_json::json!(
                     node.labels.iter().map(|l| l.as_str()).collect::<Vec<_>>()
                 );
             }
@@ -533,7 +533,7 @@ fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool, mode: Displ
     }
 
     fn render_node(node: &EntryTreeNode, has_filter: bool, mode: DisplayMode, prefix: &str, is_last: bool) {
-        let _ = has_filter; // match_labels not shown in text output
+        let _ = has_filter; // match_flags not shown in text output
         let connector = if is_last { "└─" } else { "├─" };
         let id = node.entry.id().to_string();
         let syms = archelon_core::labels::entry_symbols(

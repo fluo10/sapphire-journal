@@ -340,10 +340,10 @@ impl ArchelonServer {
                         "tags": entry.frontmatter.tags,
                         "task": entry.frontmatter.task,
                         "event": entry.frontmatter.event,
-                        "status_labels": syms.iter().map(|s| s.label).collect::<Vec<_>>(),
+                        "flags": syms.iter().map(|s| s.label).collect::<Vec<_>>(),
                     });
                     if has_filter {
-                        v["match_labels"] = serde_json::json!(
+                        v["match_flags"] = serde_json::json!(
                             match_labels.iter().map(|l| l.as_str()).collect::<Vec<_>>()
                         );
                     }
@@ -411,11 +411,11 @@ impl ArchelonServer {
                     "tags": entry.frontmatter.tags,
                     "task": entry.frontmatter.task,
                     "event": entry.frontmatter.event,
-                    "status_labels": syms.iter().map(|s| s.label).collect::<Vec<_>>(),
+                    "flags": syms.iter().map(|s| s.label).collect::<Vec<_>>(),
                     "children": node.children.iter().map(|c| node_to_json(c, has_filter)).collect::<Vec<_>>(),
                 });
                 if has_filter {
-                    v["match_labels"] = serde_json::json!(
+                    v["match_flags"] = serde_json::json!(
                         node.labels.iter().map(|l| l.as_str()).collect::<Vec<_>>()
                     );
                 }

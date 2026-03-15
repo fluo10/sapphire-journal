@@ -310,13 +310,13 @@ pub enum MatchLabel {
 impl MatchLabel {
     pub fn as_str(self) -> &'static str {
         match self {
-            MatchLabel::TaskOverdue    => "TASK_OVERDUE",
-            MatchLabel::TaskInProgress => "TASK_IN_PROGRESS",
-            MatchLabel::TaskUnstarted  => "TASK_UNSTARTED",
-            MatchLabel::EventSpan      => "EVENT_SPAN",
-            MatchLabel::CreatedAt      => "CREATED",
-            MatchLabel::UpdatedAt      => "UPDATED",
-            MatchLabel::ParentOfMatch  => "PARENT_OF_MATCH",
+            MatchLabel::TaskOverdue    => "task_overdue",
+            MatchLabel::TaskInProgress => "task_in_progress",
+            MatchLabel::TaskUnstarted  => "task_unstarted",
+            MatchLabel::EventSpan      => "event_span",
+            MatchLabel::CreatedAt      => "created",
+            MatchLabel::UpdatedAt      => "updated",
+            MatchLabel::ParentOfMatch  => "parent_of_match",
         }
     }
 }
