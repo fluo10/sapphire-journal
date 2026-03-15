@@ -965,10 +965,20 @@ fn sync_closed_at(entry: &mut Entry) {
 fn fix_entry_mut(entry: &mut Entry, touch: bool) -> Result<Option<PathBuf>> {
     sync_started_at(entry);
     sync_closed_at(entry);
-    if touch {
+
+    // Render after timestamp sync but before updating updated_at, then compare
+    // with the file on disk.
+    // - --touch: always update updated_at and write (flag is explicitly for this).
+    // - no --touch: update updated_at and write only when content actually changed,
+    //   so that unchanged entries don't get a new mtime or a bumped updated_at.
+    let rendered = render_entry(entry);
+    let current = std::fs::read_to_string(&entry.path).unwrap_or_default();
+    let content_changed = rendered != current;
+
+    if touch || content_changed {
         entry.frontmatter.updated_at = chrono::Local::now().naive_local();
+        std::fs::write(&entry.path, render_entry(entry))?;
     }
-    std::fs::write(&entry.path, render_entry(entry))?;
 
     let expected = entry_filename_from_frontmatter(entry.frontmatter.id, &entry.frontmatter);
     let path = entry.path.clone();
