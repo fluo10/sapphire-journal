@@ -688,7 +688,7 @@ pub fn create_entry(journal: &Journal, conn: &Connection, fields: EntryFields) -
         extra: IndexMap::new(),
     };
 
-    let dest = journal.root
+    let dest = journal.entries_root()?
         .join(year.to_string())
         .join(entry_filename_from_frontmatter(id, &frontmatter));
     if dest.exists() {
@@ -830,7 +830,7 @@ pub fn prepare_new_entry(journal: &Journal, parent_id: Option<CarettaId>) -> Res
     let now = chrono::Local::now().naive_local();
     let now_fmt = now.format("%Y-%m-%dT%H:%M");
 
-    let dir = journal.root.join(year.to_string());
+    let dir = journal.entries_root()?.join(year.to_string());
     std::fs::create_dir_all(&dir)?;
 
     let path = dir.join(format!("{id}.md"));
