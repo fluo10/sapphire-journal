@@ -797,7 +797,7 @@ pub fn update_entry(path: &Path, conn: &Connection, fields: EntryFields) -> Resu
         }
     }
 
-    fix_entry_mut(&mut entry, true)
+    fix_entry_mut(&mut entry)
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -955,19 +955,14 @@ fn sync_closed_at(entry: &mut Entry) {
     }
 }
 
-/// Core fix logic on an already-loaded entry: sync `closed_at`, optionally update
-/// `updated_at`, write the file, and rename it if the filename no longer matches the
-/// frontmatter.
-///
-/// `touch`: if `true`, refresh `updated_at` to the current time before writing.
+/// Core fix logic on an already-loaded entry: sync `closed_at`, update `updated_at`,
+/// write the file, and rename it if the filename no longer matches the frontmatter.
 ///
 /// Returns `Some(new_path)` if the file was renamed, `None` otherwise.
-fn fix_entry_mut(entry: &mut Entry, touch: bool) -> Result<Option<PathBuf>> {
+fn fix_entry_mut(entry: &mut Entry) -> Result<Option<PathBuf>> {
     sync_started_at(entry);
     sync_closed_at(entry);
-    if touch {
-        entry.frontmatter.updated_at = chrono::Local::now().naive_local();
-    }
+    entry.frontmatter.updated_at = chrono::Local::now().naive_local();
     std::fs::write(&entry.path, render_entry(entry))?;
 
     let expected = entry_filename_from_frontmatter(entry.frontmatter.id, &entry.frontmatter);
@@ -1003,16 +998,14 @@ fn fix_entry_mut(entry: &mut Entry, touch: bool) -> Result<Option<PathBuf>> {
     Ok(Some(new_path))
 }
 
-/// Normalize an entry: sync `closed_at`, rename the file to match its frontmatter
-/// ID and title/slug, and optionally refresh `updated_at`.
-///
-/// `touch`: if `true`, update `updated_at` to the current time.
+/// Normalize an entry: sync `closed_at`, update `updated_at`, and rename the file
+/// to match its frontmatter ID and title/slug.
 ///
 /// Returns `Some(new_path)` if the file was renamed, `None` if it was already correct.
 /// Returns `Err` if the file is not a managed entry.
-pub fn fix_entry(path: &Path, touch: bool) -> Result<Option<PathBuf>> {
+pub fn fix_entry(path: &Path) -> Result<Option<PathBuf>> {
     let mut entry = read_entry(path)?;
-    fix_entry_mut(&mut entry, touch)
+    fix_entry_mut(&mut entry)
 }
 
 // ── remove ────────────────────────────────────────────────────────────────────

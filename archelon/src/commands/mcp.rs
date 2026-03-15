@@ -190,9 +190,6 @@ struct EntryCheckParams {
 struct EntryFixParams {
     /// File path to the entry, or an ID / ID prefix
     entry: String,
-    /// If true, also update updated_at to the current time
-    #[serde(default)]
-    touch: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -568,13 +565,13 @@ impl ArchelonServer {
         .map_err(|e| e.to_string())
     }
 
-    #[tool(description = "Normalize an entry: sync closed_at, rename the file to match its frontmatter \
-        ID and title/slug, and optionally refresh updated_at (touch=true). \
+    #[tool(description = "Normalize an entry: sync closed_at, update updated_at, and rename the file \
+        to match its frontmatter ID and title/slug. \
         Reports the rename or confirms the filename is already correct.")]
     fn entry_fix(&self, Parameters(p): Parameters<EntryFixParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let path = self.resolve_entry(&p.entry)?;
-            match ops::fix_entry(&path, p.touch)? {
+            match ops::fix_entry(&path)? {
                 Some(new_path) => Ok(format!(
                     "renamed: {} → {}",
                     path.file_name().unwrap_or_default().to_string_lossy(),

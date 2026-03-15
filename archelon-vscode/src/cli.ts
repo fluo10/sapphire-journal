@@ -26,7 +26,7 @@ function bin(): string {
 }
 
 /**
- * Run `archelon entry fix --touch <filePath>`.
+ * Run `archelon entry fix <filePath>`.
  *
  * Returns the new absolute path if the file was renamed, or null if it stayed in place.
  * Throws on non-zero exit (e.g. not a managed entry, journal not found).
@@ -34,7 +34,7 @@ function bin(): string {
 export async function fixEntry(filePath: string): Promise<string | null> {
     const { stdout } = await execFileAsync(
         bin(),
-        ['entry', 'fix', '--touch', filePath],
+        ['entry', 'fix', filePath],
         { cwd: path.dirname(filePath) }
     );
     // "renamed: <old_filename> → <new_filename>"

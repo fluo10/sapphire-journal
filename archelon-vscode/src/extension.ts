@@ -294,7 +294,7 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // ── On save: entry fix --touch ────────────────────────────────────────────
+    // ── On save: entry fix ─────────────────────────────────────────────────────
     context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument(async (doc: vscode.TextDocument) => {
             const cfg = vscode.workspace.getConfiguration('archelon');
