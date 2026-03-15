@@ -201,10 +201,16 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('archelon.setPeriod', async () => {
             const presets: { label: string; period: string | undefined }[] = [
-                { label: '$(circle-slash) All (clear period filter)', period: undefined },
-                { label: '$(calendar) Today',      period: 'today' },
-                { label: '$(calendar) This week',  period: 'this_week' },
-                { label: '$(calendar) This month', period: 'this_month' },
+                { label: '$(list-unordered) All',        period: undefined },
+                { label: '$(calendar) Yesterday',        period: 'yesterday' },
+                { label: '$(calendar) Today',            period: 'today' },
+                { label: '$(calendar) Tomorrow',         period: 'tomorrow' },
+                { label: '$(calendar) Last week',         period: 'last_week' },
+                { label: '$(calendar) This week',        period: 'this_week' },
+                { label: '$(calendar) Next week',        period: 'next_week' },
+                { label: '$(calendar) This month',       period: 'this_month' },
+                { label: '$(calendar) Last month',       period: 'last_month' },
+                { label: '$(calendar) Next month',       period: 'next_month' },
                 { label: '$(edit) Custom date / range…', period: '__custom__' },
             ];
             const picked = await vscode.window.showQuickPick(presets, {

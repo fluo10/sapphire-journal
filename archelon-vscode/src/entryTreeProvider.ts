@@ -29,7 +29,7 @@ export class EntryItem extends vscode.TreeItem {
                 : vscode.TreeItemCollapsibleState.None,
         );
 
-        const typeLabel = record.status_labels?.[record.status_labels.length - 1] ?? 'note';
+        const typeLabel = record.flags?.[record.flags.length - 1] ?? 'note';
         this.iconPath = new vscode.ThemeIcon(typeIconId(typeLabel));
 
         this.command = {
@@ -53,8 +53,8 @@ export class EntryItem extends vscode.TreeItem {
             md.appendMarkdown(`**Tags:** ${record.tags.map(t => `\`#${t}\``).join(' ')}  \n`);
         }
         md.appendMarkdown(`**Updated:** ${record.updated_at.slice(0, 19).replace('T', ' ')}  \n`);
-        if (record.status_labels && record.status_labels.length > 1) {
-            md.appendMarkdown(`**Freshness:** ${record.status_labels[0]}  \n`);
+        if (record.flags && record.flags.length > 1) {
+            md.appendMarkdown(`**Freshness:** ${record.flags[0]}  \n`);
         }
         if (record.task) {
             let taskLine = `**Task:** ${record.task.status}`;
