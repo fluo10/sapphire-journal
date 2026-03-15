@@ -972,13 +972,33 @@ fn fix_entry_mut(entry: &mut Entry, touch: bool) -> Result<Option<PathBuf>> {
 
     let expected = entry_filename_from_frontmatter(entry.frontmatter.id, &entry.frontmatter);
     let path = entry.path.clone();
-    let actual = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+    let current_dir = path.parent().unwrap_or_else(|| Path::new("."));
 
-    if actual == expected {
+    // Entries live in <journal_root>/<year>/<file>.
+    // If the current directory name is a 4-digit year, compute the expected
+    // year directory from created_at so the file is moved when necessary.
+    let expected_dir = if let Some(journal_root) = current_dir.parent() {
+        let current_year_name = current_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if current_year_name.len() == 4 && current_year_name.chars().all(|c| c.is_ascii_digit()) {
+            let year = entry.frontmatter.created_at.year();
+            journal_root.join(year.to_string())
+        } else {
+            current_dir.to_path_buf()
+        }
+    } else {
+        current_dir.to_path_buf()
+    };
+
+    let new_path = expected_dir.join(&expected);
+
+    if path == new_path {
         return Ok(None);
     }
 
-    let new_path = path.parent().unwrap_or_else(|| Path::new(".")).join(&expected);
+    std::fs::create_dir_all(&expected_dir)?;
     std::fs::rename(&path, &new_path)?;
     Ok(Some(new_path))
 }
