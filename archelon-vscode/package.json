@@ -155,6 +155,23 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically run 'entry fix --touch' when saving a managed entry file."
+        },
+        "archelon.defaultPeriod": {
+          "type": "string",
+          "default": "today",
+          "description": "Default period filter for the entry tree view. Accepted values: today | this_week | this_month | none | YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD. Set to empty string to disable period filtering by default."
+        },
+        "archelon.defaultSortField": {
+          "type": "string",
+          "default": "updated_at",
+          "enum": ["id", "title", "task_status", "created_at", "updated_at", "task_due", "event_start"],
+          "description": "Default field to sort entries by in the tree view."
+        },
+        "archelon.defaultSortOrder": {
+          "type": "string",
+          "default": "desc",
+          "enum": ["asc", "desc"],
+          "description": "Default sort direction in the tree view."
         }
       }
     }

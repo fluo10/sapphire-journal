@@ -103,7 +103,7 @@ export interface EntryRecord {
  * Throws on non-zero exit (e.g. journal not found).
  */
 export async function listEntries(cwd: string, sortBy?: SortField, sortOrder?: SortOrder, period?: string): Promise<EntryRecord[]> {
-    const args = ['entry', 'list', '--json', '--overdue'];
+    const args = ['entry', 'list', '--json', '--active'];
     if (sortBy) { args.push('--sort-by', sortBy); }
     if (sortOrder) { args.push('--sort-order', sortOrder); }
     if (period) { args.push('--period', period); }
@@ -119,7 +119,7 @@ export type SortOrder = 'asc' | 'desc';
  * Throws on non-zero exit (e.g. journal not found).
  */
 export async function treeEntries(cwd: string, sortBy?: SortField, sortOrder?: SortOrder, period?: string): Promise<EntryRecord[]> {
-    const args = ['entry', 'tree', '--json', '--overdue'];
+    const args = ['entry', 'tree', '--json', '--active'];
     if (sortBy) { args.push('--sort-by', sortBy); }
     if (sortOrder) { args.push('--sort-order', sortOrder); }
     if (period) { args.push('--period', period); }

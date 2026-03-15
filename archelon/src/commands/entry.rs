@@ -17,19 +17,34 @@ use std::{
 /// Filter and sort arguments shared by `entry list` and `entry tree`.
 #[derive(Args)]
 pub struct EntryFilterArgs {
-    /// Time range to filter against. Without field selectors (--task-due, --event-span,
-    /// --created-at, --updated-at) the period is applied to all timestamp fields (OR).
-    /// Add field selectors to restrict matching to specific fields.
+    /// Time range to filter against. Without field selectors the period is applied to all
+    /// timestamp fields simultaneously (OR). Add selectors to restrict matching.
     ///
     /// PERIOD formats: today | this_week | this_month | none |
     /// YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
     #[arg(long, value_name = "PERIOD")]
     pub period: Option<String>,
 
-    /// Restrict --period to task due date.
-    /// Without --period: include entries that have a task_due set.
+    /// Enable all selectors at once: task_overdue, task_in_progress, event_span,
+    /// created_at, updated_at. With --period this produces a Bullet Journal-style
+    /// daily/weekly/monthly log view. Individual flags can still be added on top.
     #[arg(long)]
-    pub task_due: bool,
+    pub active: bool,
+
+    /// Include incomplete tasks whose due date falls within (or before) the period.
+    /// Without --period: include tasks whose due date is in the past and are not yet closed.
+    #[arg(long)]
+    pub task_overdue: bool,
+
+    /// Include incomplete tasks that were started within (or before) the period.
+    /// Without --period: include all tasks that have started_at set and are not yet closed.
+    #[arg(long)]
+    pub task_in_progress: bool,
+
+    /// Include tasks that have not been started yet (started_at and closed_at both absent).
+    /// Period is not applied to this filter.
+    #[arg(long)]
+    pub task_unstarted: bool,
 
     /// Restrict --period to event span (overlap semantics).
     /// Without --period: include entries that have an event set.
@@ -54,16 +69,6 @@ pub struct EntryFilterArgs {
     #[arg(long, value_name = "TAG[,...]", value_delimiter = ',', num_args = 1..)]
     pub tags: Option<Vec<String>>,
 
-    /// Include overdue tasks (due in the past, not yet closed). OR'd with period filters.
-    #[arg(long)]
-    pub overdue: bool,
-
-    /// Include tasks that have been started (started_at set) and not yet closed.
-    /// When combined with --period, only tasks started on or before the period end are included.
-    /// OR'd with period filters.
-    #[arg(long)]
-    pub task_started: bool,
-
     /// Sort results by a field.
     /// Values: id | title | task_status | created_at | updated_at | task_due | event_start | event_end
     #[arg(long, value_name = "FIELD")]
@@ -78,19 +83,23 @@ fn build_filter(args: &EntryFilterArgs, week_start: WeekStart) -> Result<EntryFi
     let parse = |s: &str| parse_period(s, week_start).map_err(anyhow::Error::msg);
     Ok(EntryFilter {
         period: args.period.as_deref().map(parse).transpose()?,
-        fields: FieldSelector {
-            task_due: args.task_due,
-            event_span: args.event_span,
-            created_at: args.created_at,
-            updated_at: args.updated_at,
+        fields: {
+            let base = if args.active { FieldSelector::active() } else { FieldSelector::default() };
+            FieldSelector {
+                task_overdue:     base.task_overdue     || args.task_overdue,
+                task_in_progress: base.task_in_progress || args.task_in_progress,
+                task_unstarted:   base.task_unstarted   || args.task_unstarted,
+                event_span:       base.event_span       || args.event_span,
+                created_at:       base.created_at       || args.created_at,
+                updated_at:       base.updated_at       || args.updated_at,
+            }
         },
         task_status: args.task_status.clone().unwrap_or_default(),
         tags: args.tags.clone().unwrap_or_default(),
-        overdue: args.overdue,
-        task_started: args.task_started,
         sort_by: args.sort_by.as_deref()
             .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
-            .transpose()?,
+            .transpose()?
+            .unwrap_or_default(),
         sort_order: args.sort_order.parse::<SortOrder>().map_err(anyhow::Error::msg)?,
     })
 }

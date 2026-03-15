@@ -67,11 +67,21 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vs
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
     private _filter = '';
-    private _sortBy: SortField | undefined = undefined;
-    private _sortOrder: SortOrder = 'asc';
+    private _sortBy: SortField | undefined;
+    private _sortOrder: SortOrder;
     private _viewMode: ViewMode = 'tree';
-    private _period: string | undefined = 'today';
+    private _period: string | undefined;
     private _rootRecords: EntryRecord[] = [];
+
+    constructor() {
+        const cfg = vscode.workspace.getConfiguration('archelon');
+        const rawPeriod = cfg.get<string>('defaultPeriod', 'today');
+        this._period = rawPeriod === '' ? undefined : rawPeriod;
+        const rawSortField = cfg.get<string>('defaultSortField', 'updated_at');
+        this._sortBy = rawSortField === '' ? undefined : rawSortField as SortField;
+        const rawSortOrder = cfg.get<string>('defaultSortOrder', 'desc');
+        this._sortOrder = rawSortOrder === 'desc' ? 'desc' : 'asc';
+    }
 
     get filter(): string { return this._filter; }
     get sortBy(): SortField | undefined { return this._sortBy; }
