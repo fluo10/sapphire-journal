@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-03-16
+
+### Added
+
+- `entries_dir` config field to customize the root directory for entry storage (default: journal root)
+- VS Code: `archelon init` command to initialize a new journal from the editor
+- VS Code: cache rebuild command (`archelon cache rebuild`) accessible from the Command Palette
+
+### Changed
+
+- Config: `timezone` field removed
+- Config: unknown fields are now preserved across read/write (prevents data loss when config was written by a newer version)
+
 ## [0.4.0] - 2026-03-15
 
 ### Added
