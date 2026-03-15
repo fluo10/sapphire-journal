@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { fixEntry, listEntries, prepareNewEntry, removeEntry, resolvePath, setExtensionPath, SortField, SortOrder } from './cli';
+import { cacheRebuild, fixEntry, init, listEntries, prepareNewEntry, removeEntry, resolvePath, setExtensionPath, SortField, SortOrder } from './cli';
 import { EntryItem, EntryTreeProvider } from './entryTreeProvider';
 import { findJournalRoot, isManagedFilename } from './journal';
 
@@ -296,6 +296,40 @@ export function activate(context: vscode.ExtensionContext) {
                 await vscode.window.showTextDocument(doc);
             } catch (err) {
                 vscode.window.showErrorMessage(`Archelon: failed to open entry — ${err}`);
+            }
+        })
+    );
+
+    // ── Command: Init Journal ─────────────────────────────────────────────────
+    context.subscriptions.push(
+        vscode.commands.registerCommand('archelon.init', async () => {
+            const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            if (!cwd) {
+                vscode.window.showErrorMessage('Archelon: no workspace folder open.');
+                return;
+            }
+            try {
+                await init(cwd);
+                vscode.window.showInformationMessage('Archelon: journal initialized.');
+            } catch (err) {
+                vscode.window.showErrorMessage(`Archelon: init failed — ${err}`);
+            }
+        })
+    );
+
+    // ── Command: Cache Rebuild ────────────────────────────────────────────────
+    context.subscriptions.push(
+        vscode.commands.registerCommand('archelon.cacheRebuild', async () => {
+            const cwd = getJournalCwd();
+            if (!cwd) {
+                vscode.window.showErrorMessage('Archelon: no workspace folder open.');
+                return;
+            }
+            try {
+                await cacheRebuild(cwd);
+                vscode.window.showInformationMessage('Archelon: cache rebuilt.');
+            } catch (err) {
+                vscode.window.showErrorMessage(`Archelon: cache rebuild failed — ${err}`);
             }
         })
     );
