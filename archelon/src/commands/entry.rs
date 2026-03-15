@@ -20,13 +20,19 @@ pub struct EntryFilterArgs {
     /// Time range to filter against. Without field selectors the period is applied to all
     /// timestamp fields simultaneously (OR). Add selectors to restrict matching.
     ///
-    /// PERIOD formats: today | this_week | this_month | none |
-    /// YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
-    #[arg(long, value_name = "PERIOD")]
+    /// PERIOD: today | yesterday | tomorrow |
+    ///   this_week | last_week | next_week |
+    ///   this_month | last_month | next_month | none |
+    ///   YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
+    #[arg(value_name = "PERIOD")]
     pub period: Option<String>,
 
+    /// Show all entries regardless of time range (required when PERIOD is omitted)
+    #[arg(long)]
+    pub all_periods: bool,
+
     /// Enable all selectors at once: task_overdue, task_in_progress, event_span,
-    /// created_at, updated_at. With --period this produces a Bullet Journal-style
+    /// created_at, updated_at. With a PERIOD this produces a Bullet Journal-style
     /// daily/weekly/monthly log view. Individual flags can still be added on top.
     #[arg(long)]
     pub active: bool,
@@ -80,6 +86,12 @@ pub struct EntryFilterArgs {
 }
 
 fn build_filter(args: &EntryFilterArgs, week_start: WeekStart) -> Result<EntryFilter> {
+    if args.period.is_none() && !args.all_periods {
+        bail!(
+            "PERIOD is required (e.g. `today`, `this_week`, `2026-03-15`), \
+             or pass `--all-periods` to show all entries"
+        );
+    }
     let parse = |s: &str| parse_period(s, week_start).map_err(anyhow::Error::msg);
     Ok(EntryFilter {
         period: args.period.as_deref().map(parse).transpose()?,

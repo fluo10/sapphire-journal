@@ -96,6 +96,20 @@ pub fn parse_period(s: &str, week_start: WeekStart) -> Result<Period, String> {
         return Ok(Period::Range(start, end));
     }
 
+    if s == "yesterday" {
+        let d = today - Duration::days(1);
+        let start = d.and_hms_opt(0, 0, 0).unwrap();
+        let end = d.and_hms_opt(23, 59, 59).unwrap();
+        return Ok(Period::Range(start, end));
+    }
+
+    if s == "tomorrow" {
+        let d = today + Duration::days(1);
+        let start = d.and_hms_opt(0, 0, 0).unwrap();
+        let end = d.and_hms_opt(23, 59, 59).unwrap();
+        return Ok(Period::Range(start, end));
+    }
+
     if s == "this_week" {
         let days_back = match week_start {
             WeekStart::Monday => today.weekday().num_days_from_monday(),
@@ -105,6 +119,32 @@ pub fn parse_period(s: &str, week_start: WeekStart) -> Result<Period, String> {
         let week_end_date = week_start_date + Duration::days(6);
         let start = week_start_date.and_hms_opt(0, 0, 0).unwrap();
         let end = week_end_date.and_hms_opt(23, 59, 59).unwrap();
+        return Ok(Period::Range(start, end));
+    }
+
+    if s == "last_week" {
+        let d = today - Duration::days(7);
+        let days_back = match week_start {
+            WeekStart::Monday => d.weekday().num_days_from_monday(),
+            WeekStart::Sunday => d.weekday().num_days_from_sunday(),
+        };
+        let start_date = d - Duration::days(days_back as i64);
+        let end_date = start_date + Duration::days(6);
+        let start = start_date.and_hms_opt(0, 0, 0).unwrap();
+        let end = end_date.and_hms_opt(23, 59, 59).unwrap();
+        return Ok(Period::Range(start, end));
+    }
+
+    if s == "next_week" {
+        let d = today + Duration::days(7);
+        let days_back = match week_start {
+            WeekStart::Monday => d.weekday().num_days_from_monday(),
+            WeekStart::Sunday => d.weekday().num_days_from_sunday(),
+        };
+        let start_date = d - Duration::days(days_back as i64);
+        let end_date = start_date + Duration::days(6);
+        let start = start_date.and_hms_opt(0, 0, 0).unwrap();
+        let end = end_date.and_hms_opt(23, 59, 59).unwrap();
         return Ok(Period::Range(start, end));
     }
 
@@ -119,6 +159,33 @@ pub fn parse_period(s: &str, week_start: WeekStart) -> Result<Period, String> {
         let month_end = next_month - Duration::days(1);
         let start = month_start.and_hms_opt(0, 0, 0).unwrap();
         let end = month_end.and_hms_opt(23, 59, 59).unwrap();
+        return Ok(Period::Range(start, end));
+    }
+
+    if s == "last_month" {
+        let (year, month) = if today.month() == 1 {
+            (today.year() - 1, 12u32)
+        } else {
+            (today.year(), today.month() - 1)
+        };
+        let start_date = NaiveDate::from_ymd_opt(year, month, 1).unwrap();
+        let end_date = today.with_day(1).unwrap() - Duration::days(1);
+        let start = start_date.and_hms_opt(0, 0, 0).unwrap();
+        let end = end_date.and_hms_opt(23, 59, 59).unwrap();
+        return Ok(Period::Range(start, end));
+    }
+
+    if s == "next_month" {
+        let (year, month) = if today.month() == 12 {
+            (today.year() + 1, 1u32)
+        } else {
+            (today.year(), today.month() + 1)
+        };
+        let start_date = NaiveDate::from_ymd_opt(year, month, 1).unwrap();
+        let (ey, em) = if month == 12 { (year + 1, 1u32) } else { (year, month + 1) };
+        let end_date = NaiveDate::from_ymd_opt(ey, em, 1).unwrap() - Duration::days(1);
+        let start = start_date.and_hms_opt(0, 0, 0).unwrap();
+        let end = end_date.and_hms_opt(23, 59, 59).unwrap();
         return Ok(Period::Range(start, end));
     }
 
@@ -142,7 +209,9 @@ pub fn parse_period(s: &str, week_start: WeekStart) -> Result<Period, String> {
 
     Err(format!(
         "`{s}` is not a valid period — accepted: \
-         none | today | this_week | this_month | \
+         none | today | yesterday | tomorrow | \
+         this_week | last_week | next_week | \
+         this_month | last_month | next_month | \
          YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | \
          YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM"
     ))

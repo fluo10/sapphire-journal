@@ -106,7 +106,7 @@ export async function listEntries(cwd: string, sortBy?: SortField, sortOrder?: S
     const args = ['entry', 'list', '--json', '--active'];
     if (sortBy) { args.push('--sort-by', sortBy); }
     if (sortOrder) { args.push('--sort-order', sortOrder); }
-    if (period) { args.push('--period', period); }
+    if (period) { args.push(period); } else { args.push('--all-periods'); }
     const { stdout } = await execFileAsync(bin(), args, { cwd });
     return JSON.parse(stdout) as EntryRecord[];
 }
@@ -122,7 +122,7 @@ export async function treeEntries(cwd: string, sortBy?: SortField, sortOrder?: S
     const args = ['entry', 'tree', '--json', '--active'];
     if (sortBy) { args.push('--sort-by', sortBy); }
     if (sortOrder) { args.push('--sort-order', sortOrder); }
-    if (period) { args.push('--period', period); }
+    if (period) { args.push(period); } else { args.push('--all-periods'); }
     const { stdout } = await execFileAsync(bin(), args, { cwd });
     return JSON.parse(stdout) as EntryRecord[];
 }
