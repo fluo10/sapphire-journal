@@ -5,20 +5,32 @@ import { findJournalRoot } from './journal';
 
 export type ViewMode = 'tree' | 'list';
 
+function typeIconId(label: string): string {
+    switch (label) {
+        case 'event':       return 'calendar';
+        case 'done':        return 'pass';
+        case 'cancelled':   return 'close';
+        case 'in_progress': return 'sync';
+        case 'archived':    return 'archive';
+        case 'open':        return 'circle-outline';
+        default:            return 'note';
+    }
+}
+
 export class EntryItem extends vscode.TreeItem {
     constructor(
         public readonly record: EntryRecord,
         public readonly children: EntryRecord[],
     ) {
-        const typeSymbol = record.symbols?.[record.symbols.length - 1]?.emoji ?? '📝';
-        const freshnessSymbol = record.symbols && record.symbols.length > 1 ? record.symbols[0].emoji : '・';
-        const emojiSlot = `${freshnessSymbol}${typeSymbol}`;
         super(
-            `${emojiSlot} ${record.title || '(untitled)'}`,
+            record.title || '(untitled)',
             children.length > 0
                 ? vscode.TreeItemCollapsibleState.Expanded
                 : vscode.TreeItemCollapsibleState.None,
         );
+
+        const typeLabel = record.symbols?.[record.symbols.length - 1]?.label ?? 'note';
+        this.iconPath = new vscode.ThemeIcon(typeIconId(typeLabel));
 
         this.command = {
             command: 'vscode.open',
@@ -41,6 +53,9 @@ export class EntryItem extends vscode.TreeItem {
             md.appendMarkdown(`**Tags:** ${record.tags.map(t => `\`#${t}\``).join(' ')}  \n`);
         }
         md.appendMarkdown(`**Updated:** ${record.updated_at.slice(0, 19).replace('T', ' ')}  \n`);
+        if (record.symbols && record.symbols.length > 1) {
+            md.appendMarkdown(`**Freshness:** ${record.symbols[0].label}  \n`);
+        }
         if (record.task) {
             let taskLine = `**Task:** ${record.task.status}`;
             if (record.task.due) { taskLine += ` (due: ${record.task.due.slice(0, 10)})`; }
