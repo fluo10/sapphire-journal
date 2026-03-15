@@ -26,6 +26,26 @@ function bin(): string {
 }
 
 /**
+ * Run `archelon init [path]`.
+ * Throws on non-zero exit.
+ */
+export async function init(dirPath?: string): Promise<string> {
+    const args = ['init'];
+    if (dirPath) { args.push(dirPath); }
+    const { stdout } = await execFileAsync(bin(), args);
+    return stdout.trim();
+}
+
+/**
+ * Run `archelon cache rebuild`.
+ * Throws on non-zero exit.
+ */
+export async function cacheRebuild(cwd: string): Promise<string> {
+    const { stdout } = await execFileAsync(bin(), ['cache', 'rebuild'], { cwd });
+    return stdout.trim();
+}
+
+/**
  * Run `archelon entry fix <filePath>`.
  *
  * Returns the new absolute path if the file was renamed, or null if it stayed in place.

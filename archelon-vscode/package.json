@@ -141,6 +141,14 @@
         "command": "archelon.showTreeView",
         "title": "Archelon: Switch to Tree View",
         "icon": "$(list-tree)"
+      },
+      {
+        "command": "archelon.init",
+        "title": "Archelon: Initialize Journal"
+      },
+      {
+        "command": "archelon.cacheRebuild",
+        "title": "Archelon: Rebuild Cache"
       }
     ],
     "configuration": {
