@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use archelon_core::{
     cache,
-    emoji,
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
     ops::{self, EntryFields, EntryFilter, EntryTreeNode, FieldSelector, SortField, SortOrder, UpdateOption},
@@ -324,8 +323,8 @@ impl ArchelonServer {
 
             let records: Vec<serde_json::Value> = entries
                 .iter()
-                .map(|(entry, labels)| {
-                    let syms = emoji::entry_symbols(
+                .map(|(entry, match_labels)| {
+                    let syms = archelon_core::labels::entry_symbols(
                         entry.frontmatter.task.as_ref(),
                         entry.frontmatter.event.as_ref(),
                         entry.frontmatter.created_at,
@@ -345,7 +344,7 @@ impl ArchelonServer {
                     });
                     if has_filter {
                         v["match_labels"] = serde_json::json!(
-                            labels.iter().map(|l| l.as_str()).collect::<Vec<_>>()
+                            match_labels.iter().map(|l| l.as_str()).collect::<Vec<_>>()
                         );
                     }
                     v
@@ -396,7 +395,7 @@ impl ArchelonServer {
 
             fn node_to_json(node: &EntryTreeNode, has_filter: bool) -> serde_json::Value {
                 let entry = &node.entry;
-                let syms = archelon_core::emoji::entry_symbols(
+                let syms = archelon_core::labels::entry_symbols(
                     entry.frontmatter.task.as_ref(),
                     entry.frontmatter.event.as_ref(),
                     entry.frontmatter.created_at,

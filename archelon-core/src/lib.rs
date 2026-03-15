@@ -13,13 +13,14 @@
 //! - [`error`] — Library-wide [`error::Error`] and [`error::Result`] types.
 //! - [`journal`] — Journal directory discovery, entry collection, and
 //!   configuration loading.
+//! - [`labels`] — Status label classification for entry types and freshness.
 //! - [`ops`] — High-level entry operations (list, create, update, delete)
 //!   shared across frontends.
 //! - [`parser`] — Markdown + YAML frontmatter parsing and serialization.
 //! - [`period`] — Time period types used to filter entries by timestamp ranges.
 
 pub mod cache;
-pub mod emoji;
+pub mod labels;
 pub mod entry;
 pub mod entry_ref;
 pub mod error;

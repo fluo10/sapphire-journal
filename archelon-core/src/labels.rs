@@ -1,6 +1,8 @@
-//! Status label representations for entry types and task statuses.
+//! Status label classification for entry types and freshness.
 //!
-//! These are the canonical label mappings shared across CLI, MCP, and editor integrations.
+//! This module computes machine-readable labels for an entry based on its
+//! frontmatter (task status, event presence, timestamps). Display rendering
+//! (emoji, nerd-font glyphs, initials) is the responsibility of each frontend.
 
 use chrono::{Duration, Local, NaiveDateTime};
 
@@ -12,7 +14,7 @@ pub struct Symbol {
     pub label: &'static str,
 }
 
-/// Returns the label for a task status string.
+/// Returns the canonical label for a task status string.
 ///
 /// Conventional statuses: `open`, `in_progress`, `done`, `cancelled`, `archived`.
 /// Any unrecognised status is treated as `open`.
@@ -26,9 +28,9 @@ pub fn task_status_label(status: &str) -> &'static str {
     }
 }
 
-/// Returns a list of symbols for an entry, used for both text rendering and JSON output.
+/// Returns the status labels for an entry.
 ///
-/// Slot 1 (urgency/freshness): `overdue` task, `new` created <24 h, `updated` <24 h, absent otherwise.
+/// Slot 1 (urgency/freshness): `overdue`, `new` (created <24 h), `updated` (<24 h), absent otherwise.
 /// Slot 2 (entry type): `event`, task status label, or `note`.
 pub fn entry_symbols(
     task: Option<&TaskMeta>,
@@ -65,15 +67,4 @@ pub fn entry_symbols(
     }
 
     symbols
-}
-
-/// Render symbols into a fixed 2-slot string for terminal output.
-///
-/// Each missing slot is replaced with `·`. Used for `--no-emoji` / nerdfont display paths.
-pub fn symbols_text(symbols: &[Symbol]) -> String {
-    match symbols.len() {
-        0 => "··".to_owned(),
-        1 => format!("· {}", symbols[0].label),
-        _ => format!("{} {}", symbols[0].label, symbols[1].label),
-    }
 }
