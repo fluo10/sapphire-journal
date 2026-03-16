@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-03-17
+
+### Added
+
+- `EntryFlag` and `MatchFlag` enums for structured flag handling; `event_closed` flag detection
+
+### Changed
+
+- MCP: entry references now use structured `EntryRef` instead of a flat string
+- VS Code: `New Entry` command now creates a sibling entry relative to the currently selected entry; task-related icons unified
+
+### Fixed
+
+- `slugify`: unicode characters and hyphens are now preserved in slug generation
+- Entry: `slug` and `tags` are always serialized in frontmatter output
+
 ## [0.5.0] - 2026-03-16
 
 ### Added

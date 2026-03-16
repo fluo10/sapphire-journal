@@ -4,6 +4,13 @@ All notable changes to the "archelon-vscode" extension will be documented in thi
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.6.0] - 2026-03-17
+
+### Changed
+
+- `New Entry` command now creates a sibling entry relative to the currently selected entry
+- Bundled CLI binary updated to v0.6.0: `EntryFlag`/`MatchFlag` enums, structured `EntryRef` in MCP, unicode/hyphen-preserving slugify, and always-serialized `slug`/`tags` in frontmatter
+
 ## [0.3.0] - 2026-03-09
 
 ### Added
