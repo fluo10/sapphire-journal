@@ -4,6 +4,8 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::labels::{EntryFlag, entry_flags};
+
 /// Frontmatter metadata stored at the top of each .md file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Frontmatter {
@@ -116,14 +118,92 @@ impl Entry {
     }
 }
 
-/// Metadata-only view of an entry — path and frontmatter without the body.
+/// Read-only view of [`TaskMeta`] used for cache output and JSON serialization.
+///
+/// Unlike [`TaskMeta`], this type has no `extra` field and can derive [`Serialize`] cleanly.
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskMetaView {
+    #[serde(skip_serializing_if = "Option::is_none", with = "naive_datetime_serde::eod::opt")]
+    pub due: Option<NaiveDateTime>,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none", with = "naive_datetime_serde::opt")]
+    pub started_at: Option<NaiveDateTime>,
+    #[serde(skip_serializing_if = "Option::is_none", with = "naive_datetime_serde::opt")]
+    pub closed_at: Option<NaiveDateTime>,
+}
+
+impl From<TaskMeta> for TaskMetaView {
+    fn from(t: TaskMeta) -> Self {
+        TaskMetaView { due: t.due, status: t.status, started_at: t.started_at, closed_at: t.closed_at }
+    }
+}
+
+/// Read-only view of [`EventMeta`] used for cache output and JSON serialization.
+///
+/// Unlike [`EventMeta`], this type has no `extra` field and can derive [`Serialize`] cleanly.
+#[derive(Debug, Clone, Serialize)]
+pub struct EventMetaView {
+    #[serde(with = "naive_datetime_serde")]
+    pub start: NaiveDateTime,
+    #[serde(with = "naive_datetime_serde::eod")]
+    pub end: NaiveDateTime,
+}
+
+impl From<EventMeta> for EventMetaView {
+    fn from(e: EventMeta) -> Self {
+        EventMetaView { start: e.start, end: e.end }
+    }
+}
+
+/// Read-only view of [`Frontmatter`] used for cache output and JSON serialization.
+///
+/// Unlike [`Frontmatter`], this type has no `extra` field and can derive [`Serialize`] cleanly.
+/// `parent_id` is retained for internal use (e.g. tree building) but excluded from serialization.
+#[derive(Debug, Clone, Serialize)]
+pub struct FrontmatterView {
+    pub id: CarettaId,
+    #[serde(skip)]
+    pub parent_id: Option<CarettaId>,
+    pub title: String,
+    pub slug: String,
+    #[serde(with = "naive_datetime_serde")]
+    pub created_at: NaiveDateTime,
+    #[serde(with = "naive_datetime_serde")]
+    pub updated_at: NaiveDateTime,
+    pub tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<TaskMetaView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event: Option<EventMetaView>,
+}
+
+impl From<Frontmatter> for FrontmatterView {
+    fn from(fm: Frontmatter) -> Self {
+        FrontmatterView {
+            id: fm.id,
+            parent_id: fm.parent_id,
+            title: fm.title,
+            slug: fm.slug,
+            created_at: fm.created_at,
+            updated_at: fm.updated_at,
+            tags: fm.tags,
+            task: fm.task.map(TaskMetaView::from),
+            event: fm.event.map(EventMetaView::from),
+        }
+    }
+}
+
+/// Metadata-only view of an entry — path, frontmatter, and computed flags without the body.
 ///
 /// Returned by list operations to avoid loading large bodies into memory
 /// and to keep JSON output compact (e.g. for AI consumers).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EntryHeader {
-    pub path: PathBuf,
-    pub frontmatter: Frontmatter,
+    pub path: String,
+    #[serde(flatten)]
+    pub frontmatter: FrontmatterView,
+    /// Computed status flags (type + freshness). Set at construction time.
+    pub flags: Vec<EntryFlag>,
 }
 
 impl EntryHeader {
@@ -138,7 +218,9 @@ impl EntryHeader {
 
 impl From<Entry> for EntryHeader {
     fn from(entry: Entry) -> Self {
-        EntryHeader { path: entry.path, frontmatter: entry.frontmatter }
+        let fm = FrontmatterView::from(entry.frontmatter);
+        let flags = entry_flags(fm.task.as_ref(), fm.event.as_ref(), fm.created_at, fm.updated_at);
+        EntryHeader { path: entry.path.to_string_lossy().into_owned(), frontmatter: fm, flags }
     }
 }
 

@@ -3,7 +3,8 @@ use archelon_core::{
     cache,
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
-    ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryTreeNode, FieldSelector, MatchLabel, SortField, SortOrder, UpdateOption},
+    labels::EntryFlag,
+    ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryListItem, EntryTreeNode, FieldSelector, MatchFlag, SortField, SortOrder, UpdateOption},
     period::{parse_datetime, parse_datetime_end, parse_period},
 };
 
@@ -358,71 +359,28 @@ impl DisplayMode {
     }
 }
 
-fn label_to_initial(label: &str) -> char {
-    match label {
-        "overdue"     => '!',
-        "new"         => '+',
-        "updated"     => '*',
-        "event"       => 'E',
-        "done"        => 'D',
-        "cancelled"   => 'C',
-        "in_progress" => 'I',
-        "archived"    => 'A',
-        "open"        => 'O',
-        _             => 'N', // note
-    }
-}
-
-fn label_to_emoji(label: &str) -> &'static str {
-    match label {
-        "overdue"     => "⏰",
-        "new"         => "🆕",
-        "updated"     => "✏️",
-        "event"       => "📅",
-        "done"        => "✅",
-        "cancelled"   => "❌",
-        "in_progress" => "🔄",
-        "archived"    => "📦",
-        "open"        => "⬜",
-        _             => "📝", // note
-    }
-}
-
-fn label_to_nerd(label: &str) -> &'static str {
-    match label {
-        "overdue"     => "󱦟",
-        "new"         => "󰐕",
-        "updated"     => "󰏫",
-        "event"       => "󰃭",
-        "done"        => "󰄲",
-        "cancelled"   => "󰜺",
-        "in_progress" => "󰔛",
-        "archived"    => "󰀼",
-        "open"        => "󰄱",
-        _             => "󰈙", // note
-    }
-}
-
-fn render_slot(symbols: &[archelon_core::labels::Symbol], mode: DisplayMode) -> String {
+fn render_slot(flags: &[EntryFlag], mode: DisplayMode) -> String {
     let absent_fresh = match mode {
         DisplayMode::Initials => "·",
         DisplayMode::Emoji    => "・",
         DisplayMode::Nerd     => " ",
     };
-    let (fresh_label, type_label) = match symbols.len() {
-        0 => (None, "note"),
-        1 => (None, symbols[0].label),
-        _ => (Some(symbols[0].label), symbols[1].label),
+    let (fresh, type_flag) = match flags.len() {
+        0 => (absent_fresh.to_owned(), EntryFlag::Note),
+        1 => (absent_fresh.to_owned(), flags[0]),
+        _ => {
+            let f = match mode {
+                DisplayMode::Initials => flags[0].to_initial().to_string(),
+                DisplayMode::Emoji    => flags[0].to_emoji().to_owned(),
+                DisplayMode::Nerd     => flags[0].to_nerd().to_owned(),
+            };
+            (f, flags[1])
+        }
     };
-    let fresh = fresh_label.map_or(absent_fresh.to_owned(), |l| match mode {
-        DisplayMode::Initials => label_to_initial(l).to_string(),
-        DisplayMode::Emoji    => label_to_emoji(l).to_owned(),
-        DisplayMode::Nerd     => label_to_nerd(l).to_owned(),
-    });
     let typ = match mode {
-        DisplayMode::Initials => label_to_initial(type_label).to_string(),
-        DisplayMode::Emoji    => label_to_emoji(type_label).to_owned(),
-        DisplayMode::Nerd     => label_to_nerd(type_label).to_owned(),
+        DisplayMode::Initials => type_flag.to_initial().to_string(),
+        DisplayMode::Emoji    => type_flag.to_emoji().to_owned(),
+        DisplayMode::Nerd     => type_flag.to_nerd().to_owned(),
     };
     format!("{fresh}{typ}")
 }
@@ -430,39 +388,17 @@ fn render_slot(symbols: &[archelon_core::labels::Symbol], mode: DisplayMode) -> 
 // ── list output ───────────────────────────────────────────────────────────────
 
 fn print_entries(
-    entries: &[(archelon_core::entry::EntryHeader, Vec<MatchLabel>)],
+    entries: &[(archelon_core::entry::EntryHeader, Vec<MatchFlag>)],
     has_filter: bool,
     json: bool,
     mode: DisplayMode,
 ) -> Result<()> {
     if json {
-        let records: Vec<serde_json::Value> = entries
+        let records: Vec<EntryListItem> = entries
             .iter()
-            .map(|(entry, labels)| {
-                let syms = archelon_core::labels::entry_symbols(
-                    entry.frontmatter.task.as_ref(),
-                    entry.frontmatter.event.as_ref(),
-                    entry.frontmatter.created_at,
-                    entry.frontmatter.updated_at,
-                );
-                let mut v = serde_json::json!({
-                    "id": entry.id().to_string(),
-                    "path": entry.path.display().to_string(),
-                    "title": entry.title(),
-                    "slug": entry.frontmatter.slug,
-                    "created_at": entry.frontmatter.created_at,
-                    "updated_at": entry.frontmatter.updated_at,
-                    "tags": entry.frontmatter.tags,
-                    "task": entry.frontmatter.task,
-                    "event": entry.frontmatter.event,
-                    "flags": syms.iter().map(|s| s.label).collect::<Vec<_>>(),
-                });
-                if has_filter {
-                    v["match_flags"] = serde_json::json!(
-                        labels.iter().map(|l| l.as_str()).collect::<Vec<_>>()
-                    );
-                }
-                v
+            .map(|(entry, match_flags)| EntryListItem {
+                entry: entry.clone(),
+                match_flags: if has_filter { Some(match_flags.clone()) } else { None },
             })
             .collect();
         println!("{}", serde_json::to_string_pretty(&records)?);
@@ -473,13 +409,7 @@ fn print_entries(
         .iter()
         .map(|(entry, _)| {
             let id = entry.id().to_string();
-            let syms = archelon_core::labels::entry_symbols(
-                entry.frontmatter.task.as_ref(),
-                entry.frontmatter.event.as_ref(),
-                entry.frontmatter.created_at,
-                entry.frontmatter.updated_at,
-            );
-            let slot = render_slot(&syms, mode);
+            let slot = render_slot(&entry.flags, mode);
             (id, slot, entry.title().to_owned())
         })
         .collect();
@@ -499,50 +429,18 @@ fn print_entries(
 
 fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool, mode: DisplayMode) -> Result<()> {
     if json {
-        fn node_to_json(node: &EntryTreeNode, has_filter: bool) -> serde_json::Value {
-            let entry = &node.entry;
-            let syms = archelon_core::labels::entry_symbols(
-                entry.frontmatter.task.as_ref(),
-                entry.frontmatter.event.as_ref(),
-                entry.frontmatter.created_at,
-                entry.frontmatter.updated_at,
-            );
-            let mut v = serde_json::json!({
-                "id": entry.id().to_string(),
-                "path": entry.path.display().to_string(),
-                "title": entry.title(),
-                "slug": entry.frontmatter.slug,
-                "created_at": entry.frontmatter.created_at,
-                "updated_at": entry.frontmatter.updated_at,
-                "tags": entry.frontmatter.tags,
-                "task": entry.frontmatter.task,
-                "event": entry.frontmatter.event,
-                "flags": syms.iter().map(|s| s.label).collect::<Vec<_>>(),
-                "children": node.children.iter().map(|c| node_to_json(c, has_filter)).collect::<Vec<_>>(),
-            });
-            if has_filter {
-                v["match_flags"] = serde_json::json!(
-                    node.labels.iter().map(|l| l.as_str()).collect::<Vec<_>>()
-                );
-            }
-            v
-        }
-        let records: Vec<_> = roots.iter().map(|n| node_to_json(n, has_filter)).collect();
-        println!("{}", serde_json::to_string_pretty(&records)?);
+        // When no filter is active, strip match_flags by rebuilding without them.
+        // EntryTreeNode::Serialize already omits match_flags when the vec is empty,
+        // so roots can be serialized directly regardless of has_filter.
+        let _ = has_filter;
+        println!("{}", serde_json::to_string_pretty(roots)?);
         return Ok(());
     }
 
-    fn render_node(node: &EntryTreeNode, has_filter: bool, mode: DisplayMode, prefix: &str, is_last: bool) {
-        let _ = has_filter; // match_flags not shown in text output
+    fn render_node(node: &EntryTreeNode, mode: DisplayMode, prefix: &str, is_last: bool) {
         let connector = if is_last { "└─" } else { "├─" };
         let id = node.entry.id().to_string();
-        let syms = archelon_core::labels::entry_symbols(
-            node.entry.frontmatter.task.as_ref(),
-            node.entry.frontmatter.event.as_ref(),
-            node.entry.frontmatter.created_at,
-            node.entry.frontmatter.updated_at,
-        );
-        let slot = render_slot(&syms, mode);
+        let slot = render_slot(&node.entry.flags, mode);
         let title = node.entry.title();
         if prefix.is_empty() {
             println!("{slot}  {id}  {title}");
@@ -556,7 +454,7 @@ fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool, mode: Displ
         };
         let n = node.children.len();
         for (i, child) in node.children.iter().enumerate() {
-            render_node(child, has_filter, mode, &child_prefix, i + 1 == n);
+            render_node(child, mode, &child_prefix, i + 1 == n);
         }
     }
 
@@ -565,7 +463,7 @@ fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool, mode: Displ
     }
     let n = roots.len();
     for (i, root) in roots.iter().enumerate() {
-        render_node(root, has_filter, mode, "", i + 1 == n);
+        render_node(root, mode, "", i + 1 == n);
     }
     Ok(())
 }
@@ -573,12 +471,17 @@ fn print_tree(roots: &[EntryTreeNode], has_filter: bool, json: bool, mode: Displ
 // ── show ──────────────────────────────────────────────────────────────────────
 
 fn show(path: &Path) -> Result<()> {
-    use archelon_core::parser::read_entry;
+    use archelon_core::{labels::entry_flags, parser::read_entry};
 
     let entry = read_entry(path)?;
-    let fm = &entry.frontmatter;
+    let fm_view = archelon_core::entry::FrontmatterView::from(entry.frontmatter.clone());
+    let fm = &fm_view;
+
+    let flags = entry_flags(fm.task.as_ref(), fm.event.as_ref(), fm.created_at, fm.updated_at);
+    let flags_str: Vec<&str> = flags.iter().map(|f| f.as_str()).collect();
 
     println!("# {}", entry.title());
+    println!("flags:    {}", flags_str.join(", "));
     println!("created:  {}", fm.created_at.format("%Y-%m-%dT%H:%M"));
     println!("updated:  {}", fm.updated_at.format("%Y-%m-%dT%H:%M"));
     if !fm.tags.is_empty() {

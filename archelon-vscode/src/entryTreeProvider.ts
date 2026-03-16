@@ -5,15 +5,16 @@ import { findJournalRoot } from './journal';
 
 export type ViewMode = 'tree' | 'list';
 
-function typeIconId(label: string): string {
-    switch (label) {
-        case 'event':       return 'calendar';
-        case 'done':        return 'pass';
-        case 'cancelled':   return 'close';
-        case 'in_progress': return 'sync';
-        case 'archived':    return 'archive';
-        case 'open':        return 'circle-outline';
-        default:            return 'note';
+function typeIconId(flag: string): string {
+    switch (flag) {
+        case 'event':        return 'calendar';
+        case 'event_closed': return 'window-active';
+        case 'done':         return 'pass';
+        case 'cancelled':    return 'close';
+        case 'in_progress':  return 'sync';
+        case 'archived':     return 'archive';
+        case 'open':         return 'circle-outline';
+        default:             return 'note';
     }
 }
 
@@ -29,8 +30,8 @@ export class EntryItem extends vscode.TreeItem {
                 : vscode.TreeItemCollapsibleState.None,
         );
 
-        const typeLabel = record.flags?.[record.flags.length - 1] ?? 'note';
-        this.iconPath = new vscode.ThemeIcon(typeIconId(typeLabel));
+        const typeFlag = record.flags?.[record.flags.length - 1] ?? 'note';
+        this.iconPath = new vscode.ThemeIcon(typeIconId(typeFlag));
 
         this.command = {
             command: 'vscode.open',
@@ -173,7 +174,6 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vs
     }
 
     async handleDrop(target: EntryItem | undefined, dataTransfer: vscode.DataTransfer): Promise<void> {
-        if (!target) { return; }
         const item = dataTransfer.get(ENTRY_MIME_TYPE);
         if (!item) { return; }
         const sources: { id: string; path: string }[] = item.value;
@@ -181,11 +181,14 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vs
         const cwd = this._getCwd();
         if (!cwd) { return; }
 
+        // target === undefined means dropped onto the tree root → unset parent
+        const targetId = target?.record.id;
+
         const errors: string[] = [];
         for (const src of sources) {
-            if (src.id === target.record.id) { continue; }
+            if (src.id === targetId) { continue; }
             try {
-                await setEntryParent(src.path, target.record.id, cwd);
+                await setEntryParent(src.path, targetId, cwd);
             } catch (err) {
                 errors.push(`@${src.id}: ${err}`);
             }
