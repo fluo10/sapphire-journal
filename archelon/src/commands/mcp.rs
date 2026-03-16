@@ -5,7 +5,7 @@ use archelon_core::{
     cache,
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
-    ops::{self, EntryFields, EntryFilter, EntryTreeNode, FieldSelector, SortField, SortOrder, UpdateOption},
+    ops::{self, EntryFields, EntryFilter, EntryListItem, FieldSelector, SortField, SortOrder, UpdateOption},
     parser::read_entry,
     period::{parse_datetime, parse_datetime_end, parse_period},
 };
@@ -319,33 +319,11 @@ impl ArchelonServer {
             let has_filter = filter.has_any_filter();
             let entries = ops::list_entries(self.journal_dir.as_deref(), &filter)?;
 
-            let records: Vec<serde_json::Value> = entries
+            let records: Vec<EntryListItem> = entries
                 .iter()
-                .map(|(entry, match_labels)| {
-                    let syms = archelon_core::labels::entry_symbols(
-                        entry.frontmatter.task.as_ref(),
-                        entry.frontmatter.event.as_ref(),
-                        entry.frontmatter.created_at,
-                        entry.frontmatter.updated_at,
-                    );
-                    let mut v = serde_json::json!({
-                        "id": entry.id().to_string(),
-                        "path": entry.path.display().to_string(),
-                        "title": entry.title(),
-                        "slug": entry.frontmatter.slug,
-                        "created_at": entry.frontmatter.created_at,
-                        "updated_at": entry.frontmatter.updated_at,
-                        "tags": entry.frontmatter.tags,
-                        "task": entry.frontmatter.task,
-                        "event": entry.frontmatter.event,
-                        "flags": syms.iter().map(|s| s.label).collect::<Vec<_>>(),
-                    });
-                    if has_filter {
-                        v["match_flags"] = serde_json::json!(
-                            match_labels.iter().map(|l| l.as_str()).collect::<Vec<_>>()
-                        );
-                    }
-                    v
+                .map(|(entry, match_flags)| EntryListItem {
+                    entry: entry.clone(),
+                    match_flags: if has_filter { Some(match_flags.clone()) } else { None },
                 })
                 .collect();
 
@@ -391,37 +369,8 @@ impl ArchelonServer {
             let entries = ops::list_entries(self.journal_dir.as_deref(), &filter)?;
             let roots = ops::build_entry_tree(entries);
 
-            fn node_to_json(node: &EntryTreeNode, has_filter: bool) -> serde_json::Value {
-                let entry = &node.entry;
-                let syms = archelon_core::labels::entry_symbols(
-                    entry.frontmatter.task.as_ref(),
-                    entry.frontmatter.event.as_ref(),
-                    entry.frontmatter.created_at,
-                    entry.frontmatter.updated_at,
-                );
-                let mut v = serde_json::json!({
-                    "id": entry.id().to_string(),
-                    "path": entry.path.display().to_string(),
-                    "title": entry.title(),
-                    "slug": entry.frontmatter.slug,
-                    "created_at": entry.frontmatter.created_at,
-                    "updated_at": entry.frontmatter.updated_at,
-                    "tags": entry.frontmatter.tags,
-                    "task": entry.frontmatter.task,
-                    "event": entry.frontmatter.event,
-                    "flags": syms.iter().map(|s| s.label).collect::<Vec<_>>(),
-                    "children": node.children.iter().map(|c| node_to_json(c, has_filter)).collect::<Vec<_>>(),
-                });
-                if has_filter {
-                    v["match_flags"] = serde_json::json!(
-                        node.labels.iter().map(|l| l.as_str()).collect::<Vec<_>>()
-                    );
-                }
-                v
-            }
-
-            let records: Vec<_> = roots.iter().map(|n| node_to_json(n, has_filter)).collect();
-            Ok(serde_json::to_string_pretty(&records)?)
+            let _ = has_filter;
+            Ok(serde_json::to_string_pretty(&roots)?)
         })()
         .map_err(|e| e.to_string())
     }

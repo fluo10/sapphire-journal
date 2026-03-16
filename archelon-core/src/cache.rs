@@ -481,7 +481,13 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
             extra: IndexMap::new(),
         };
 
-        result.push(EntryHeader { path: PathBuf::from(path), frontmatter });
+        let flags = crate::labels::entry_flags(
+            frontmatter.task.as_ref(),
+            frontmatter.event.as_ref(),
+            frontmatter.created_at,
+            frontmatter.updated_at,
+        );
+        result.push(EntryHeader { path: PathBuf::from(path), frontmatter, flags });
     }
 
     Ok(result)

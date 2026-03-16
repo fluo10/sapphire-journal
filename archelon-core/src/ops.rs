@@ -187,7 +187,7 @@ impl EntryFilter {
     ///
     /// Returns `(include, labels)` where `labels` lists which timestamp fields
     /// matched (empty when no timestamp filter is active).
-    pub fn matches(&self, entry: &EntryHeader) -> (bool, Vec<MatchLabel>) {
+    pub fn matches(&self, entry: &EntryHeader) -> (bool, Vec<MatchFlag>) {
         let mut labels = Vec::new();
 
         let timestamp_ok = if self.has_timestamp_filter() {
@@ -200,9 +200,9 @@ impl EntryFilter {
                 // No selectors at all → apply period to all timestamp fields simultaneously (OR).
                 // Any explicit selector (including semantic task selectors) disables this fallback.
                 let all = self.fields.is_empty();
-                if (all || self.fields.event_span) && p.overlaps_event(event_start_val, event_end_val) { labels.push(MatchLabel::EventSpan); }
-                if (all || self.fields.created_at) && p.matches(created_val)                           { labels.push(MatchLabel::CreatedAt); }
-                if (all || self.fields.updated_at) && p.matches(updated_val)                           { labels.push(MatchLabel::UpdatedAt); }
+                if (all || self.fields.event_span) && p.overlaps_event(event_start_val, event_end_val) { labels.push(MatchFlag::EventSpan); }
+                if (all || self.fields.created_at) && p.matches(created_val)                           { labels.push(MatchFlag::CreatedAt); }
+                if (all || self.fields.updated_at) && p.matches(updated_val)                           { labels.push(MatchFlag::UpdatedAt); }
 
                 // task_overdue: incomplete task with due ≤ period end
                 if self.fields.task_overdue {
@@ -210,7 +210,7 @@ impl EntryFilter {
                         let is_overdue = entry.frontmatter.task.as_ref().is_some_and(|t| {
                             t.closed_at.is_none() && t.due.is_some_and(|due| due <= *end)
                         });
-                        if is_overdue { labels.push(MatchLabel::TaskOverdue); }
+                        if is_overdue { labels.push(MatchFlag::TaskOverdue); }
                     }
                 }
 
@@ -220,7 +220,7 @@ impl EntryFilter {
                         let is_in_progress = entry.frontmatter.task.as_ref().is_some_and(|t| {
                             t.closed_at.is_none() && t.started_at.is_some_and(|sa| sa <= *end)
                         });
-                        if is_in_progress { labels.push(MatchLabel::TaskInProgress); }
+                        if is_in_progress { labels.push(MatchFlag::TaskInProgress); }
                     }
                 }
 
@@ -229,11 +229,11 @@ impl EntryFilter {
                     let is_unstarted = entry.frontmatter.task.as_ref().is_some_and(|t| {
                         t.started_at.is_none() && t.closed_at.is_none()
                     });
-                    if is_unstarted { labels.push(MatchLabel::TaskUnstarted); }
+                    if is_unstarted { labels.push(MatchFlag::TaskUnstarted); }
                 }
             } else {
                 // No period: period-field flags → check that the field exists (is set)
-                if self.fields.event_span && (event_start_val.is_some() || event_end_val.is_some()) { labels.push(MatchLabel::EventSpan); }
+                if self.fields.event_span && (event_start_val.is_some() || event_end_val.is_some()) { labels.push(MatchFlag::EventSpan); }
                 // created_at / updated_at are always set on every entry → no useful existence check
 
                 // task_overdue: incomplete task with due < now
@@ -242,7 +242,7 @@ impl EntryFilter {
                     let is_overdue = entry.frontmatter.task.as_ref().is_some_and(|t| {
                         t.closed_at.is_none() && t.due.is_some_and(|due| due < now)
                     });
-                    if is_overdue { labels.push(MatchLabel::TaskOverdue); }
+                    if is_overdue { labels.push(MatchFlag::TaskOverdue); }
                 }
 
                 // task_in_progress: incomplete task with started_at set
@@ -250,7 +250,7 @@ impl EntryFilter {
                     let is_in_progress = entry.frontmatter.task.as_ref().is_some_and(|t| {
                         t.closed_at.is_none() && t.started_at.is_some()
                     });
-                    if is_in_progress { labels.push(MatchLabel::TaskInProgress); }
+                    if is_in_progress { labels.push(MatchFlag::TaskInProgress); }
                 }
 
                 // task_unstarted: task that exists but has not been started
@@ -258,7 +258,7 @@ impl EntryFilter {
                     let is_unstarted = entry.frontmatter.task.as_ref().is_some_and(|t| {
                         t.started_at.is_none() && t.closed_at.is_none()
                     });
-                    if is_unstarted { labels.push(MatchLabel::TaskUnstarted); }
+                    if is_unstarted { labels.push(MatchFlag::TaskUnstarted); }
                 }
             }
 
@@ -287,11 +287,11 @@ impl EntryFilter {
     }
 }
 
-// ── MatchLabel ────────────────────────────────────────────────────────────────
+// ── MatchFlag ────────────────────────────────────────────────────────────────
 
 /// Identifies which timestamp field caused an entry to match a filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MatchLabel {
+pub enum MatchFlag {
     /// Task is incomplete (`closed_at` absent) and `due ≤ period_end` (or `due < now`).
     TaskOverdue,
     /// Task is incomplete (`closed_at` absent) and `started_at ≤ period_end` (or `started_at` set).
@@ -307,17 +307,57 @@ pub enum MatchLabel {
     ParentOfMatch,
 }
 
-impl MatchLabel {
+impl MatchFlag {
     pub fn as_str(self) -> &'static str {
         match self {
-            MatchLabel::TaskOverdue    => "task_overdue",
-            MatchLabel::TaskInProgress => "task_in_progress",
-            MatchLabel::TaskUnstarted  => "task_unstarted",
-            MatchLabel::EventSpan      => "event_span",
-            MatchLabel::CreatedAt      => "created",
-            MatchLabel::UpdatedAt      => "updated",
-            MatchLabel::ParentOfMatch  => "parent_of_match",
+            MatchFlag::TaskOverdue    => "task_overdue",
+            MatchFlag::TaskInProgress => "task_in_progress",
+            MatchFlag::TaskUnstarted  => "task_unstarted",
+            MatchFlag::EventSpan      => "event_span",
+            MatchFlag::CreatedAt      => "created",
+            MatchFlag::UpdatedAt      => "updated",
+            MatchFlag::ParentOfMatch  => "parent_of_match",
         }
+    }
+}
+
+impl serde::Serialize for MatchFlag {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+// ── EntryListItem ─────────────────────────────────────────────────────────────
+
+/// A flat list item pairing an [`EntryHeader`] with its [`MatchFlag`]s.
+///
+/// Serializes all entry fields at the top level, with `match_flags` omitted
+/// when there is no active filter (i.e. when `match_flags` is `None`).
+pub struct EntryListItem {
+    pub entry: EntryHeader,
+    pub match_flags: Option<Vec<MatchFlag>>,
+}
+
+impl serde::Serialize for EntryListItem {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let fm = &self.entry.frontmatter;
+        let extra = if self.match_flags.is_some() { 1 } else { 0 };
+        let mut map = serializer.serialize_map(Some(10 + extra))?;
+        map.serialize_entry("id",         &fm.id.to_string())?;
+        map.serialize_entry("path",       &self.entry.path.display().to_string())?;
+        map.serialize_entry("title",      &fm.title)?;
+        map.serialize_entry("slug",       &fm.slug)?;
+        map.serialize_entry("created_at", &fm.created_at.format("%Y-%m-%dT%H:%M").to_string())?;
+        map.serialize_entry("updated_at", &fm.updated_at.format("%Y-%m-%dT%H:%M").to_string())?;
+        map.serialize_entry("tags",       &fm.tags)?;
+        map.serialize_entry("task",       &fm.task)?;
+        map.serialize_entry("event",      &fm.event)?;
+        map.serialize_entry("flags",      &self.entry.flags)?;
+        if let Some(mf) = &self.match_flags {
+            map.serialize_entry("match_flags", mf)?;
+        }
+        map.end()
     }
 }
 
@@ -326,8 +366,33 @@ impl MatchLabel {
 /// A node in an entry hierarchy returned by [`build_entry_tree`].
 pub struct EntryTreeNode {
     pub entry: EntryHeader,
-    pub labels: Vec<MatchLabel>,
+    pub match_flags: Vec<MatchFlag>,
     pub children: Vec<EntryTreeNode>,
+}
+
+impl serde::Serialize for EntryTreeNode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let fm = &self.entry.frontmatter;
+        let has_match_flags = !self.match_flags.is_empty();
+        let extra = if has_match_flags { 1 } else { 0 };
+        let mut map = serializer.serialize_map(Some(11 + extra))?;
+        map.serialize_entry("id",         &fm.id.to_string())?;
+        map.serialize_entry("path",       &self.entry.path.display().to_string())?;
+        map.serialize_entry("title",      &fm.title)?;
+        map.serialize_entry("slug",       &fm.slug)?;
+        map.serialize_entry("created_at", &fm.created_at.format("%Y-%m-%dT%H:%M").to_string())?;
+        map.serialize_entry("updated_at", &fm.updated_at.format("%Y-%m-%dT%H:%M").to_string())?;
+        map.serialize_entry("tags",       &fm.tags)?;
+        map.serialize_entry("task",       &fm.task)?;
+        map.serialize_entry("event",      &fm.event)?;
+        map.serialize_entry("flags",      &self.entry.flags)?;
+        if has_match_flags {
+            map.serialize_entry("match_flags", &self.match_flags)?;
+        }
+        map.serialize_entry("children",   &self.children)?;
+        map.end()
+    }
 }
 
 /// Organise a flat list of `(entry, labels)` pairs into a forest (list of
@@ -337,7 +402,7 @@ pub struct EntryTreeNode {
 /// its parent is not present in the provided list.  Sibling order within each
 /// level mirrors the order of the input slice (i.e. the sort order chosen by
 /// the caller is preserved).
-pub fn build_entry_tree(entries: Vec<(EntryHeader, Vec<MatchLabel>)>) -> Vec<EntryTreeNode> {
+pub fn build_entry_tree(entries: Vec<(EntryHeader, Vec<MatchFlag>)>) -> Vec<EntryTreeNode> {
     use std::collections::HashMap;
 
     // Build an index: CarettaId → position in the input slice.
@@ -369,12 +434,12 @@ pub fn build_entry_tree(entries: Vec<(EntryHeader, Vec<MatchLabel>)>) -> Vec<Ent
 
     // Move entries out of the Vec into a parallel structure of Options so we
     // can take ownership during recursive construction without cloning.
-    let mut slots: Vec<Option<(EntryHeader, Vec<MatchLabel>)>> =
+    let mut slots: Vec<Option<(EntryHeader, Vec<MatchFlag>)>> =
         entries.into_iter().map(Some).collect();
 
     fn build_node(
         idx: usize,
-        slots: &mut Vec<Option<(EntryHeader, Vec<MatchLabel>)>>,
+        slots: &mut Vec<Option<(EntryHeader, Vec<MatchFlag>)>>,
         children_of: &Vec<Vec<usize>>,
     ) -> EntryTreeNode {
         let (entry, labels) = slots[idx].take().unwrap();
@@ -382,7 +447,7 @@ pub fn build_entry_tree(entries: Vec<(EntryHeader, Vec<MatchLabel>)>) -> Vec<Ent
             .iter()
             .map(|&ci| build_node(ci, slots, children_of))
             .collect();
-        EntryTreeNode { entry, labels, children }
+        EntryTreeNode { entry, match_flags: labels, children }
     }
 
     (0..slots.len())
@@ -396,15 +461,15 @@ pub fn build_entry_tree(entries: Vec<(EntryHeader, Vec<MatchLabel>)>) -> Vec<Ent
 ///
 /// For every entry in `filtered` whose `parent_id` is not already present,
 /// this function walks up the parent chain and adds the missing ancestors
-/// with a single [`MatchLabel::ParentOfMatch`] label.  The ancestors are
+/// with a single [`MatchFlag::ParentOfMatch`] label.  The ancestors are
 /// appended after the filtered entries; `build_entry_tree` then places them
 /// at the correct positions in the hierarchy.
 ///
 /// If `filtered` is empty or no ancestors are missing this is a no-op.
 pub fn fill_ancestor_entries(
-    mut filtered: Vec<(EntryHeader, Vec<MatchLabel>)>,
+    mut filtered: Vec<(EntryHeader, Vec<MatchFlag>)>,
     journal_dir: Option<&Path>,
-) -> Result<Vec<(EntryHeader, Vec<MatchLabel>)>> {
+) -> Result<Vec<(EntryHeader, Vec<MatchFlag>)>> {
     use std::collections::{HashMap, HashSet};
 
     if filtered.is_empty() {
@@ -456,7 +521,7 @@ pub fn fill_ancestor_entries(
     }
 
     for (_, ancestor) in to_add {
-        filtered.push((ancestor, vec![MatchLabel::ParentOfMatch]));
+        filtered.push((ancestor, vec![MatchFlag::ParentOfMatch]));
     }
 
     Ok(filtered)
@@ -475,7 +540,7 @@ pub fn fill_ancestor_entries(
 pub fn list_entries(
     journal_dir: Option<&Path>,
     filter: &EntryFilter,
-) -> Result<Vec<(EntryHeader, Vec<MatchLabel>)>> {
+) -> Result<Vec<(EntryHeader, Vec<MatchFlag>)>> {
     let journal = if let Some(dir) = journal_dir {
         Journal::from_root(dir.to_path_buf())?
     } else {
@@ -517,7 +582,7 @@ pub fn list_entries(
     Ok(result)
 }
 
-fn apply_filter_and_sort(entries: Vec<EntryHeader>, filter: &EntryFilter) -> Result<Vec<(EntryHeader, Vec<MatchLabel>)>> {
+fn apply_filter_and_sort(entries: Vec<EntryHeader>, filter: &EntryFilter) -> Result<Vec<(EntryHeader, Vec<MatchFlag>)>> {
     let has_filter = filter.has_any_filter();
     let mut result = Vec::new();
     for entry in entries {

@@ -4,6 +4,8 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::labels::{EntryFlag, entry_flags};
+
 /// Frontmatter metadata stored at the top of each .md file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Frontmatter {
@@ -116,7 +118,7 @@ impl Entry {
     }
 }
 
-/// Metadata-only view of an entry — path and frontmatter without the body.
+/// Metadata-only view of an entry — path, frontmatter, and computed flags without the body.
 ///
 /// Returned by list operations to avoid loading large bodies into memory
 /// and to keep JSON output compact (e.g. for AI consumers).
@@ -124,6 +126,8 @@ impl Entry {
 pub struct EntryHeader {
     pub path: PathBuf,
     pub frontmatter: Frontmatter,
+    /// Computed status flags (type + freshness). Set at construction time.
+    pub flags: Vec<EntryFlag>,
 }
 
 impl EntryHeader {
@@ -136,9 +140,34 @@ impl EntryHeader {
     }
 }
 
+impl serde::Serialize for EntryHeader {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let fm = &self.frontmatter;
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("id", &fm.id.to_string())?;
+        map.serialize_entry("path", &self.path.display().to_string())?;
+        map.serialize_entry("title", &fm.title)?;
+        map.serialize_entry("slug", &fm.slug)?;
+        map.serialize_entry("created_at", &fm.created_at.format("%Y-%m-%dT%H:%M").to_string())?;
+        map.serialize_entry("updated_at", &fm.updated_at.format("%Y-%m-%dT%H:%M").to_string())?;
+        map.serialize_entry("tags", &fm.tags)?;
+        map.serialize_entry("task", &fm.task)?;
+        map.serialize_entry("event", &fm.event)?;
+        map.serialize_entry("flags", &self.flags)?;
+        map.end()
+    }
+}
+
 impl From<Entry> for EntryHeader {
     fn from(entry: Entry) -> Self {
-        EntryHeader { path: entry.path, frontmatter: entry.frontmatter }
+        let flags = entry_flags(
+            entry.frontmatter.task.as_ref(),
+            entry.frontmatter.event.as_ref(),
+            entry.frontmatter.created_at,
+            entry.frontmatter.updated_at,
+        );
+        EntryHeader { path: entry.path, frontmatter: entry.frontmatter, flags }
     }
 }
 

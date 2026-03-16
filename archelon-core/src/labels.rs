@@ -1,44 +1,131 @@
-//! Status label classification for entry types and freshness.
+//! Status flag classification for entry types and freshness.
 //!
-//! This module computes machine-readable labels for an entry based on its
+//! This module computes machine-readable flags for an entry based on its
 //! frontmatter (task status, event presence, timestamps). Display rendering
-//! (emoji, nerd-font glyphs, initials) is the responsibility of each frontend.
+//! (emoji, nerd-font glyphs, initials) is handled via [`EntryFlag`] methods.
 
 use chrono::{Duration, Local, NaiveDateTime};
 
 use crate::entry::{EventMeta, TaskMeta};
 
-/// A single status label.
-#[derive(Debug, Clone)]
-pub struct Symbol {
-    pub label: &'static str,
+/// A computed flag describing an entry's type or freshness state.
+///
+/// Serializes to its string representation via [`EntryFlag::as_str`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryFlag {
+    // Freshness / urgency (slot 1)
+    Overdue,
+    New,
+    Updated,
+    // Entry type (slot 2)
+    Event,
+    /// Past event whose `end` timestamp is before the current time.
+    EventClosed,
+    Done,
+    Cancelled,
+    InProgress,
+    Archived,
+    Open,
+    Note,
 }
 
-/// Returns the canonical label for a task status string.
+impl EntryFlag {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Overdue     => "overdue",
+            Self::New         => "new",
+            Self::Updated     => "updated",
+            Self::Event       => "event",
+            Self::EventClosed => "event_closed",
+            Self::Done        => "done",
+            Self::Cancelled   => "cancelled",
+            Self::InProgress  => "in_progress",
+            Self::Archived    => "archived",
+            Self::Open        => "open",
+            Self::Note        => "note",
+        }
+    }
+
+    pub fn to_emoji(self) -> &'static str {
+        match self {
+            Self::Overdue     => "⏰",
+            Self::New         => "🆕",
+            Self::Updated     => "✏️",
+            Self::Event       => "📅",
+            Self::EventClosed => "🗓️",
+            Self::Done        => "✅",
+            Self::Cancelled   => "❌",
+            Self::InProgress  => "🔄",
+            Self::Archived    => "📦",
+            Self::Open        => "⬜",
+            Self::Note        => "📝",
+        }
+    }
+
+    pub fn to_nerd(self) -> &'static str {
+        match self {
+            Self::Overdue     => "󱦟",
+            Self::New         => "󰐕",
+            Self::Updated     => "󰏫",
+            Self::Event       => "󰃭",
+            Self::EventClosed => "󰄻",
+            Self::Done        => "󰄲",
+            Self::Cancelled   => "󰜺",
+            Self::InProgress  => "󰔛",
+            Self::Archived    => "󰀼",
+            Self::Open        => "󰄱",
+            Self::Note        => "󰈙",
+        }
+    }
+
+    pub fn to_initial(self) -> char {
+        match self {
+            Self::Overdue     => '!',
+            Self::New         => '+',
+            Self::Updated     => '~',
+            Self::Event       => 'E',
+            Self::EventClosed => 'e',
+            Self::Done        => 'D',
+            Self::Cancelled   => 'C',
+            Self::InProgress  => 'I',
+            Self::Archived    => 'A',
+            Self::Open        => 'O',
+            Self::Note        => 'N',
+        }
+    }
+}
+
+impl serde::Serialize for EntryFlag {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+/// Returns the canonical flag string for a task status string.
 ///
 /// Conventional statuses: `open`, `in_progress`, `done`, `cancelled`, `archived`.
 /// Any unrecognised status is treated as `open`.
 pub fn task_status_label(status: &str) -> &'static str {
     match status {
-        "done" | "completed" => "done",
+        "done" | "completed"     => "done",
         "cancelled" | "canceled" => "cancelled",
-        "in_progress" | "wip" => "in_progress",
-        "archived" => "archived",
-        _ => "open",
+        "in_progress" | "wip"   => "in_progress",
+        "archived"               => "archived",
+        _                        => "open",
     }
 }
 
-/// Returns the status labels for an entry.
+/// Returns the computed [`EntryFlag`]s for an entry.
 ///
-/// Slot 1 (urgency/freshness): `overdue`, `new` (created <24 h), `updated` (<24 h), absent otherwise.
-/// Slot 2 (entry type): `event`, task status label, or `note`.
-pub fn entry_symbols(
+/// Slot 1 (urgency/freshness): `Overdue`, `New` (created <24 h), `Updated` (<24 h), absent otherwise.
+/// Slot 2 (entry type): `Event` / `EventClosed` (past event), task status flag, or `Note`.
+pub fn entry_flags(
     task: Option<&TaskMeta>,
     event: Option<&EventMeta>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
-) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
+) -> Vec<EntryFlag> {
+    let mut flags = Vec::new();
 
     let now = Local::now().naive_local();
 
@@ -47,24 +134,35 @@ pub fn entry_symbols(
         t.due.map_or(false, |due| due < now) && t.closed_at.is_none()
     });
     if is_overdue {
-        symbols.push(Symbol { label: "overdue" });
+        flags.push(EntryFlag::Overdue);
     } else {
         let threshold = now - Duration::hours(24);
         if created_at >= threshold {
-            symbols.push(Symbol { label: "new" });
+            flags.push(EntryFlag::New);
         } else if updated_at >= threshold {
-            symbols.push(Symbol { label: "updated" });
+            flags.push(EntryFlag::Updated);
         }
     }
 
     // Slot 2: entry type
-    if event.is_some() {
-        symbols.push(Symbol { label: "event" });
+    if let Some(ev) = event {
+        if ev.end < now {
+            flags.push(EntryFlag::EventClosed);
+        } else {
+            flags.push(EntryFlag::Event);
+        }
     } else if let Some(task) = task {
-        symbols.push(Symbol { label: task_status_label(&task.status) });
+        let flag = match task_status_label(&task.status) {
+            "done"        => EntryFlag::Done,
+            "cancelled"   => EntryFlag::Cancelled,
+            "in_progress" => EntryFlag::InProgress,
+            "archived"    => EntryFlag::Archived,
+            _             => EntryFlag::Open,
+        };
+        flags.push(flag);
     } else {
-        symbols.push(Symbol { label: "note" });
+        flags.push(EntryFlag::Note);
     }
 
-    symbols
+    flags
 }

@@ -99,11 +99,13 @@ export async function removeEntry(entry: string, cwd: string): Promise<void> {
 }
 
 /**
- * Run `archelon entry modify <entryPath> --parent @<parentId>`.
+ * Run `archelon entry modify <entryPath> --parent @<parentId>` to reparent an
+ * entry, or `--no-parent` when `parentId` is undefined to make it a root entry.
  * Throws on non-zero exit.
  */
-export async function setEntryParent(entryPath: string, parentId: string, cwd: string): Promise<void> {
-    await execFileAsync(bin(), ['entry', 'modify', entryPath, '--parent', `@${parentId}`], { cwd });
+export async function setEntryParent(entryPath: string, parentId: string | undefined, cwd: string): Promise<void> {
+    const flag = parentId !== undefined ? ['--parent', `@${parentId}`] : ['--no-parent'];
+    await execFileAsync(bin(), ['entry', 'modify', entryPath, ...flag], { cwd });
 }
 
 export interface EntryRecord {
