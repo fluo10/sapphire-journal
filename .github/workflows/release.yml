@@ -99,8 +99,12 @@ jobs:
         with:
           node-version: '22'
 
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: archelon-vscode/package.json
+
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
         working-directory: archelon-vscode
 
       - name: Download CLI binary
