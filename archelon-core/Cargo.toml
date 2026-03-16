@@ -9,7 +9,7 @@ categories = ["text-processing", "filesystem", "data-structures"]
 keywords = ["markdown", "task-management", "notes", "frontmatter", "plain-text"]
 
 [dependencies]
-caretta-id = { version = "0.12", features = ["serde", "rusqlite"] }
+caretta-id = { version = "0.12", features = ["serde", "rusqlite", "schemars"] }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 toml = "1.0"
@@ -18,4 +18,5 @@ indexmap = { version = "2", features = ["serde"] }
 thiserror = "2"
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde_json = "1"
+schemars = "1.0"
 uuid = { version = "1", features = ["v4", "serde"] }

@@ -43,8 +43,8 @@ impl ArchelonServer {
         }
     }
 
-    fn resolve_entry(&self, entry: &str) -> anyhow::Result<PathBuf> {
-        ops::resolve_entry(&EntryRef::parse(entry), self.journal_dir.as_deref())
+    fn resolve_entry(&self, entry: EntryRef) -> anyhow::Result<PathBuf> {
+        ops::resolve_entry(&entry, self.journal_dir.as_deref())
             .map_err(Into::into)
     }
 
@@ -121,8 +121,7 @@ type EntryTreeParams = EntryListParams;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct EntryShowParams {
-    /// File path to the entry, or an ID / ID prefix
-    entry: String,
+    entry: EntryRef,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -153,8 +152,7 @@ struct EntryNewParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct EntryModifyParams {
-    /// File path to the entry, or an ID / ID prefix
-    entry: String,
+    entry: EntryRef,
     /// New title
     title: Option<String>,
     /// New body content (Markdown). Replaces the existing body.
@@ -181,20 +179,17 @@ struct EntryModifyParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct EntryCheckParams {
-    /// File path to the entry, or an ID / ID prefix
-    entry: String,
+    entry: EntryRef,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct EntryFixParams {
-    /// File path to the entry, or an ID / ID prefix
-    entry: String,
+    entry: EntryRef,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct EntryRemoveParams {
-    /// File path to the entry, or an ID / ID prefix
-    entry: String,
+    entry: EntryRef,
 }
 
 // ── helpers for parameter parsing ─────────────────────────────────────────────
@@ -375,10 +370,10 @@ impl ArchelonServer {
         .map_err(|e| e.to_string())
     }
 
-    #[tool(description = "Show the contents of a journal entry by ID prefix or file path")]
+    #[tool(description = "Show the contents of a journal entry by ID or file path")]
     fn entry_show(&self, Parameters(p): Parameters<EntryShowParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let path = self.resolve_entry(&p.entry)?;
+            let path = self.resolve_entry(p.entry)?;
             let entry = read_entry(&path)?;
             let fm = &entry.frontmatter;
 
@@ -457,7 +452,7 @@ impl ArchelonServer {
                 anyhow::bail!("nothing to update — specify at least one field");
             }
 
-            let path = self.resolve_entry(&p.entry)?;
+            let path = self.resolve_entry(p.entry)?;
             let fields = parse_entry_fields(
                 p.slug,
                 p.tags,
@@ -496,7 +491,7 @@ impl ArchelonServer {
         Returns 'ok' or a list of issues (e.g. filename mismatch).")]
     fn entry_check(&self, Parameters(p): Parameters<EntryCheckParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let path = self.resolve_entry(&p.entry)?;
+            let path = self.resolve_entry(p.entry)?;
             let issues = ops::check_entry(&path)?;
             if issues.is_empty() {
                 Ok(format!("ok: {}", path.display()))
@@ -516,7 +511,7 @@ impl ArchelonServer {
         Reports the rename or confirms the filename is already correct.")]
     fn entry_fix(&self, Parameters(p): Parameters<EntryFixParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let path = self.resolve_entry(&p.entry)?;
+            let path = self.resolve_entry(p.entry)?;
             match ops::fix_entry(&path)? {
                 Some(new_path) => Ok(format!(
                     "renamed: {} → {}",
@@ -532,7 +527,7 @@ impl ArchelonServer {
     #[tool(description = "Delete an entry file from the journal")]
     fn entry_remove(&self, Parameters(p): Parameters<EntryRemoveParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let path = self.resolve_entry(&p.entry)?;
+            let path = self.resolve_entry(p.entry)?;
             ops::remove_entry(&path)?;
             // Keep the cache consistent after explicit deletion.
             if let Ok(journal) = self.open_journal() {

@@ -101,6 +101,7 @@ dependencies = [
  "chrono",
  "indexmap",
  "rusqlite",
+ "schemars",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -159,6 +160,7 @@ dependencies = [
  "prost-build",
  "rand",
  "rusqlite",
+ "schemars",
  "serde",
  "thiserror",
 ]

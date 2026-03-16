@@ -890,7 +890,7 @@ pub fn prepare_new_entry(journal: &Journal, parent_id: Option<CarettaId>) -> Res
 /// Resolve an [`EntryRef`] to a concrete path, opening the journal when needed.
 ///
 /// - `Path` variant: returned as-is.
-/// - `Id` variant: looks up by CarettaId (prefix or full) via the cache.
+/// - `Id` variant: looks up by exact CarettaId via the cache.
 /// - `Title` variant: looks up by exact title (case-sensitive) via the cache.
 pub fn resolve_entry(entry_ref: &EntryRef, journal_dir: Option<&Path>) -> Result<PathBuf> {
     match entry_ref {
