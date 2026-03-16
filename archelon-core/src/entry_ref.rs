@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
 use caretta_id::CarettaId;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 /// A reference to a journal entry — a filesystem path, a CarettaId, or a title.
 ///
@@ -22,7 +24,8 @@ use caretta_id::CarettaId;
 /// happen to be 7 alphanumeric characters.  If the part after `@` cannot be
 /// parsed as a valid [`CarettaId`], the `@` is treated as part of the string
 /// and the usual path/title heuristics apply.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum EntryRef {
     /// A filesystem path to the entry file.
     Path(PathBuf),
