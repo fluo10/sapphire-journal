@@ -85,8 +85,10 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showErrorMessage('Archelon: no workspace folder open.');
                 return;
             }
+            // Create as sibling of the selected entry (same parent), or root if none selected
+            const parentId = treeView.selection[0]?.parentId;
             try {
-                const filePath = await prepareNewEntry(cwd);
+                const filePath = await prepareNewEntry(cwd, parentId);
                 const doc = await vscode.workspace.openTextDocument(filePath);
                 await vscode.window.showTextDocument(doc);
             } catch (err) {

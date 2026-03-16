@@ -10,10 +10,10 @@ function typeIconId(flag: string): string {
         case 'event':        return 'calendar';
         case 'event_closed': return 'window-active';
         case 'done':         return 'pass';
-        case 'cancelled':    return 'close';
-        case 'in_progress':  return 'sync';
+        case 'cancelled':    return 'skip';
+        case 'in_progress':  return 'play-circle';
         case 'archived':     return 'archive';
-        case 'open':         return 'circle-outline';
+        case 'open':         return 'circle-large';
         default:             return 'note';
     }
 }
@@ -22,6 +22,7 @@ export class EntryItem extends vscode.TreeItem {
     constructor(
         public readonly record: EntryRecord,
         public readonly children: EntryRecord[],
+        public readonly parentId: string | undefined = undefined,
     ) {
         super(
             record.title || '(untitled)',
@@ -143,7 +144,7 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vs
     async getChildren(element?: EntryItem): Promise<EntryItem[]> {
         // In list mode, all entries are top-level (no children)
         if (element) {
-            return this._viewMode === 'tree' ? this._toItems(element.children) : [];
+            return this._viewMode === 'tree' ? this._toItems(element.children, element.record.id) : [];
         }
 
         const cwd = this._getCwd();
@@ -199,8 +200,8 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vs
         this.refresh();
     }
 
-    private _toItems(records: EntryRecord[]): EntryItem[] {
-        return records.map(r => new EntryItem(r, r.children ?? []));
+    private _toItems(records: EntryRecord[], parentId?: string): EntryItem[] {
+        return records.map(r => new EntryItem(r, r.children ?? [], parentId));
     }
 
     /** Recursively keep records whose title/id/tags match, preserving matched subtrees. */
