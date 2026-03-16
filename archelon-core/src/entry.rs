@@ -165,13 +165,11 @@ pub struct FrontmatterView {
     #[serde(skip)]
     pub parent_id: Option<CarettaId>,
     pub title: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
     pub slug: String,
     #[serde(with = "naive_datetime_serde")]
     pub created_at: NaiveDateTime,
     #[serde(with = "naive_datetime_serde")]
     pub updated_at: NaiveDateTime,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<TaskMetaView>,
