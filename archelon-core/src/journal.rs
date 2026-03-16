@@ -279,11 +279,19 @@ pub enum WeekStart {
 pub fn slugify(title: &str) -> String {
     title
         .chars()
-        .map(|c| if c.is_whitespace() { '_' } else { c.to_ascii_lowercase() })
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .map(|c| match c {
+            c if c.is_whitespace() => '_',
+            c if c.is_ascii_uppercase() => c.to_ascii_lowercase(),
+            c if c.is_ascii_alphanumeric() => c,
+            '-' | '_' | '.' => c,
+            c if !c.is_ascii() => c,
+            _ => '_',
+        })
         .collect::<String>()
-        .trim_matches('_')
-        .to_owned()
+        .split('_')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
 }
 
 /// Build the canonical entry filename: `{id}_{slug}.md`.
@@ -321,8 +329,24 @@ mod tests {
     }
 
     #[test]
-    fn slugify_strips_special_chars() {
-        assert_eq!(slugify("Hello, World!"), "hello_world");
+    fn slugify_preserves_hyphens() {
+        assert_eq!(slugify("2026-03-17"), "2026-03-17");
+    }
+
+    #[test]
+    fn slugify_preserves_japanese() {
+        assert_eq!(slugify("日本語タイトル"), "日本語タイトル");
+    }
+
+    #[test]
+    fn slugify_japanese_with_spaces() {
+        assert_eq!(slugify("今日の メモ"), "今日の_メモ");
+    }
+
+    #[test]
+    fn slugify_replaces_special_chars() {
+        assert_eq!(slugify("Hello, World! (2026)"), "hello_world_2026");
+        assert_eq!(slugify("a/b:c*d"), "a_b_c_d");
     }
 
     #[test]
