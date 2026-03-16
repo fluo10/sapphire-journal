@@ -6,7 +6,7 @@
 
 use chrono::{Duration, Local, NaiveDateTime};
 
-use crate::entry::{EventMeta, TaskMeta};
+use crate::entry::{EventMetaView, TaskMetaView};
 
 /// A computed flag describing an entry's type or freshness state.
 ///
@@ -120,8 +120,8 @@ pub fn task_status_label(status: &str) -> &'static str {
 /// Slot 1 (urgency/freshness): `Overdue`, `New` (created <24 h), `Updated` (<24 h), absent otherwise.
 /// Slot 2 (entry type): `Event` / `EventClosed` (past event), task status flag, or `Note`.
 pub fn entry_flags(
-    task: Option<&TaskMeta>,
-    event: Option<&EventMeta>,
+    task: Option<&TaskMetaView>,
+    event: Option<&EventMetaView>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
 ) -> Vec<EntryFlag> {

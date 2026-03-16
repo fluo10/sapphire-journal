@@ -474,7 +474,8 @@ fn show(path: &Path) -> Result<()> {
     use archelon_core::{labels::entry_flags, parser::read_entry};
 
     let entry = read_entry(path)?;
-    let fm = &entry.frontmatter;
+    let fm_view = archelon_core::entry::FrontmatterView::from(entry.frontmatter.clone());
+    let fm = &fm_view;
 
     let flags = entry_flags(fm.task.as_ref(), fm.event.as_ref(), fm.created_at, fm.updated_at);
     let flags_str: Vec<&str> = flags.iter().map(|f| f.as_str()).collect();

@@ -396,8 +396,7 @@ pub fn find_entry_by_title(
 /// default to `None`/empty in the returned structs.
 pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::EntryHeader>> {
     use chrono::NaiveDateTime;
-    use indexmap::IndexMap;
-    use crate::entry::{EntryHeader, EventMeta, Frontmatter, TaskMeta};
+    use crate::entry::{EntryHeader, EventMetaView, FrontmatterView, TaskMetaView};
 
     // Fetch all tags in one query to avoid N+1 queries.
     let mut tag_map: HashMap<CarettaId, Vec<String>> = HashMap::new();
@@ -455,20 +454,19 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
     {
         let tags = tag_map.remove(&id).unwrap_or_default();
 
-        let task = task_status.map(|status| TaskMeta {
+        let task = task_status.map(|status| TaskMetaView {
             status,
             due: parse_dt_opt(task_due),
             started_at: parse_dt_opt(task_started_at),
             closed_at: parse_dt_opt(task_closed_at),
-            extra: IndexMap::new(),
         });
 
         let event = match (parse_dt_opt(event_start), parse_dt_opt(event_end)) {
-            (Some(start), Some(end)) => Some(EventMeta { start, end, extra: IndexMap::new() }),
+            (Some(start), Some(end)) => Some(EventMetaView { start, end }),
             _ => None,
         };
 
-        let frontmatter = Frontmatter {
+        let frontmatter = FrontmatterView {
             id,
             parent_id,
             title,
@@ -478,7 +476,6 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
             updated_at: parse_dt(&updated_at),
             task,
             event,
-            extra: IndexMap::new(),
         };
 
         let flags = crate::labels::entry_flags(
@@ -487,7 +484,7 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
             frontmatter.created_at,
             frontmatter.updated_at,
         );
-        result.push(EntryHeader { path: PathBuf::from(path), frontmatter, flags });
+        result.push(EntryHeader { path, frontmatter, flags });
     }
 
     Ok(result)

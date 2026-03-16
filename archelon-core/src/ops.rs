@@ -333,66 +333,24 @@ impl serde::Serialize for MatchFlag {
 ///
 /// Serializes all entry fields at the top level, with `match_flags` omitted
 /// when there is no active filter (i.e. when `match_flags` is `None`).
+#[derive(serde::Serialize)]
 pub struct EntryListItem {
+    #[serde(flatten)]
     pub entry: EntryHeader,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub match_flags: Option<Vec<MatchFlag>>,
-}
-
-impl serde::Serialize for EntryListItem {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let fm = &self.entry.frontmatter;
-        let extra = if self.match_flags.is_some() { 1 } else { 0 };
-        let mut map = serializer.serialize_map(Some(10 + extra))?;
-        map.serialize_entry("id",         &fm.id.to_string())?;
-        map.serialize_entry("path",       &self.entry.path.display().to_string())?;
-        map.serialize_entry("title",      &fm.title)?;
-        map.serialize_entry("slug",       &fm.slug)?;
-        map.serialize_entry("created_at", &fm.created_at.format("%Y-%m-%dT%H:%M").to_string())?;
-        map.serialize_entry("updated_at", &fm.updated_at.format("%Y-%m-%dT%H:%M").to_string())?;
-        map.serialize_entry("tags",       &fm.tags)?;
-        map.serialize_entry("task",       &fm.task)?;
-        map.serialize_entry("event",      &fm.event)?;
-        map.serialize_entry("flags",      &self.entry.flags)?;
-        if let Some(mf) = &self.match_flags {
-            map.serialize_entry("match_flags", mf)?;
-        }
-        map.end()
-    }
 }
 
 // ── tree ──────────────────────────────────────────────────────────────────────
 
 /// A node in an entry hierarchy returned by [`build_entry_tree`].
+#[derive(serde::Serialize)]
 pub struct EntryTreeNode {
+    #[serde(flatten)]
     pub entry: EntryHeader,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub match_flags: Vec<MatchFlag>,
     pub children: Vec<EntryTreeNode>,
-}
-
-impl serde::Serialize for EntryTreeNode {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let fm = &self.entry.frontmatter;
-        let has_match_flags = !self.match_flags.is_empty();
-        let extra = if has_match_flags { 1 } else { 0 };
-        let mut map = serializer.serialize_map(Some(11 + extra))?;
-        map.serialize_entry("id",         &fm.id.to_string())?;
-        map.serialize_entry("path",       &self.entry.path.display().to_string())?;
-        map.serialize_entry("title",      &fm.title)?;
-        map.serialize_entry("slug",       &fm.slug)?;
-        map.serialize_entry("created_at", &fm.created_at.format("%Y-%m-%dT%H:%M").to_string())?;
-        map.serialize_entry("updated_at", &fm.updated_at.format("%Y-%m-%dT%H:%M").to_string())?;
-        map.serialize_entry("tags",       &fm.tags)?;
-        map.serialize_entry("task",       &fm.task)?;
-        map.serialize_entry("event",      &fm.event)?;
-        map.serialize_entry("flags",      &self.entry.flags)?;
-        if has_match_flags {
-            map.serialize_entry("match_flags", &self.match_flags)?;
-        }
-        map.serialize_entry("children",   &self.children)?;
-        map.end()
-    }
 }
 
 /// Organise a flat list of `(entry, labels)` pairs into a forest (list of

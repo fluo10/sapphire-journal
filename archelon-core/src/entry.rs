@@ -118,14 +118,92 @@ impl Entry {
     }
 }
 
+/// Read-only view of [`TaskMeta`] used for cache output and JSON serialization.
+///
+/// Unlike [`TaskMeta`], this type has no `extra` field and can derive [`Serialize`] cleanly.
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskMetaView {
+    #[serde(skip_serializing_if = "Option::is_none", with = "naive_datetime_serde::eod::opt")]
+    pub due: Option<NaiveDateTime>,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none", with = "naive_datetime_serde::opt")]
+    pub started_at: Option<NaiveDateTime>,
+    #[serde(skip_serializing_if = "Option::is_none", with = "naive_datetime_serde::opt")]
+    pub closed_at: Option<NaiveDateTime>,
+}
+
+impl From<TaskMeta> for TaskMetaView {
+    fn from(t: TaskMeta) -> Self {
+        TaskMetaView { due: t.due, status: t.status, started_at: t.started_at, closed_at: t.closed_at }
+    }
+}
+
+/// Read-only view of [`EventMeta`] used for cache output and JSON serialization.
+///
+/// Unlike [`EventMeta`], this type has no `extra` field and can derive [`Serialize`] cleanly.
+#[derive(Debug, Clone, Serialize)]
+pub struct EventMetaView {
+    #[serde(with = "naive_datetime_serde")]
+    pub start: NaiveDateTime,
+    #[serde(with = "naive_datetime_serde::eod")]
+    pub end: NaiveDateTime,
+}
+
+impl From<EventMeta> for EventMetaView {
+    fn from(e: EventMeta) -> Self {
+        EventMetaView { start: e.start, end: e.end }
+    }
+}
+
+/// Read-only view of [`Frontmatter`] used for cache output and JSON serialization.
+///
+/// Unlike [`Frontmatter`], this type has no `extra` field and can derive [`Serialize`] cleanly.
+/// `parent_id` is retained for internal use (e.g. tree building) but excluded from serialization.
+#[derive(Debug, Clone, Serialize)]
+pub struct FrontmatterView {
+    pub id: CarettaId,
+    #[serde(skip)]
+    pub parent_id: Option<CarettaId>,
+    pub title: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub slug: String,
+    #[serde(with = "naive_datetime_serde")]
+    pub created_at: NaiveDateTime,
+    #[serde(with = "naive_datetime_serde")]
+    pub updated_at: NaiveDateTime,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<TaskMetaView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event: Option<EventMetaView>,
+}
+
+impl From<Frontmatter> for FrontmatterView {
+    fn from(fm: Frontmatter) -> Self {
+        FrontmatterView {
+            id: fm.id,
+            parent_id: fm.parent_id,
+            title: fm.title,
+            slug: fm.slug,
+            created_at: fm.created_at,
+            updated_at: fm.updated_at,
+            tags: fm.tags,
+            task: fm.task.map(TaskMetaView::from),
+            event: fm.event.map(EventMetaView::from),
+        }
+    }
+}
+
 /// Metadata-only view of an entry — path, frontmatter, and computed flags without the body.
 ///
 /// Returned by list operations to avoid loading large bodies into memory
 /// and to keep JSON output compact (e.g. for AI consumers).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EntryHeader {
-    pub path: PathBuf,
-    pub frontmatter: Frontmatter,
+    pub path: String,
+    #[serde(flatten)]
+    pub frontmatter: FrontmatterView,
     /// Computed status flags (type + freshness). Set at construction time.
     pub flags: Vec<EntryFlag>,
 }
@@ -140,34 +218,11 @@ impl EntryHeader {
     }
 }
 
-impl serde::Serialize for EntryHeader {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let fm = &self.frontmatter;
-        let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("id", &fm.id.to_string())?;
-        map.serialize_entry("path", &self.path.display().to_string())?;
-        map.serialize_entry("title", &fm.title)?;
-        map.serialize_entry("slug", &fm.slug)?;
-        map.serialize_entry("created_at", &fm.created_at.format("%Y-%m-%dT%H:%M").to_string())?;
-        map.serialize_entry("updated_at", &fm.updated_at.format("%Y-%m-%dT%H:%M").to_string())?;
-        map.serialize_entry("tags", &fm.tags)?;
-        map.serialize_entry("task", &fm.task)?;
-        map.serialize_entry("event", &fm.event)?;
-        map.serialize_entry("flags", &self.flags)?;
-        map.end()
-    }
-}
-
 impl From<Entry> for EntryHeader {
     fn from(entry: Entry) -> Self {
-        let flags = entry_flags(
-            entry.frontmatter.task.as_ref(),
-            entry.frontmatter.event.as_ref(),
-            entry.frontmatter.created_at,
-            entry.frontmatter.updated_at,
-        );
-        EntryHeader { path: entry.path, frontmatter: entry.frontmatter, flags }
+        let fm = FrontmatterView::from(entry.frontmatter);
+        let flags = entry_flags(fm.task.as_ref(), fm.event.as_ref(), fm.created_at, fm.updated_at);
+        EntryHeader { path: entry.path.to_string_lossy().into_owned(), frontmatter: fm, flags }
     }
 }
 
