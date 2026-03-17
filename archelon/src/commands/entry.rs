@@ -4,7 +4,7 @@ use archelon_core::{
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
     labels::EntryFlag,
-    ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryListItem, EntryTreeNode, FieldSelector, MatchFlag, SortField, SortOrder, UpdateOption},
+    ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryListItem, EntryTreeNode, FieldSelector, MatchFlag, SearchResult, SortField, SortOrder, UpdateOption},
     period::{parse_datetime, parse_datetime_end, parse_period},
 };
 
@@ -216,6 +216,20 @@ pub enum EntryCommand {
         /// Path to the entry file, or an ID / ID prefix
         entry: String,
     },
+    /// Full-text search across entry titles and bodies
+    Search {
+        /// Search query. Plain text matches as substrings; FTS5 operators
+        /// (AND, OR, NOT, "phrase") are also supported.
+        query: String,
+
+        /// Maximum number of results to return
+        #[arg(long, default_value = "10", value_name = "N")]
+        limit: usize,
+
+        /// Output results as JSON for machine consumption
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Frontmatter fields shared between `entry new` and `entry modify` (clap-aware).
@@ -329,6 +343,7 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
         EntryCommand::Fix { entry } => fix(journal_dir, &entry),
         EntryCommand::Path { entry, new, parent } => entry_path(journal_dir, entry.as_deref(), new, parent.as_deref()),
         EntryCommand::Remove { entry } => remove(journal_dir, &entry),
+        EntryCommand::Search { query, limit, json } => search(journal_dir, &query, limit, json),
     }
 }
 
@@ -670,6 +685,36 @@ fn remove(journal_dir: Option<&Path>, entry: &str) -> Result<()> {
         }
     }
     println!("removed: {}", path.display());
+    Ok(())
+}
+
+// ── search ────────────────────────────────────────────────────────────────────
+
+fn search(journal_dir: Option<&Path>, query: &str, limit: usize, json: bool) -> Result<()> {
+    let results = ops::search_entries(journal_dir, query, limit)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&results)?);
+        return Ok(());
+    }
+
+    if results.is_empty() {
+        return Ok(());
+    }
+
+    let id_w = results
+        .iter()
+        .map(|r| r.entry.id().to_string().len())
+        .max()
+        .unwrap_or(7);
+
+    for SearchResult { entry, score, snippet } in &results {
+        let slot = render_slot(&entry.flags, DisplayMode::Initials);
+        println!("{slot}  {:<id_w$}  {:>5.2}  {}", entry.id(), score, entry.title());
+        if let Some(snip) = snippet {
+            println!("         {snip}");
+        }
+    }
     Ok(())
 }
 

@@ -593,6 +593,48 @@ fn cmp_opt<T: Ord>(a: Option<T>, b: Option<T>) -> Ordering {
 }
 
 
+// ── search ────────────────────────────────────────────────────────────────────
+
+/// A single result returned by [`search_entries`].
+#[derive(serde::Serialize)]
+pub struct SearchResult {
+    #[serde(flatten)]
+    pub entry: EntryHeader,
+    /// Relevance score (higher = more relevant). Derived from FTS5 BM25 rank.
+    pub score: f64,
+    /// Excerpt from the body with `**...**` markers around matching text.
+    /// `None` when the body has no match content (e.g. title-only match).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+}
+
+/// Full-text search across entry titles and bodies.
+///
+/// Queries the FTS5 index and returns up to `limit` results ordered by
+/// relevance (best first). The cache is synced automatically if available.
+///
+/// `query` is passed directly to FTS5 MATCH. Plain text is matched as
+/// substrings (trigram tokenizer). FTS5 operators (`AND`, `OR`, `NOT`,
+/// `"phrase"`) work as expected.
+pub fn search_entries(
+    journal_dir: Option<&Path>,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<SearchResult>> {
+    let journal = if let Some(dir) = journal_dir {
+        Journal::from_root(dir.to_path_buf())?
+    } else {
+        Journal::find()?
+    };
+    let conn = cache::open_cache(&journal)?;
+    let _ = cache::sync_cache(&journal, &conn);
+    let raw = cache::search_entries_from_cache(&conn, query, limit)?;
+    Ok(raw
+        .into_iter()
+        .map(|(entry, score, snippet)| SearchResult { entry, score, snippet })
+        .collect())
+}
+
 // ── EntryFields ───────────────────────────────────────────────────────────────
 
 /// Parsed frontmatter fields used for creating or updating an entry.

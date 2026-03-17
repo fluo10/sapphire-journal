@@ -490,6 +490,146 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
     Ok(result)
 }
 
+/// Search entries using the FTS5 full-text index.
+///
+/// Returns `(entry, score, snippet)` tuples ordered by relevance (best first).
+/// `score` is the negated FTS5 BM25 rank (higher = more relevant).
+/// `snippet` is an excerpt from the body with `**...**` markers around matches,
+/// or `None` when the body has no match content.
+///
+/// The `query` is passed directly to FTS5 MATCH, so standard FTS5 query syntax
+/// (phrase queries with `"..."`, `AND`, `OR`, `NOT`) works as expected.
+/// With the trigram tokenizer, plain text is matched as substrings.
+pub fn search_entries_from_cache(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<(crate::entry::EntryHeader, f64, Option<String>)>> {
+    use chrono::NaiveDateTime;
+    use crate::entry::{EntryHeader, EventMetaView, FrontmatterView, TaskMetaView};
+
+    let parse_dt = |s: &str| {
+        NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").unwrap_or_default()
+    };
+    let parse_dt_opt = |s: Option<String>| -> Option<NaiveDateTime> {
+        s.as_deref()
+            .and_then(|s| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").ok())
+    };
+
+    // CTE materializes FTS5 results (with auxiliary functions) before joining entries.
+    // snippet() column index 1 = body (0 = title).
+    let mut stmt = conn.prepare(
+        "WITH matches AS (
+             SELECT rowid, rank,
+                    snippet(entries_fts, 1, '**', '**', '...', 20) AS snip
+             FROM entries_fts
+             WHERE entries_fts MATCH ?1
+             ORDER BY rank
+             LIMIT ?2
+         )
+         SELECT e.id, e.parent_id, e.path, e.title, e.slug, e.created_at, e.updated_at,
+                e.task_status, e.task_due, e.task_started_at, e.task_closed_at,
+                e.event_start, e.event_end,
+                m.rank, m.snip
+         FROM matches m
+         JOIN entries e ON m.rowid = e.id
+         ORDER BY m.rank",
+    )?;
+
+    let rows = stmt
+        .query_map(params![query, limit as i64], |row| {
+            Ok((
+                row.get::<_, CarettaId>(0)?,
+                row.get::<_, Option<CarettaId>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, Option<String>>(10)?,
+                row.get::<_, Option<String>>(11)?,
+                row.get::<_, Option<String>>(12)?,
+                row.get::<_, f64>(13)?,
+                row.get::<_, Option<String>>(14)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    if rows.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Fetch tags for the matched entries using an IN clause.
+    let ids: Vec<CarettaId> = rows.iter().map(|(id, ..)| *id).collect();
+    let mut tag_map: HashMap<CarettaId, Vec<String>> = HashMap::new();
+    {
+        let placeholders = (1..=ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT entry_id, tag FROM tags WHERE entry_id IN ({placeholders}) ORDER BY entry_id, tag"
+        );
+        let mut tag_stmt = conn.prepare(&sql)?;
+        let tag_rows = tag_stmt
+            .query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+                Ok((row.get::<_, CarettaId>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (id, tag) in tag_rows {
+            tag_map.entry(id).or_default().push(tag);
+        }
+    }
+
+    let mut result = Vec::with_capacity(rows.len());
+    for (id, parent_id, path, title, slug, created_at, updated_at,
+         task_status, task_due, task_started_at, task_closed_at,
+         event_start, event_end, rank, snip) in rows
+    {
+        let tags = tag_map.remove(&id).unwrap_or_default();
+
+        let task = task_status.map(|status| TaskMetaView {
+            status,
+            due: parse_dt_opt(task_due),
+            started_at: parse_dt_opt(task_started_at),
+            closed_at: parse_dt_opt(task_closed_at),
+        });
+
+        let event = match (parse_dt_opt(event_start), parse_dt_opt(event_end)) {
+            (Some(start), Some(end)) => Some(EventMetaView { start, end }),
+            _ => None,
+        };
+
+        let frontmatter = FrontmatterView {
+            id,
+            parent_id,
+            title,
+            slug,
+            tags,
+            created_at: parse_dt(&created_at),
+            updated_at: parse_dt(&updated_at),
+            task,
+            event,
+        };
+
+        let flags = crate::labels::entry_flags(
+            frontmatter.task.as_ref(),
+            frontmatter.event.as_ref(),
+            frontmatter.created_at,
+            frontmatter.updated_at,
+        );
+        // Negate FTS5 BM25 rank: rank is negative (lower = worse), so -rank is positive.
+        let score = -rank;
+        let snippet = snip.filter(|s| !s.is_empty());
+        result.push((EntryHeader { path, frontmatter, flags }, score, snippet));
+    }
+
+    Ok(result)
+}
+
 /// Remove an entry row from the cache by file path.
 ///
 /// Tags are removed automatically via `ON DELETE CASCADE`.
