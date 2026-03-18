@@ -3,11 +3,13 @@
 //! Converts text (entry title + body) into float vectors used for semantic
 //! similarity search via the sqlite-vec backend.
 //!
-//! All network calls are made synchronously via [`ureq`].  The two supported
-//! providers are:
+//! The supported providers are:
 //!
 //! - **`"openai"`** — OpenAI-compatible `/v1/embeddings` endpoint.
 //! - **`"ollama"`** — Ollama `/api/embed` endpoint.
+//! - **`"fastembed"`** — Local ONNX inference via the `fastembed` crate.
+//!   No server required; model weights are downloaded from Hugging Face
+//!   on first use and cached under `~/.cache/huggingface/hub/`.
 
 use crate::{
     error::{Error, Result},
@@ -25,8 +27,9 @@ pub fn embed_texts(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f
     match config.provider.as_str() {
         "openai" => embed_openai(config, texts),
         "ollama" => embed_ollama(config, texts),
+        "fastembed" => embed_fastembed(config, texts),
         other => Err(Error::Embed(format!(
-            "unknown embedding provider `{other}`; supported values: openai, ollama"
+            "unknown embedding provider `{other}`; supported values: openai, ollama, fastembed"
         ))),
     }
 }
@@ -104,6 +107,55 @@ fn embed_ollama(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f32>
         .iter()
         .map(|arr| parse_float_array(arr))
         .collect()
+}
+
+// ── fastembed (local ONNX) ────────────────────────────────────────────────────
+
+/// Supported fastembed model names and their output dimensions.
+///
+/// | Config `model` value   | Dimension |
+/// |------------------------|-----------|
+/// | `AllMiniLML6V2`        | 384       |
+/// | `BGESmallENV15`        | 384       |
+/// | `BGEBaseENV15`         | 768       |
+/// | `BGELargeENV15`        | 1024      |
+/// | `NomicEmbedTextV1`     | 768       |
+/// | `NomicEmbedTextV15`    | 768       |
+/// | `MultilingualE5Small`  | 384       |
+/// | `MultilingualE5Base`   | 768       |
+/// | `MultilingualE5Large`  | 1024      |
+fn embed_fastembed(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+    use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+
+    let model_variant = match config.model.as_str() {
+        "AllMiniLML6V2"       => EmbeddingModel::AllMiniLML6V2,
+        "BGESmallENV15"       => EmbeddingModel::BGESmallENV15,
+        "BGEBaseENV15"        => EmbeddingModel::BGEBaseENV15,
+        "BGELargeENV15"       => EmbeddingModel::BGELargeENV15,
+        "NomicEmbedTextV1"    => EmbeddingModel::NomicEmbedTextV1,
+        "NomicEmbedTextV15"   => EmbeddingModel::NomicEmbedTextV15,
+        "MultilingualE5Small" => EmbeddingModel::MultilingualE5Small,
+        "MultilingualE5Base"  => EmbeddingModel::MultilingualE5Base,
+        "MultilingualE5Large" => EmbeddingModel::MultilingualE5Large,
+        other => {
+            return Err(Error::Embed(format!(
+                "unknown fastembed model `{other}`; \
+                 supported: AllMiniLML6V2, BGESmallENV15, BGEBaseENV15, BGELargeENV15, \
+                 NomicEmbedTextV1, NomicEmbedTextV15, \
+                 MultilingualE5Small, MultilingualE5Base, MultilingualE5Large"
+            )))
+        }
+    };
+
+    let model = TextEmbedding::try_new(
+        InitOptions::new(model_variant).with_show_download_progress(true),
+    )
+    .map_err(|e| Error::Embed(format!("failed to load fastembed model: {e}")))?;
+
+    let texts_owned: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
+    model
+        .embed(texts_owned, None)
+        .map_err(|e| Error::Embed(format!("fastembed embedding failed: {e}")))
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

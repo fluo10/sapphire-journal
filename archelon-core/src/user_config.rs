@@ -112,12 +112,17 @@ impl VectorDb {
 pub struct EmbeddingConfig {
     /// Embedding provider identifier.
     ///
-    /// Examples: `"openai"`, `"ollama"`.
+    /// - `"openai"` — OpenAI-compatible REST API
+    /// - `"ollama"` — local Ollama server
+    /// - `"fastembed"` — local ONNX inference, no server required
     pub provider: String,
 
     /// Model name understood by the provider.
     ///
-    /// Examples: `"text-embedding-3-small"` (OpenAI), `"nomic-embed-text"` (Ollama).
+    /// - OpenAI: `"text-embedding-3-small"`, `"text-embedding-3-large"`, …
+    /// - Ollama: `"nomic-embed-text"`, `"mxbai-embed-large"`, …
+    /// - fastembed: `"AllMiniLML6V2"` (384), `"BGESmallENV15"` (384),
+    ///   `"BGEBaseENV15"` (768), `"NomicEmbedTextV1"` (768), …
     pub model: String,
 
     /// Name of the environment variable that holds the API key.
