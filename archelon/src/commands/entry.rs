@@ -5,6 +5,7 @@ use archelon_core::{
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
     labels::EntryFlag,
+    lancedb_store,
     ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryListItem, EntryTreeNode, FieldSelector, MatchFlag, SortField, SortOrder, UpdateOption},
     period::{parse_datetime, parse_datetime_end, parse_period},
     user_config::{UserConfig, VectorDb},
@@ -703,12 +704,6 @@ fn search(journal_dir: Option<&Path>, query: &str, semantic: bool, limit: usize)
     if semantic {
         // ── vector similarity search ──────────────────────────────────────────
         let user_cfg = UserConfig::load()?;
-        if user_cfg.cache.vector_db != VectorDb::SqliteVec {
-            anyhow::bail!(
-                "semantic search requires `vector_db = \"sqlite_vec\"` \
-                 in ~/.config/archelon/config.toml"
-            );
-        }
         let embed_cfg = user_cfg.cache.embedding.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
                 "[cache.embedding] is required in ~/.config/archelon/config.toml \
@@ -725,8 +720,26 @@ fn search(journal_dir: Option<&Path>, query: &str, semantic: bool, limit: usize)
             .next()
             .ok_or_else(|| anyhow::anyhow!("embedding API returned empty result"))?;
 
-        let conn = cache::open_cache_vec(&journal, dim)?;
-        let results = cache::search_similar_entries(&conn, &query_vec, limit)?;
+        let results = match user_cfg.cache.vector_db {
+            VectorDb::None => {
+                anyhow::bail!(
+                    "semantic search requires vector_db = \"sqlite_vec\" or \"lancedb\" \
+                     in ~/.config/archelon/config.toml"
+                );
+            }
+            VectorDb::SqliteVec => {
+                let conn = cache::open_cache_vec(&journal, dim)?;
+                cache::search_similar_entries(&conn, &query_vec, limit)?
+            }
+            VectorDb::LanceDb => {
+                let data_dir = journal.lancedb_dir()?;
+                let rt = tokio::runtime::Runtime::new()?;
+                rt.block_on(async {
+                    let store = lancedb_store::LanceStore::open(&data_dir, dim).await?;
+                    store.search_similar(&query_vec, limit).await
+                })?
+            }
+        };
 
         if results.is_empty() {
             println!("no results");

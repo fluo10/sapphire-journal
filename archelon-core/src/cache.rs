@@ -866,9 +866,11 @@ pub fn embed_pending_entries(
     Ok(total)
 }
 
-/// A result returned by [`search_fts_entries`] or [`search_similar_entries`].
+/// A result returned by [`search_fts_entries`], [`search_similar_entries`], or
+/// the LanceDB search backend.
 pub struct SearchResult {
-    pub id: CarettaId,
+    /// The entry's numeric ID (CarettaId stored as i64).
+    pub id: i64,
     pub title: String,
     pub path: String,
     /// For FTS5: BM25 rank (negative; more negative = higher relevance).
@@ -897,7 +899,7 @@ pub fn search_fts_entries(
     let results = stmt
         .query_map(params![query, limit as i64], |row| {
             Ok(SearchResult {
-                id: row.get::<_, CarettaId>(0)?,
+                id: row.get::<_, i64>(0)?,
                 title: row.get::<_, String>(1)?,
                 path: row.get::<_, String>(2)?,
                 score: row.get::<_, f64>(3).unwrap_or(0.0),
@@ -929,7 +931,7 @@ pub fn search_similar_entries(
     let results = stmt
         .query_map(params![blob, limit as i64], |row| {
             Ok(SearchResult {
-                id: row.get::<_, CarettaId>(0)?,
+                id: row.get::<_, i64>(0)?,
                 title: row.get::<_, String>(1)?,
                 path: row.get::<_, String>(2)?,
                 score: row.get::<_, f64>(3).unwrap_or(0.0),

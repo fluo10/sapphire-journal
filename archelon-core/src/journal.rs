@@ -165,6 +165,16 @@ impl Journal {
         let id = self.journal_id()?;
         Ok(xdg_cache_home().join("archelon").join(id.to_string()).join("cache.db"))
     }
+
+    /// Path to the LanceDB vector store for this journal.
+    ///
+    /// Resolves to `$XDG_CACHE_HOME/archelon/{journal_id}/lancedb/`.
+    /// Like the SQLite cache, this is outside the journal directory so it is
+    /// never synced by git, Syncthing, or Nextcloud.
+    pub fn lancedb_dir(&self) -> Result<PathBuf> {
+        let id = self.journal_id()?;
+        Ok(xdg_cache_home().join("archelon").join(id.to_string()).join("lancedb"))
+    }
 }
 
 fn xdg_cache_home() -> PathBuf {
