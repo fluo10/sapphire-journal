@@ -20,6 +20,7 @@
 //! - [`period`] — Time period types used to filter entries by timestamp ranges.
 
 pub mod cache;
+pub mod embed;
 pub mod labels;
 pub mod entry;
 pub mod entry_ref;

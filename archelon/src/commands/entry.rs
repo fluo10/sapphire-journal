@@ -1,11 +1,13 @@
 use anyhow::{bail, Context, Result};
 use archelon_core::{
     cache,
+    embed,
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
     labels::EntryFlag,
     ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryListItem, EntryTreeNode, FieldSelector, MatchFlag, SortField, SortOrder, UpdateOption},
     period::{parse_datetime, parse_datetime_end, parse_period},
+    user_config::{UserConfig, VectorDb},
 };
 
 use chrono::NaiveDateTime;
@@ -216,6 +218,23 @@ pub enum EntryCommand {
         /// Path to the entry file, or an ID / ID prefix
         entry: String,
     },
+    /// Search entries by full-text or semantic similarity
+    ///
+    /// Without --semantic, uses the FTS5 trigram index (substring / CJK friendly).
+    /// With --semantic, embeds the query and runs a KNN search against stored vectors
+    /// (requires vector_db = "sqlite_vec" and [cache.embedding] in the user config).
+    Search {
+        /// Search query text
+        query: String,
+
+        /// Use vector similarity search instead of full-text search
+        #[arg(long)]
+        semantic: bool,
+
+        /// Maximum number of results to return
+        #[arg(long, short, default_value = "10")]
+        limit: usize,
+    },
 }
 
 /// Frontmatter fields shared between `entry new` and `entry modify` (clap-aware).
@@ -329,6 +348,9 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
         EntryCommand::Fix { entry } => fix(journal_dir, &entry),
         EntryCommand::Path { entry, new, parent } => entry_path(journal_dir, entry.as_deref(), new, parent.as_deref()),
         EntryCommand::Remove { entry } => remove(journal_dir, &entry),
+        EntryCommand::Search { query, semantic, limit } => {
+            search(journal_dir, &query, semantic, limit)
+        }
     }
 }
 
@@ -670,6 +692,65 @@ fn remove(journal_dir: Option<&Path>, entry: &str) -> Result<()> {
         }
     }
     println!("removed: {}", path.display());
+    Ok(())
+}
+
+// ── search ────────────────────────────────────────────────────────────────────
+
+fn search(journal_dir: Option<&Path>, query: &str, semantic: bool, limit: usize) -> Result<()> {
+    let journal = open_journal(journal_dir)?;
+
+    if semantic {
+        // ── vector similarity search ──────────────────────────────────────────
+        let user_cfg = UserConfig::load()?;
+        if user_cfg.cache.vector_db != VectorDb::SqliteVec {
+            anyhow::bail!(
+                "semantic search requires `vector_db = \"sqlite_vec\"` \
+                 in ~/.config/archelon/config.toml"
+            );
+        }
+        let embed_cfg = user_cfg.cache.embedding.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "[cache.embedding] is required in ~/.config/archelon/config.toml \
+                 for semantic search"
+            )
+        })?;
+        let dim = embed_cfg.dimension.ok_or_else(|| {
+            anyhow::anyhow!("`dimension` is required in [cache.embedding]")
+        })?;
+
+        let query_vec = embed::embed_texts(embed_cfg, &[query])
+            .map_err(anyhow::Error::msg)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("embedding API returned empty result"))?;
+
+        let conn = cache::open_cache_vec(&journal, dim)?;
+        let results = cache::search_similar_entries(&conn, &query_vec, limit)?;
+
+        if results.is_empty() {
+            println!("no results");
+            return Ok(());
+        }
+        for r in &results {
+            println!("{:.4}  {}  {}", r.score, r.title, r.path);
+        }
+    } else {
+        // ── full-text search (FTS5 trigram) ───────────────────────────────────
+        let conn = cache::open_cache(&journal)?;
+        cache::sync_cache(&journal, &conn)?;
+        let results = cache::search_fts_entries(&conn, query, limit)?;
+
+        if results.is_empty() {
+            println!("no results");
+            return Ok(());
+        }
+        for r in &results {
+            println!("{}", r.path);
+            println!("  {}", r.title);
+        }
+    }
+
     Ok(())
 }
 

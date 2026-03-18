@@ -17,6 +17,8 @@ chrono = { version = "0.4", features = ["serde"] }
 indexmap = { version = "2", features = ["serde"] }
 thiserror = "2"
 rusqlite = { version = "0.37", features = ["bundled"] }
+sqlite-vec = "0.1"
 serde_json = "1"
 schemars = "1.0"
 uuid = { version = "1", features = ["v4", "serde"] }
+ureq = { version = "2", features = ["json"] }

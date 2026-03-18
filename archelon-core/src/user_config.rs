@@ -135,6 +135,18 @@ pub struct EmbeddingConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
 
+    /// Output vector dimension of the model.
+    ///
+    /// Required when `vector_db = "sqlite_vec"`.  Must exactly match the model's
+    /// actual output size; a mismatch will cause the vector table to be recreated.
+    ///
+    /// Common values:
+    /// - `1536` — `text-embedding-3-small` (OpenAI)
+    /// - `3072` — `text-embedding-3-large` (OpenAI)
+    /// - `768`  — `nomic-embed-text` (Ollama)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dimension: Option<u32>,
+
     /// Unknown fields preserved for round-trip TOML compatibility.
     #[serde(flatten)]
     pub extra: IndexMap<String, toml::Value>,
