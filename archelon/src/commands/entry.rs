@@ -5,10 +5,11 @@ use archelon_core::{
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
     labels::EntryFlag,
-    lancedb_store,
+    lancedb_store::LanceDbVectorStore,
     ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryListItem, EntryTreeNode, FieldSelector, MatchFlag, SortField, SortOrder, UpdateOption},
     period::{parse_datetime, parse_datetime_end, parse_period},
     user_config::{UserConfig, VectorDb},
+    vector_store::{SqliteVecStore, VectorStore},
 };
 
 use chrono::NaiveDateTime;
@@ -720,33 +721,28 @@ fn search(journal_dir: Option<&Path>, query: &str, semantic: bool, limit: usize)
             .next()
             .ok_or_else(|| anyhow::anyhow!("embedding API returned empty result"))?;
 
-        let results = match user_cfg.cache.vector_db {
+        let store: Box<dyn VectorStore> = match user_cfg.cache.vector_db {
             VectorDb::None => {
                 anyhow::bail!(
                     "semantic search requires vector_db = \"sqlite_vec\" or \"lancedb\" \
                      in ~/.config/archelon/config.toml"
                 );
             }
-            VectorDb::SqliteVec => {
-                let conn = cache::open_cache_vec(&journal, dim)?;
-                cache::search_similar_entries(&conn, &query_vec, limit)?
-            }
+            VectorDb::SqliteVec => Box::new(SqliteVecStore::open(&journal, dim)?),
             VectorDb::LanceDb => {
                 let data_dir = journal.lancedb_dir()?;
-                let rt = tokio::runtime::Runtime::new()?;
-                rt.block_on(async {
-                    let store = lancedb_store::LanceStore::open(&data_dir, dim).await?;
-                    store.search_similar(&query_vec, limit).await
-                })?
+                Box::new(LanceDbVectorStore::new(&data_dir, dim)?)
             }
         };
+
+        let results = store.search_similar(&query_vec, limit)?;
 
         if results.is_empty() {
             println!("no results");
             return Ok(());
         }
         for r in &results {
-            println!("{:.4}  {}  {}", r.score, r.title, r.path);
+            println!("{:.4}  {}  {}", r.score, r.entry_title, r.entry_path);
         }
     } else {
         // ── full-text search (FTS5 trigram) ───────────────────────────────────

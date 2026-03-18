@@ -56,7 +56,7 @@ use crate::{
 // ── schema version ────────────────────────────────────────────────────────────
 
 /// Stored in `PRAGMA user_version`.  Increment whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 // ── schema ────────────────────────────────────────────────────────────────────
 
@@ -104,6 +104,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
     content_rowid = 'id',
     tokenize   = 'trigram'
 );
+
+CREATE TABLE IF NOT EXISTS chunks (
+    id          INTEGER PRIMARY KEY,
+    entry_id    INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    text        TEXT    NOT NULL,
+    UNIQUE (entry_id, chunk_index)
+);
+CREATE INDEX IF NOT EXISTS idx_chunks_entry_id ON chunks(entry_id);
 ";
 
 // ── public API ────────────────────────────────────────────────────────────────
@@ -741,8 +750,8 @@ fn ensure_vec_tables(conn: &Connection, dim: u32) -> Result<()> {
         None => {
             // First initialisation: create the vector table and record the dimension.
             conn.execute_batch(&format!(
-                "CREATE VIRTUAL TABLE entry_vectors USING vec0(\
-                 entry_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])",
+                "CREATE VIRTUAL TABLE chunk_vectors USING vec0(\
+                 chunk_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])",
             ))?;
             conn.execute(
                 "INSERT OR REPLACE INTO vec_meta (key, value) VALUES ('embedding_dim', ?1)",
@@ -752,8 +761,8 @@ fn ensure_vec_tables(conn: &Connection, dim: u32) -> Result<()> {
         Some(d) if d == dim => {
             // Dimension unchanged — ensure the table exists in case it was manually dropped.
             conn.execute_batch(&format!(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS entry_vectors USING vec0(\
-                 entry_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])",
+                "CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vectors USING vec0(\
+                 chunk_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])",
             ))?;
         }
         Some(old) => {
@@ -762,10 +771,10 @@ fn ensure_vec_tables(conn: &Connection, dim: u32) -> Result<()> {
                 "info: embedding dimension changed ({old} → {dim}), \
                  recreating vector table (all stored embeddings will be lost)..."
             );
-            conn.execute_batch("DROP TABLE IF EXISTS entry_vectors")?;
+            conn.execute_batch("DROP TABLE IF EXISTS chunk_vectors")?;
             conn.execute_batch(&format!(
-                "CREATE VIRTUAL TABLE entry_vectors USING vec0(\
-                 entry_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])",
+                "CREATE VIRTUAL TABLE chunk_vectors USING vec0(\
+                 chunk_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])",
             ))?;
             conn.execute(
                 "INSERT OR REPLACE INTO vec_meta (key, value) VALUES ('embedding_dim', ?1)",
@@ -776,98 +785,7 @@ fn ensure_vec_tables(conn: &Connection, dim: u32) -> Result<()> {
     Ok(())
 }
 
-/// Statistics about the vector index.
-pub struct VecInfo {
-    /// Embedding dimension (number of f32 values per vector).
-    pub embedding_dim: u32,
-    /// Number of entries that have an embedding stored.
-    pub vector_count: u64,
-    /// Number of entries that do not yet have an embedding.
-    pub pending_count: u64,
-}
-
-/// Read vector index statistics.
-///
-/// Requires a connection opened via [`open_cache_vec`].
-pub fn vec_info(conn: &Connection) -> Result<VecInfo> {
-    let embedding_dim: u32 = conn
-        .query_row(
-            "SELECT value FROM vec_meta WHERE key = 'embedding_dim'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-
-    let vector_count: u64 = conn
-        .query_row("SELECT COUNT(*) FROM entry_vectors", [], |row| row.get(0))
-        .unwrap_or(0);
-
-    let entry_count: u64 =
-        conn.query_row("SELECT COUNT(*) FROM entries", [], |row| row.get(0))?;
-
-    Ok(VecInfo {
-        embedding_dim,
-        vector_count,
-        pending_count: entry_count.saturating_sub(vector_count),
-    })
-}
-
-/// Generate and store embeddings for all entries that do not yet have a vector.
-///
-/// Requires a connection opened via [`open_cache_vec`].
-///
-/// `on_progress(done, total)` is called after each batch so the caller can
-/// display a progress indicator.  Returns the total number of entries embedded.
-pub fn embed_pending_entries(
-    conn: &Connection,
-    config: &crate::user_config::EmbeddingConfig,
-    on_progress: impl Fn(usize, usize),
-) -> Result<usize> {
-    let mut stmt = conn.prepare(
-        "SELECT e.id, e.title, e.body
-         FROM entries e
-         WHERE NOT EXISTS (SELECT 1 FROM entry_vectors v WHERE v.entry_id = e.id)",
-    )?;
-    let pending: Vec<(CarettaId, String, String)> = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, CarettaId>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })?
-        .collect::<rusqlite::Result<_>>()?;
-
-    let total = pending.len();
-    let mut done = 0;
-
-    for chunk in pending.chunks(100) {
-        let texts: Vec<String> = chunk
-            .iter()
-            .map(|(_, title, body)| format!("{title}\n\n{body}"))
-            .collect();
-        let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-        let embeddings = crate::embed::embed_texts(config, &text_refs)?;
-
-        for ((id, _, _), emb) in chunk.iter().zip(&embeddings) {
-            let blob = vec_serialize(emb);
-            conn.execute(
-                "INSERT OR REPLACE INTO entry_vectors (entry_id, embedding) VALUES (?1, ?2)",
-                params![id, blob],
-            )?;
-        }
-
-        done += chunk.len();
-        on_progress(done, total);
-    }
-
-    Ok(total)
-}
-
-/// A result returned by [`search_fts_entries`], [`search_similar_entries`], or
-/// the LanceDB search backend.
+/// A result returned by [`search_fts_entries`].
 pub struct SearchResult {
     /// The entry's numeric ID (CarettaId stored as i64).
     pub id: i64,
@@ -909,43 +827,6 @@ pub fn search_fts_entries(
     Ok(results)
 }
 
-/// Approximate nearest-neighbour (KNN) search using the sqlite-vec index.
-///
-/// Returns the `limit` most similar entries to `query_vec`, ordered by
-/// ascending L2 distance.
-///
-/// Requires a connection opened via [`open_cache_vec`].
-pub fn search_similar_entries(
-    conn: &Connection,
-    query_vec: &[f32],
-    limit: usize,
-) -> Result<Vec<SearchResult>> {
-    let blob = vec_serialize(query_vec);
-    let mut stmt = conn.prepare(
-        "SELECT e.id, e.title, e.path, v.distance
-         FROM entry_vectors v
-         JOIN entries e ON e.id = v.entry_id
-         WHERE v.embedding MATCH ?1 AND k = ?2
-         ORDER BY v.distance",
-    )?;
-    let results = stmt
-        .query_map(params![blob, limit as i64], |row| {
-            Ok(SearchResult {
-                id: row.get::<_, i64>(0)?,
-                title: row.get::<_, String>(1)?,
-                path: row.get::<_, String>(2)?,
-                score: row.get::<_, f64>(3).unwrap_or(0.0),
-            })
-        })?
-        .collect::<rusqlite::Result<_>>()?;
-    Ok(results)
-}
-
-/// Serialize a float slice to the little-endian byte format expected by sqlite-vec.
-fn vec_serialize(v: &[f32]) -> Vec<u8> {
-    v.iter().flat_map(|f| f.to_le_bytes()).collect()
-}
-
 fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
     let fm = &entry.frontmatter;
     let path_str = entry.path.to_string_lossy();
@@ -985,6 +866,33 @@ fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
         conn.execute(
             "INSERT OR IGNORE INTO tags (entry_id, tag) VALUES (?1, ?2)",
             params![fm.id, tag],
+        )?;
+    }
+
+    upsert_chunks(conn, entry)?;
+
+    Ok(())
+}
+
+/// Re-chunk the entry and upsert all chunks into the `chunks` table.
+///
+/// Old chunks that no longer exist (e.g. paragraphs deleted from the body) are
+/// removed; new paragraphs are inserted; existing paragraphs are updated.
+fn upsert_chunks(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
+    let fm = &entry.frontmatter;
+    let chunk_texts = crate::chunker::chunk_entry(&fm.title, &entry.body);
+
+    // Delete chunks beyond the new count (handles shrinking bodies).
+    conn.execute(
+        "DELETE FROM chunks WHERE entry_id = ?1 AND chunk_index >= ?2",
+        params![fm.id, chunk_texts.len() as i64],
+    )?;
+
+    for (idx, text) in chunk_texts.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO chunks (entry_id, chunk_index, text) VALUES (?1, ?2, ?3)
+             ON CONFLICT(entry_id, chunk_index) DO UPDATE SET text = excluded.text",
+            params![fm.id, idx as i64, text],
         )?;
     }
 

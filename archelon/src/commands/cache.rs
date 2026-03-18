@@ -1,5 +1,11 @@
 use anyhow::{Context, Result};
-use archelon_core::{cache, journal::Journal, lancedb_store, user_config::{UserConfig, VectorDb}};
+use archelon_core::{
+    cache,
+    journal::Journal,
+    lancedb_store::LanceDbVectorStore,
+    user_config::{UserConfig, VectorDb},
+    vector_store::{self, SqliteVecStore},
+};
 use clap::Subcommand;
 use std::{io::Write as _, path::Path};
 
@@ -61,8 +67,8 @@ fn info(journal: &Journal) -> Result<()> {
         VectorDb::SqliteVec => {
             if let Some(embed_cfg) = &user_cfg.cache.embedding {
                 if let Some(dim) = embed_cfg.dimension {
-                    match cache::open_cache_vec(journal, dim) {
-                        Ok(vec_conn) => match cache::vec_info(&vec_conn) {
+                    match SqliteVecStore::open(journal, dim) {
+                        Ok(store) => match store.vec_info() {
                             Ok(vi) => {
                                 println!(
                                     "vector backend: sqlite_vec (dim={})",
@@ -91,21 +97,12 @@ fn info(journal: &Journal) -> Result<()> {
                         Ok(dir) => {
                             println!("vector backend: lancedb");
                             println!("lancedb path:   {}", dir.display());
-                            let rt = tokio::runtime::Runtime::new()?;
-                            match rt.block_on(lancedb_store::LanceStore::open(&dir, dim)) {
-                                Ok(store) => match rt.block_on(store.embedded_ids()) {
-                                    Ok(ids) => {
-                                        let total: u64 = conn
-                                            .query_row(
-                                                "SELECT COUNT(*) FROM entries",
-                                                [],
-                                                |r| r.get(0),
-                                            )
-                                            .unwrap_or(0);
+                            match LanceDbVectorStore::new(&dir, dim) {
+                                Ok(store) => match store.vec_info(&conn) {
+                                    Ok(vi) => {
                                         println!(
                                             "vectors:        {} indexed, {} pending",
-                                            ids.len(),
-                                            total.saturating_sub(ids.len() as u64)
+                                            vi.vector_count, vi.pending_count
                                         );
                                     }
                                     Err(e) => eprintln!("warn: could not read vector stats: {e}"),
@@ -160,7 +157,7 @@ fn embed(journal: &Journal) -> Result<()> {
     })?;
 
     let progress = |done: usize, total: usize| {
-        eprint!("\rembedding entries: {done}/{total}");
+        eprint!("\rembedding chunks: {done}/{total}");
         let _ = std::io::stderr().flush();
     };
 
@@ -172,31 +169,24 @@ fn embed(journal: &Journal) -> Result<()> {
             );
         }
         VectorDb::SqliteVec => {
-            let conn = cache::open_cache_vec(journal, dim)?;
-            cache::sync_cache(journal, &conn)?;
-            cache::embed_pending_entries(&conn, embed_cfg, progress)?
+            let store = SqliteVecStore::open(journal, dim)?;
+            cache::sync_cache(journal, store.conn())?;
+            vector_store::embed_pending_chunks(store.conn(), &store, embed_cfg, progress)?
         }
         VectorDb::LanceDb => {
-            // Sync SQLite cache first, then run async lancedb embedding.
             let conn = cache::open_cache(journal)?;
             cache::sync_cache(journal, &conn)?;
-
             let data_dir = journal.lancedb_dir()?;
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(async {
-                let store = lancedb_store::LanceStore::open(&data_dir, dim).await?;
-                let embedded_ids = store.embedded_ids().await?;
-                let pending = lancedb_store::pending_entries(&conn, &embedded_ids)?;
-                lancedb_store::embed_entries(&store, pending, embed_cfg, progress).await
-            })?
+            let store = LanceDbVectorStore::new(&data_dir, dim)?;
+            vector_store::embed_pending_chunks(&conn, &store, embed_cfg, progress)?
         }
     };
 
     if total_embedded > 0 {
         eprintln!(); // newline after progress line
-        println!("embedded: {total_embedded} entries");
+        println!("embedded: {total_embedded} chunks");
     } else {
-        println!("all entries already have embeddings");
+        println!("all chunks already have embeddings");
     }
     Ok(())
 }
