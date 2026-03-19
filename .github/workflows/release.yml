@@ -56,6 +56,15 @@ jobs:
           ref: ${{ github.event.pull_request.merge_commit_sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install protoc (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        run: choco install protoc
       - run: cargo build --release -p archelon
 
       - name: Rename binary (Unix)
