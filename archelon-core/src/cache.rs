@@ -877,15 +877,27 @@ fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
 fn upsert_chunks(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
     let fm = &entry.frontmatter;
     let chunk_texts = crate::chunker::chunk_entry(&fm.title, &entry.body);
+    // Whether the sqlite-vec extension is loaded on this connection.
+    // chunk_vectors only exists when opened via open_cache_vec(); plain
+    // open_cache() (used by sync/rebuild) does not load the extension.
+    let has_vec = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunk_vectors'",
+            [],
+            |_| Ok(()),
+        )
+        .is_ok();
 
-    // Delete excess chunks and their stale embeddings (handles shrinking bodies).
-    conn.execute(
-        "DELETE FROM chunk_vectors
-         WHERE chunk_id IN (
-             SELECT id FROM chunks WHERE entry_id = ?1 AND chunk_index >= ?2
-         )",
-        params![fm.id, chunk_texts.len() as i64],
-    )?;
+    // Delete excess chunks (handles shrinking bodies).
+    if has_vec {
+        conn.execute(
+            "DELETE FROM chunk_vectors
+             WHERE chunk_id IN (
+                 SELECT id FROM chunks WHERE entry_id = ?1 AND chunk_index >= ?2
+             )",
+            params![fm.id, chunk_texts.len() as i64],
+        )?;
+    }
     conn.execute(
         "DELETE FROM chunks WHERE entry_id = ?1 AND chunk_index >= ?2",
         params![fm.id, chunk_texts.len() as i64],
@@ -902,7 +914,7 @@ fn upsert_chunks(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
             params![fm.id, idx as i64, text],
         )?;
         // Row was inserted (new chunk) or updated (text changed) → stale embedding gone.
-        if conn.changes() > 0 {
+        if has_vec && conn.changes() > 0 {
             conn.execute(
                 "DELETE FROM chunk_vectors
                  WHERE chunk_id = (
