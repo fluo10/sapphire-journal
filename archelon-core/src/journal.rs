@@ -163,7 +163,7 @@ impl Journal {
     /// never synced by git, Syncthing, or Nextcloud.
     ///
     /// Individual cache files within this directory are named with their schema
-    /// version (e.g. `cache.v2.db`) so that old data survives schema upgrades
+    /// version (e.g. `cache_v2.db`) so that old data survives schema upgrades
     /// until explicitly removed with `archelon cache clean`.
     pub fn cache_dir(&self) -> Result<PathBuf> {
         let id = self.journal_id()?;
@@ -176,7 +176,7 @@ impl Journal {
     /// Like the SQLite cache, this is outside the journal directory so it is
     /// never synced by git, Syncthing, or Nextcloud.
     ///
-    /// The active store lives in a versioned subdirectory (e.g. `v1/`) within
+    /// The active store lives in a versioned subdirectory (e.g. `lancedb_v1/`) within
     /// this root.  Old versions survive schema upgrades until removed with
     /// `archelon cache clean`.
     pub fn lancedb_root(&self) -> Result<PathBuf> {

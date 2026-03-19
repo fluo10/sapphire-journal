@@ -121,7 +121,7 @@ CREATE INDEX IF NOT EXISTS idx_chunks_entry_id ON chunks(entry_id);
 ///
 /// Returns `{cache_dir}/cache.v{SCHEMA_VERSION}.db`.
 pub fn db_path(cache_dir: &Path) -> PathBuf {
-    cache_dir.join(format!("cache.v{SCHEMA_VERSION}.db"))
+    cache_dir.join(format!("cache_v{SCHEMA_VERSION}.db"))
 }
 
 /// Open (or create) the SQLite cache for `journal`.

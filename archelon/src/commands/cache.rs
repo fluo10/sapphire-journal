@@ -282,13 +282,13 @@ fn clean(journal: &Journal) -> Result<()> {
 
 /// Return `(path, size)` for every `cache.vN.db` in `cache_dir` where N ≠ SCHEMA_VERSION.
 fn find_stale_sqlite(cache_dir: &Path) -> Vec<(std::path::PathBuf, u64)> {
-    let current = format!("cache.v{}.db", cache::SCHEMA_VERSION);
+    let current = format!("cache_v{}.db", cache::SCHEMA_VERSION);
     let Ok(rd) = std::fs::read_dir(cache_dir) else { return Vec::new() };
     rd.filter_map(|e| e.ok())
         .filter(|e| {
             let name = e.file_name();
             let n = name.to_string_lossy();
-            n.starts_with("cache.v") && n.ends_with(".db") && n != current.as_str()
+            n.starts_with("cache_v") && n.ends_with(".db") && n != current.as_str()
         })
         .map(|e| {
             let p = e.path();
@@ -301,13 +301,14 @@ fn find_stale_sqlite(cache_dir: &Path) -> Vec<(std::path::PathBuf, u64)> {
 /// Return `(path, size)` for every `vN` directory in `lancedb_root` where N ≠ LANCEDB_SCHEMA_VERSION.
 #[cfg(feature = "lancedb-store")]
 fn find_stale_lancedb(root: &Path) -> Vec<(std::path::PathBuf, u64)> {
-    let current = format!("v{}", lancedb_store::LANCEDB_SCHEMA_VERSION);
+    let current = format!("lancedb_v{}", lancedb_store::LANCEDB_SCHEMA_VERSION);
     let Ok(rd) = std::fs::read_dir(root) else { return Vec::new() };
     rd.filter_map(|e| e.ok())
         .filter(|e| {
             let name = e.file_name();
             let n = name.to_string_lossy();
-            n.starts_with('v') && n[1..].parse::<i32>().is_ok() && n != current.as_str()
+            let suffix = n.strip_prefix("lancedb_v").unwrap_or("");
+            !suffix.is_empty() && suffix.parse::<i32>().is_ok() && n != current.as_str()
         })
         .map(|e| {
             let p = e.path();
