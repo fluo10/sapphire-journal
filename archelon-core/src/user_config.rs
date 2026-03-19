@@ -93,6 +93,7 @@ pub enum VectorDb {
     SqliteVec,
     /// Use LanceDB for vector storage. More capable and suitable for future
     /// multimodal embeddings, but requires a separate data directory.
+    #[serde(rename = "lancedb")]
     LanceDb,
 }
 
