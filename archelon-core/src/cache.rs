@@ -700,7 +700,11 @@ static SQLITE_VEC_INIT: std::sync::Once = std::sync::Once::new();
 
 fn init_sqlite_vec() {
     SQLITE_VEC_INIT.call_once(|| {
-        unsafe { sqlite_vec::sqlite3_vec_init() };
+        unsafe {
+            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+                sqlite_vec::sqlite3_vec_init as *const (),
+            )));
+        }
     });
 }
 
