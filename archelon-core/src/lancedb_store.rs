@@ -46,6 +46,21 @@ use crate::{
 
 const TABLE_NAME: &str = "chunks";
 
+/// Schema version for the LanceDB store.
+///
+/// Used to compute the versioned subdirectory within [`Journal::lancedb_root()`]:
+/// `lancedb/v{LANCEDB_SCHEMA_VERSION}/`.  Bump this whenever the Arrow table
+/// schema changes (e.g. new columns) so old data is preserved alongside the new
+/// store until explicitly removed with `archelon cache clean`.
+pub const LANCEDB_SCHEMA_VERSION: i32 = 1;
+
+/// Returns the active LanceDB store directory for the given root.
+///
+/// Resolves to `{root}/v{LANCEDB_SCHEMA_VERSION}/`.
+pub fn versioned_dir(root: &Path) -> std::path::PathBuf {
+    root.join(format!("v{LANCEDB_SCHEMA_VERSION}"))
+}
+
 // ── async inner ───────────────────────────────────────────────────────────────
 
 struct LanceStore {

@@ -11,7 +11,7 @@ use archelon_core::{
     vector_store::{SqliteVecStore, VectorStore},
 };
 #[cfg(feature = "lancedb-store")]
-use archelon_core::lancedb_store::LanceDbVectorStore;
+use archelon_core::lancedb_store::{self, LanceDbVectorStore};
 
 use chrono::NaiveDateTime;
 use clap::{Args, Subcommand};
@@ -732,8 +732,8 @@ fn search(journal_dir: Option<&Path>, query: &str, semantic: bool, limit: usize)
             VectorDb::SqliteVec => Box::new(SqliteVecStore::open(&journal, dim)?),
             #[cfg(feature = "lancedb-store")]
             VectorDb::LanceDb => {
-                let data_dir = journal.lancedb_dir()?;
-                Box::new(LanceDbVectorStore::new(&data_dir, dim)?)
+                let root = journal.lancedb_root()?;
+                Box::new(LanceDbVectorStore::new(&lancedb_store::versioned_dir(&root), dim)?)
             }
             #[cfg(not(feature = "lancedb-store"))]
             VectorDb::LanceDb => {

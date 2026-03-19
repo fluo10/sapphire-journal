@@ -117,33 +117,39 @@ CREATE INDEX IF NOT EXISTS idx_chunks_entry_id ON chunks(entry_id);
 
 // ── public API ────────────────────────────────────────────────────────────────
 
+/// Compute the path to the current-version SQLite cache file within `cache_dir`.
+///
+/// Returns `{cache_dir}/cache.v{SCHEMA_VERSION}.db`.
+pub fn db_path(cache_dir: &Path) -> PathBuf {
+    cache_dir.join(format!("cache.v{SCHEMA_VERSION}.db"))
+}
+
 /// Open (or create) the SQLite cache for `journal`.
 ///
 /// - **Fresh DB** (user_version = 0): schema is applied and version is set.
-/// - **DB version < [`SCHEMA_VERSION`]**: cache is wiped and recreated automatically
-///   (a notice is printed to stderr).
-/// - **DB version > [`SCHEMA_VERSION`]**: returns [`Error::CacheSchemaTooNew`];
-///   the user must update archelon or run `archelon cache rebuild`.
+/// - **DB version = [`SCHEMA_VERSION`]**: opened as-is.
+/// - **DB version ≠ [`SCHEMA_VERSION`]**: returns [`Error::CacheSchemaTooNew`].
+///   This should not normally occur because the DB filename already encodes the
+///   version; it indicates manual tampering.  Run `archelon cache rebuild` to
+///   recreate the current-version DB.
 pub fn open_cache(journal: &Journal) -> Result<Connection> {
-    let db_path = journal.cache_db_path()?;
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    open_or_init(&db_path)
+    let cache_dir = journal.cache_dir()?;
+    std::fs::create_dir_all(&cache_dir)?;
+    open_or_init(&db_path(&cache_dir))
 }
 
-/// Delete the existing cache and create a fresh one.
+/// Delete the current-version cache file and create a fresh one.
 ///
-/// Equivalent to removing the DB files and calling [`open_cache`].
+/// Only the current-version file (`cache.v{N}.db` + WAL/SHM) is removed.
+/// Older versions are left untouched; use `archelon cache clean` to remove them.
 /// After this call the returned connection has an empty, schema-correct DB;
 /// call [`sync_cache`] to populate it.
 pub fn rebuild_cache(journal: &Journal) -> Result<Connection> {
-    let db_path = journal.cache_db_path()?;
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    wipe_db_files(&db_path);
-    open_or_init(&db_path)
+    let cache_dir = journal.cache_dir()?;
+    std::fs::create_dir_all(&cache_dir)?;
+    let p = db_path(&cache_dir);
+    wipe_db_files(&p);
+    open_or_init(&p)
 }
 
 /// Summary information about the current cache state.
@@ -158,7 +164,7 @@ pub struct CacheInfo {
 
 /// Collect cache statistics for display.
 pub fn cache_info(journal: &Journal, conn: &Connection) -> Result<CacheInfo> {
-    let db_path = journal.cache_db_path()?;
+    let db_path = db_path(&journal.cache_dir()?);
     let schema_version =
         conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i32>(0))?;
     let file_count =
@@ -187,28 +193,16 @@ fn open_or_init(db_path: &Path) -> Result<Connection> {
         return Ok(conn);
     }
 
-    if db_version > SCHEMA_VERSION {
-        return Err(Error::CacheSchemaTooNew {
-            db_version,
-            app_version: SCHEMA_VERSION,
-        });
-    }
-
-    if db_version < SCHEMA_VERSION {
-        // Schema changed: wipe the old DB and start fresh.
-        eprintln!(
-            "info: cache schema upgraded v{db_version} → v{SCHEMA_VERSION}, rebuilding..."
-        );
-        drop(conn);
-        wipe_db_files(db_path);
-        let conn = Connection::open(db_path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-        conn.execute_batch(SCHEMA)?;
-        conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))?;
+    if db_version == SCHEMA_VERSION {
         return Ok(conn);
     }
 
-    Ok(conn)
+    // Version mismatch inside a versioned file is unexpected (indicates manual
+    // tampering or a bug).  Return an error; the user should run `cache rebuild`.
+    Err(Error::CacheSchemaTooNew {
+        db_version,
+        app_version: SCHEMA_VERSION,
+    })
 }
 
 /// Remove the main DB file plus any WAL/SHM sidecar files.  Errors are ignored
@@ -719,12 +713,10 @@ fn init_sqlite_vec() {
 /// If a vector table with a *different* dimension is already present it is
 /// dropped and recreated — all previously stored embeddings are lost.
 pub fn open_cache_vec(journal: &Journal, embedding_dim: u32) -> Result<Connection> {
-    let db_path = journal.cache_db_path()?;
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    let cache_dir = journal.cache_dir()?;
+    std::fs::create_dir_all(&cache_dir)?;
     init_sqlite_vec();
-    let conn = open_or_init(&db_path)?;
+    let conn = open_or_init(&db_path(&cache_dir))?;
     ensure_vec_tables(&conn, embedding_dim)?;
     Ok(conn)
 }
