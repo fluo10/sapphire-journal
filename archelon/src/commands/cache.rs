@@ -119,7 +119,7 @@ fn info(journal: &Journal) -> Result<()> {
         VectorDb::LanceDb => {
             if let Some(embed_cfg) = &user_cfg.cache.embedding {
                 if let Some(dim) = embed_cfg.dimension {
-                    match journal.lancedb_root() {
+                    match journal.cache_dir() {
                         Ok(root) => {
                             let dir = lancedb_store::versioned_dir(&root);
                             println!("vector backend: lancedb");
@@ -227,7 +227,7 @@ fn embed(journal: &Journal) -> Result<()> {
         VectorDb::LanceDb => {
             let conn = cache::open_cache(journal)?;
             cache::sync_cache(journal, &conn)?;
-            let root = journal.lancedb_root()?;
+            let root = journal.cache_dir()?;
             let store = LanceDbVectorStore::new(&lancedb_store::versioned_dir(&root), dim)?;
             vector_store::embed_pending_chunks(&conn, &store, embed_cfg, progress)?
         }
@@ -264,7 +264,7 @@ fn clean(journal: &Journal) -> Result<()> {
 
     // ── stale LanceDB directories ─────────────────────────────────────────────
     #[cfg(feature = "lancedb-store")]
-    if let Ok(root) = journal.lancedb_root() {
+    if let Ok(root) = journal.cache_dir() {
         for (path, size) in find_stale_lancedb(&root) {
             std::fs::remove_dir_all(&path)?;
             println!("removed: {} ({})", path.display(), human_size(size));

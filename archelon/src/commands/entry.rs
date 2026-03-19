@@ -732,7 +732,7 @@ fn search(journal_dir: Option<&Path>, query: &str, semantic: bool, limit: usize)
             VectorDb::SqliteVec => Box::new(SqliteVecStore::open(&journal, dim)?),
             #[cfg(feature = "lancedb-store")]
             VectorDb::LanceDb => {
-                let root = journal.lancedb_root()?;
+                let root = journal.cache_dir()?;
                 Box::new(LanceDbVectorStore::new(&lancedb_store::versioned_dir(&root), dim)?)
             }
             #[cfg(not(feature = "lancedb-store"))]
