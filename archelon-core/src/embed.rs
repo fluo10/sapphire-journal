@@ -150,8 +150,12 @@ fn embed_fastembed(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f
         }
     };
 
+    let cache_dir = xdg_cache_home().join("archelon").join("fastembed");
+
     let model = TextEmbedding::try_new(
-        InitOptions::new(model_variant).with_show_download_progress(true),
+        InitOptions::new(model_variant)
+            .with_cache_dir(cache_dir)
+            .with_show_download_progress(true),
     )
     .map_err(|e| Error::Embed(format!("failed to load fastembed model: {e}")))?;
 
@@ -162,6 +166,18 @@ fn embed_fastembed(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+fn xdg_cache_home() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("XDG_CACHE_HOME") {
+        if !dir.is_empty() {
+            return std::path::PathBuf::from(dir);
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return std::path::PathBuf::from(home).join(".cache");
+    }
+    std::env::temp_dir()
+}
 
 fn parse_float_array(value: &serde_json::Value) -> Result<Vec<f32>> {
     value
