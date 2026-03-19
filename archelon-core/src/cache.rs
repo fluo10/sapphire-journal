@@ -878,18 +878,39 @@ fn upsert_chunks(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
     let fm = &entry.frontmatter;
     let chunk_texts = crate::chunker::chunk_entry(&fm.title, &entry.body);
 
-    // Delete chunks beyond the new count (handles shrinking bodies).
+    // Delete excess chunks and their stale embeddings (handles shrinking bodies).
+    conn.execute(
+        "DELETE FROM chunk_vectors
+         WHERE chunk_id IN (
+             SELECT id FROM chunks WHERE entry_id = ?1 AND chunk_index >= ?2
+         )",
+        params![fm.id, chunk_texts.len() as i64],
+    )?;
     conn.execute(
         "DELETE FROM chunks WHERE entry_id = ?1 AND chunk_index >= ?2",
         params![fm.id, chunk_texts.len() as i64],
     )?;
 
     for (idx, text) in chunk_texts.iter().enumerate() {
+        // Only apply the UPDATE when text actually changed; leaving text unchanged
+        // means changes() returns 0 and we keep the existing (still valid) embedding.
         conn.execute(
             "INSERT INTO chunks (entry_id, chunk_index, text) VALUES (?1, ?2, ?3)
-             ON CONFLICT(entry_id, chunk_index) DO UPDATE SET text = excluded.text",
+             ON CONFLICT(entry_id, chunk_index) DO UPDATE
+             SET text = excluded.text
+             WHERE text != excluded.text",
             params![fm.id, idx as i64, text],
         )?;
+        // Row was inserted (new chunk) or updated (text changed) → stale embedding gone.
+        if conn.changes() > 0 {
+            conn.execute(
+                "DELETE FROM chunk_vectors
+                 WHERE chunk_id = (
+                     SELECT id FROM chunks WHERE entry_id = ?1 AND chunk_index = ?2
+                 )",
+                params![fm.id, idx as i64],
+            )?;
+        }
     }
 
     Ok(())
