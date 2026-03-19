@@ -8,6 +8,11 @@ repository.workspace = true
 categories = ["text-processing", "filesystem", "data-structures"]
 keywords = ["markdown", "task-management", "notes", "frontmatter", "plain-text"]
 
+[features]
+default = ["lancedb-store", "fastembed-embed"]
+lancedb-store = ["dep:lancedb", "dep:arrow-array", "dep:arrow-schema", "dep:futures"]
+fastembed-embed = ["dep:fastembed"]
+
 [dependencies]
 caretta-id = { version = "0.12", features = ["serde", "rusqlite", "schemars"] }
 serde = { version = "1", features = ["derive"] }
@@ -22,9 +27,9 @@ serde_json = "1"
 schemars = "1.0"
 uuid = { version = "1", features = ["v4", "serde"] }
 ureq = { version = "2", features = ["json"] }
-lancedb = "0.14"
-arrow-array = "53"
-arrow-schema = "53"
-futures = "0.3"
+lancedb = { version = "0.14", optional = true }
+arrow-array = { version = "53", optional = true }
+arrow-schema = { version = "53", optional = true }
+futures = { version = "0.3", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread"] }
-fastembed = "4"
+fastembed = { version = "4", optional = true }

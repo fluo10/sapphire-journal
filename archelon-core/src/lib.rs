@@ -23,6 +23,7 @@ pub mod cache;
 pub mod chunker;
 pub mod embed;
 pub mod labels;
+#[cfg(feature = "lancedb-store")]
 pub mod lancedb_store;
 pub mod vector_store;
 pub mod entry;

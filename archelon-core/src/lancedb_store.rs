@@ -1,3 +1,4 @@
+#![cfg(feature = "lancedb-store")]
 //! LanceDB vector store backend.
 //!
 //! Stores chunk embeddings in a LanceDB database at

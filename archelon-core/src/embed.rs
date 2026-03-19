@@ -27,9 +27,11 @@ pub fn embed_texts(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f
     match config.provider.as_str() {
         "openai" => embed_openai(config, texts),
         "ollama" => embed_ollama(config, texts),
+        #[cfg(feature = "fastembed-embed")]
         "fastembed" => embed_fastembed(config, texts),
         other => Err(Error::Embed(format!(
-            "unknown embedding provider `{other}`; supported values: openai, ollama, fastembed"
+            "unknown embedding provider `{other}`; supported values: openai, ollama{}",
+            if cfg!(feature = "fastembed-embed") { ", fastembed" } else { "" }
         ))),
     }
 }
@@ -124,6 +126,7 @@ fn embed_ollama(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f32>
 /// | `MultilingualE5Small`  | 384       |
 /// | `MultilingualE5Base`   | 768       |
 /// | `MultilingualE5Large`  | 1024      |
+#[cfg(feature = "fastembed-embed")]
 fn embed_fastembed(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
     use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 

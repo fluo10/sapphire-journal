@@ -5,12 +5,13 @@ use archelon_core::{
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
     labels::EntryFlag,
-    lancedb_store::LanceDbVectorStore,
     ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryListItem, EntryTreeNode, FieldSelector, MatchFlag, SortField, SortOrder, UpdateOption},
     period::{parse_datetime, parse_datetime_end, parse_period},
     user_config::{UserConfig, VectorDb},
     vector_store::{SqliteVecStore, VectorStore},
 };
+#[cfg(feature = "lancedb-store")]
+use archelon_core::lancedb_store::LanceDbVectorStore;
 
 use chrono::NaiveDateTime;
 use clap::{Args, Subcommand};
@@ -729,9 +730,14 @@ fn search(journal_dir: Option<&Path>, query: &str, semantic: bool, limit: usize)
                 );
             }
             VectorDb::SqliteVec => Box::new(SqliteVecStore::open(&journal, dim)?),
+            #[cfg(feature = "lancedb-store")]
             VectorDb::LanceDb => {
                 let data_dir = journal.lancedb_dir()?;
                 Box::new(LanceDbVectorStore::new(&data_dir, dim)?)
+            }
+            #[cfg(not(feature = "lancedb-store"))]
+            VectorDb::LanceDb => {
+                anyhow::bail!("lancedb support is not compiled in (enable the `lancedb-store` feature)");
             }
         };
 

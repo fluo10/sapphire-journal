@@ -2,10 +2,11 @@ use anyhow::{Context, Result};
 use archelon_core::{
     cache,
     journal::Journal,
-    lancedb_store::LanceDbVectorStore,
     user_config::{UserConfig, VectorDb},
     vector_store::{self, SqliteVecStore},
 };
+#[cfg(feature = "lancedb-store")]
+use archelon_core::lancedb_store::LanceDbVectorStore;
 use clap::Subcommand;
 use std::{io::Write as _, path::Path};
 
@@ -90,6 +91,7 @@ fn info(journal: &Journal) -> Result<()> {
                 println!("vector backend: sqlite_vec (no [cache.embedding] configured)");
             }
         }
+        #[cfg(feature = "lancedb-store")]
         VectorDb::LanceDb => {
             if let Some(embed_cfg) = &user_cfg.cache.embedding {
                 if let Some(dim) = embed_cfg.dimension {
@@ -118,6 +120,10 @@ fn info(journal: &Journal) -> Result<()> {
             } else {
                 println!("vector backend: lancedb (no [cache.embedding] configured)");
             }
+        }
+        #[cfg(not(feature = "lancedb-store"))]
+        VectorDb::LanceDb => {
+            println!("vector backend: lancedb (not compiled in)");
         }
     }
 
@@ -173,12 +179,17 @@ fn embed(journal: &Journal) -> Result<()> {
             cache::sync_cache(journal, store.conn())?;
             vector_store::embed_pending_chunks(store.conn(), &store, embed_cfg, progress)?
         }
+        #[cfg(feature = "lancedb-store")]
         VectorDb::LanceDb => {
             let conn = cache::open_cache(journal)?;
             cache::sync_cache(journal, &conn)?;
             let data_dir = journal.lancedb_dir()?;
             let store = LanceDbVectorStore::new(&data_dir, dim)?;
             vector_store::embed_pending_chunks(&conn, &store, embed_cfg, progress)?
+        }
+        #[cfg(not(feature = "lancedb-store"))]
+        VectorDb::LanceDb => {
+            anyhow::bail!("lancedb support is not compiled in (enable the `lancedb-store` feature)");
         }
     };
 
