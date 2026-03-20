@@ -34,6 +34,11 @@ enum Command {
         #[command(subcommand)]
         action: commands::cache::CacheCommand,
     },
+    /// Show current configuration (user-level and journal-level)
+    Config {
+        #[command(subcommand)]
+        action: commands::config::ConfigCommand,
+    },
     Mcp
 }
 
@@ -44,6 +49,7 @@ fn main() -> Result<()> {
         Command::Init { path } => commands::init::run(path)?,
         Command::Entry { action } => commands::entry::run(cli.journal_dir.as_deref(), action)?,
         Command::Cache { action } => commands::cache::run(cli.journal_dir.as_deref(), action)?,
+        Command::Config { action } => commands::config::run(cli.journal_dir.as_deref(), action)?,
         Command::Mcp => commands::mcp::run(cli.journal_dir.as_deref())?,
     }
 

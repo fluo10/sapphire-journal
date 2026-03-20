@@ -8,9 +8,14 @@ repository.workspace = true
 categories = ["command-line-utilities", "text-processing"]
 keywords = ["markdown", "task-management", "notes", "cli", "mcp"]
 
+[features]
+default = ["lancedb-store", "fastembed-embed"]
+lancedb-store = ["archelon-core/lancedb-store"]
+fastembed-embed = ["archelon-core/fastembed-embed"]
+
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
-archelon-core = { path = "../archelon-core", version = "0.6.0" }
+archelon-core = { path = "../archelon-core", version = "0.6.0", default-features = false }
 rmcp = { version = "1.2", features = ["server", "transport-io"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

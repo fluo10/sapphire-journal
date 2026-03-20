@@ -2,6 +2,9 @@
 members = ["archelon", "archelon-core"]
 resolver = "3"
 
+[profile.dev.package."*"]
+opt-level = 1
+
 [workspace.package]
 edition = "2024"
 version = "0.6.0"

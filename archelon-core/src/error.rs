@@ -41,6 +41,9 @@ pub enum Error {
     #[error("cache error: {0}")]
     Cache(#[from] rusqlite::Error),
 
+    #[error("embedding error: {0}")]
+    Embed(String),
+
     /// The cache DB was created by a newer version of archelon.
     /// The user must either update archelon or recreate the cache.
     #[error(

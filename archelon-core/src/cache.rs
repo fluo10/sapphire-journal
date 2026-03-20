@@ -56,7 +56,7 @@ use crate::{
 // ── schema version ────────────────────────────────────────────────────────────
 
 /// Stored in `PRAGMA user_version`.  Increment whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 // ── schema ────────────────────────────────────────────────────────────────────
 
@@ -104,37 +104,52 @@ CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
     content_rowid = 'id',
     tokenize   = 'trigram'
 );
+
+CREATE TABLE IF NOT EXISTS chunks (
+    id          INTEGER PRIMARY KEY,
+    entry_id    INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    text        TEXT    NOT NULL,
+    UNIQUE (entry_id, chunk_index)
+);
+CREATE INDEX IF NOT EXISTS idx_chunks_entry_id ON chunks(entry_id);
 ";
 
 // ── public API ────────────────────────────────────────────────────────────────
 
+/// Compute the path to the current-version SQLite cache file within `cache_dir`.
+///
+/// Returns `{cache_dir}/cache.v{SCHEMA_VERSION}.db`.
+pub fn db_path(cache_dir: &Path) -> PathBuf {
+    cache_dir.join(format!("cache_v{SCHEMA_VERSION}.db"))
+}
+
 /// Open (or create) the SQLite cache for `journal`.
 ///
 /// - **Fresh DB** (user_version = 0): schema is applied and version is set.
-/// - **DB version < [`SCHEMA_VERSION`]**: cache is wiped and recreated automatically
-///   (a notice is printed to stderr).
-/// - **DB version > [`SCHEMA_VERSION`]**: returns [`Error::CacheSchemaTooNew`];
-///   the user must update archelon or run `archelon cache rebuild`.
+/// - **DB version = [`SCHEMA_VERSION`]**: opened as-is.
+/// - **DB version ≠ [`SCHEMA_VERSION`]**: returns [`Error::CacheSchemaTooNew`].
+///   This should not normally occur because the DB filename already encodes the
+///   version; it indicates manual tampering.  Run `archelon cache rebuild` to
+///   recreate the current-version DB.
 pub fn open_cache(journal: &Journal) -> Result<Connection> {
-    let db_path = journal.cache_db_path()?;
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    open_or_init(&db_path)
+    let cache_dir = journal.cache_dir()?;
+    std::fs::create_dir_all(&cache_dir)?;
+    open_or_init(&db_path(&cache_dir))
 }
 
-/// Delete the existing cache and create a fresh one.
+/// Delete the current-version cache file and create a fresh one.
 ///
-/// Equivalent to removing the DB files and calling [`open_cache`].
+/// Only the current-version file (`cache.v{N}.db` + WAL/SHM) is removed.
+/// Older versions are left untouched; use `archelon cache clean` to remove them.
 /// After this call the returned connection has an empty, schema-correct DB;
 /// call [`sync_cache`] to populate it.
 pub fn rebuild_cache(journal: &Journal) -> Result<Connection> {
-    let db_path = journal.cache_db_path()?;
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    wipe_db_files(&db_path);
-    open_or_init(&db_path)
+    let cache_dir = journal.cache_dir()?;
+    std::fs::create_dir_all(&cache_dir)?;
+    let p = db_path(&cache_dir);
+    wipe_db_files(&p);
+    open_or_init(&p)
 }
 
 /// Summary information about the current cache state.
@@ -149,7 +164,7 @@ pub struct CacheInfo {
 
 /// Collect cache statistics for display.
 pub fn cache_info(journal: &Journal, conn: &Connection) -> Result<CacheInfo> {
-    let db_path = journal.cache_db_path()?;
+    let db_path = db_path(&journal.cache_dir()?);
     let schema_version =
         conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i32>(0))?;
     let file_count =
@@ -178,28 +193,16 @@ fn open_or_init(db_path: &Path) -> Result<Connection> {
         return Ok(conn);
     }
 
-    if db_version > SCHEMA_VERSION {
-        return Err(Error::CacheSchemaTooNew {
-            db_version,
-            app_version: SCHEMA_VERSION,
-        });
-    }
-
-    if db_version < SCHEMA_VERSION {
-        // Schema changed: wipe the old DB and start fresh.
-        eprintln!(
-            "info: cache schema upgraded v{db_version} → v{SCHEMA_VERSION}, rebuilding..."
-        );
-        drop(conn);
-        wipe_db_files(db_path);
-        let conn = Connection::open(db_path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-        conn.execute_batch(SCHEMA)?;
-        conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))?;
+    if db_version == SCHEMA_VERSION {
         return Ok(conn);
     }
 
-    Ok(conn)
+    // Version mismatch inside a versioned file is unexpected (indicates manual
+    // tampering or a bug).  Return an error; the user should run `cache rebuild`.
+    Err(Error::CacheSchemaTooNew {
+        db_version,
+        app_version: SCHEMA_VERSION,
+    })
 }
 
 /// Remove the main DB file plus any WAL/SHM sidecar files.  Errors are ignored
@@ -691,6 +694,135 @@ fn query_all_mtimes(conn: &Connection) -> Result<HashMap<String, i64>> {
     Ok(result)
 }
 
+// ── sqlite-vec / vector search ────────────────────────────────────────────────
+
+static SQLITE_VEC_INIT: std::sync::Once = std::sync::Once::new();
+
+fn init_sqlite_vec() {
+    SQLITE_VEC_INIT.call_once(|| {
+        unsafe {
+            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+                sqlite_vec::sqlite3_vec_init as *const (),
+            )));
+        }
+    });
+}
+
+/// Open (or create) the cache with the sqlite-vec extension loaded.
+///
+/// Behaves identically to [`open_cache`] for the base schema, then additionally
+/// ensures that the `entry_vectors` vec0 virtual table exists with the requested
+/// `embedding_dim`.
+///
+/// If a vector table with a *different* dimension is already present it is
+/// dropped and recreated — all previously stored embeddings are lost.
+pub fn open_cache_vec(journal: &Journal, embedding_dim: u32) -> Result<Connection> {
+    let cache_dir = journal.cache_dir()?;
+    std::fs::create_dir_all(&cache_dir)?;
+    init_sqlite_vec();
+    let conn = open_or_init(&db_path(&cache_dir))?;
+    ensure_vec_tables(&conn, embedding_dim)?;
+    Ok(conn)
+}
+
+fn ensure_vec_tables(conn: &Connection, dim: u32) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS vec_meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )",
+    )?;
+
+    let stored_dim: Option<u32> = conn
+        .query_row(
+            "SELECT value FROM vec_meta WHERE key = 'embedding_dim'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|s| s.parse().ok());
+
+    match stored_dim {
+        None => {
+            // First initialisation: create the vector table and record the dimension.
+            conn.execute_batch(&format!(
+                "CREATE VIRTUAL TABLE chunk_vectors USING vec0(\
+                 chunk_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])",
+            ))?;
+            conn.execute(
+                "INSERT OR REPLACE INTO vec_meta (key, value) VALUES ('embedding_dim', ?1)",
+                [dim.to_string()],
+            )?;
+        }
+        Some(d) if d == dim => {
+            // Dimension unchanged — ensure the table exists in case it was manually dropped.
+            conn.execute_batch(&format!(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vectors USING vec0(\
+                 chunk_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])",
+            ))?;
+        }
+        Some(old) => {
+            // Dimension changed: rebuild the vector table (embeddings are model-specific).
+            eprintln!(
+                "info: embedding dimension changed ({old} → {dim}), \
+                 recreating vector table (all stored embeddings will be lost)..."
+            );
+            conn.execute_batch("DROP TABLE IF EXISTS chunk_vectors")?;
+            conn.execute_batch(&format!(
+                "CREATE VIRTUAL TABLE chunk_vectors USING vec0(\
+                 chunk_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])",
+            ))?;
+            conn.execute(
+                "INSERT OR REPLACE INTO vec_meta (key, value) VALUES ('embedding_dim', ?1)",
+                [dim.to_string()],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// A result returned by [`search_fts_entries`].
+pub struct SearchResult {
+    /// The entry's numeric ID (CarettaId stored as i64).
+    pub id: i64,
+    pub title: String,
+    pub path: String,
+    /// For FTS5: BM25 rank (negative; more negative = higher relevance).
+    /// For vector search: L2 distance (lower = more similar).
+    pub score: f64,
+}
+
+/// Full-text search using the FTS5 trigram index.
+///
+/// Returns up to `limit` entries matching `query`, ordered by relevance.
+/// The trigram tokenizer supports substring and CJK queries with no
+/// special configuration.
+pub fn search_fts_entries(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<SearchResult>> {
+    let mut stmt = conn.prepare(
+        "SELECT e.id, e.title, e.path, fts.rank
+         FROM entries_fts fts
+         JOIN entries e ON e.id = fts.rowid
+         WHERE entries_fts MATCH ?1
+         ORDER BY fts.rank
+         LIMIT ?2",
+    )?;
+    let results = stmt
+        .query_map(params![query, limit as i64], |row| {
+            Ok(SearchResult {
+                id: row.get::<_, i64>(0)?,
+                title: row.get::<_, String>(1)?,
+                path: row.get::<_, String>(2)?,
+                score: row.get::<_, f64>(3).unwrap_or(0.0),
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(results)
+}
+
 fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
     let fm = &entry.frontmatter;
     let path_str = entry.path.to_string_lossy();
@@ -731,6 +863,66 @@ fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
             "INSERT OR IGNORE INTO tags (entry_id, tag) VALUES (?1, ?2)",
             params![fm.id, tag],
         )?;
+    }
+
+    upsert_chunks(conn, entry)?;
+
+    Ok(())
+}
+
+/// Re-chunk the entry and upsert all chunks into the `chunks` table.
+///
+/// Old chunks that no longer exist (e.g. paragraphs deleted from the body) are
+/// removed; new paragraphs are inserted; existing paragraphs are updated.
+fn upsert_chunks(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
+    let fm = &entry.frontmatter;
+    let chunk_texts = crate::chunker::chunk_entry(&fm.title, &entry.body);
+    // Whether the sqlite-vec extension is loaded on this connection.
+    // chunk_vectors only exists when opened via open_cache_vec(); plain
+    // open_cache() (used by sync/rebuild) does not load the extension.
+    let has_vec = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunk_vectors'",
+            [],
+            |_| Ok(()),
+        )
+        .is_ok();
+
+    // Delete excess chunks (handles shrinking bodies).
+    if has_vec {
+        conn.execute(
+            "DELETE FROM chunk_vectors
+             WHERE chunk_id IN (
+                 SELECT id FROM chunks WHERE entry_id = ?1 AND chunk_index >= ?2
+             )",
+            params![fm.id, chunk_texts.len() as i64],
+        )?;
+    }
+    conn.execute(
+        "DELETE FROM chunks WHERE entry_id = ?1 AND chunk_index >= ?2",
+        params![fm.id, chunk_texts.len() as i64],
+    )?;
+
+    for (idx, text) in chunk_texts.iter().enumerate() {
+        // Only apply the UPDATE when text actually changed; leaving text unchanged
+        // means changes() returns 0 and we keep the existing (still valid) embedding.
+        conn.execute(
+            "INSERT INTO chunks (entry_id, chunk_index, text) VALUES (?1, ?2, ?3)
+             ON CONFLICT(entry_id, chunk_index) DO UPDATE
+             SET text = excluded.text
+             WHERE text != excluded.text",
+            params![fm.id, idx as i64, text],
+        )?;
+        // Row was inserted (new chunk) or updated (text changed) → stale embedding gone.
+        if has_vec && conn.changes() > 0 {
+            conn.execute(
+                "DELETE FROM chunk_vectors
+                 WHERE chunk_id = (
+                     SELECT id FROM chunks WHERE entry_id = ?1 AND chunk_index = ?2
+                 )",
+                params![fm.id, idx as i64],
+            )?;
+        }
     }
 
     Ok(())

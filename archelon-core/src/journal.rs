@@ -155,16 +155,21 @@ impl Journal {
         Ok(())
     }
 
-    /// Path to the machine-local SQLite cache for this journal.
+    /// Machine-local cache directory for this journal.
     ///
-    /// Resolves to `$XDG_CACHE_HOME/archelon/{journal_id}/cache.db`
+    /// Resolves to `$XDG_CACHE_HOME/archelon/{journal_id}/`
     /// (or `~/.cache/archelon/...` when `XDG_CACHE_HOME` is not set).
-    /// The cache is intentionally outside the journal directory so it is
+    /// This directory is intentionally outside the journal directory so it is
     /// never synced by git, Syncthing, or Nextcloud.
-    pub fn cache_db_path(&self) -> Result<PathBuf> {
+    ///
+    /// Individual cache files within this directory are named with their schema
+    /// version (e.g. `cache_v2.db`) so that old data survives schema upgrades
+    /// until explicitly removed with `archelon cache clean`.
+    pub fn cache_dir(&self) -> Result<PathBuf> {
         let id = self.journal_id()?;
-        Ok(xdg_cache_home().join("archelon").join(id.to_string()).join("cache.db"))
+        Ok(xdg_cache_home().join("archelon").join(id.to_string()))
     }
+
 }
 
 fn xdg_cache_home() -> PathBuf {

@@ -20,7 +20,12 @@
 //! - [`period`] — Time period types used to filter entries by timestamp ranges.
 
 pub mod cache;
+pub mod chunker;
+pub mod embed;
 pub mod labels;
+#[cfg(feature = "lancedb-store")]
+pub mod lancedb_store;
+pub mod vector_store;
 pub mod entry;
 pub mod entry_ref;
 pub mod error;
@@ -28,3 +33,4 @@ pub mod journal;
 pub mod ops;
 pub mod parser;
 pub mod period;
+pub mod user_config;
