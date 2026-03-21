@@ -30,7 +30,10 @@ pub mod entry;
 pub mod entry_ref;
 pub mod error;
 pub mod journal;
+pub mod journal_state;
 pub mod ops;
 pub mod parser;
 pub mod period;
 pub mod user_config;
+
+pub use journal_state::JournalState;

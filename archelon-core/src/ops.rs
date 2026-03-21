@@ -18,6 +18,7 @@ use crate::{
     entry_ref::EntryRef,
     error::{Error, Result},
     journal::{DuplicateTitlePolicy, Journal, slugify},
+    journal_state::JournalState,
     parser::{read_entry, render_entry},
     period::Period,
 };
@@ -426,8 +427,7 @@ pub fn build_entry_tree(entries: Vec<(EntryHeader, Vec<MatchFlag>)>) -> Vec<Entr
 /// If `filtered` is empty or no ancestors are missing this is a no-op.
 pub fn fill_ancestor_entries(
     mut filtered: Vec<(EntryHeader, Vec<MatchFlag>)>,
-    journal: &Journal,
-    conn: &Connection,
+    state: &JournalState,
 ) -> Result<Vec<(EntryHeader, Vec<MatchFlag>)>> {
     use std::collections::{HashMap, HashSet};
 
@@ -440,8 +440,8 @@ pub fn fill_ancestor_entries(
 
     // Load the full entry index for parent lookups (cache already synced by caller).
     let all_map: HashMap<CarettaId, EntryHeader> = {
-        let all = cache::list_entries_from_cache(conn).unwrap_or_else(|_| {
-            journal
+        let all = cache::list_entries_from_cache(&state.conn).unwrap_or_else(|_| {
+            state.journal
                 .collect_entries()
                 .unwrap_or_default()
                 .iter()
@@ -481,7 +481,7 @@ pub fn fill_ancestor_entries(
 
 // ── list ──────────────────────────────────────────────────────────────────────
 
-/// Collect and filter journal entries using an already-open cache connection.
+/// Collect and filter journal entries using the open cache in `state`.
 ///
 /// Incrementally syncs the cache before querying.
 /// Falls back to a disk scan if the cache is unavailable.
@@ -489,16 +489,15 @@ pub fn fill_ancestor_entries(
 /// Returns `(entry, match_labels)` pairs. When no filter is active every
 /// entry is returned with an empty label list.
 pub fn list_entries(
-    journal: &Journal,
-    conn: &Connection,
+    state: &JournalState,
     filter: &EntryFilter,
 ) -> Result<Vec<(EntryHeader, Vec<MatchFlag>)>> {
-    let _ = cache::sync_cache(journal, conn);
-    if let Ok(entries) = cache::list_entries_from_cache(conn) {
+    let _ = cache::sync_cache(&state.journal, &state.conn);
+    if let Ok(entries) = cache::list_entries_from_cache(&state.conn) {
         return apply_filter_and_sort(entries, filter);
     }
     // Fallback: read from disk when the cache is unavailable.
-    let entries: Vec<EntryHeader> = journal
+    let entries: Vec<EntryHeader> = state.journal
         .collect_entries()?
         .iter()
         .filter_map(|p| match read_entry(p) {
@@ -601,7 +600,9 @@ pub struct EntryFields {
 /// - [`Error::EntryAlreadyExists`] if the destination file already exists on disk.
 /// - [`Error::EntryNotFound`] / [`Error::EntryNotFoundByTitle`] if `fields.parent`
 ///   cannot be resolved.
-pub fn create_entry(journal: &Journal, conn: &Connection, fields: EntryFields) -> Result<PathBuf> {
+pub fn create_entry(state: &JournalState, fields: EntryFields) -> Result<PathBuf> {
+    let journal = &state.journal;
+    let conn = &state.conn;
     let id = CarettaId::now_unix();
     let year = chrono::Local::now().year();
 

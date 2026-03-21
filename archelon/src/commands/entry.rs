@@ -9,13 +9,13 @@ use archelon_core::{
     period::{parse_datetime, parse_datetime_end, parse_period},
     user_config::{UserConfig, VectorDb},
     vector_store::{SqliteVecStore, VectorStore},
+    JournalState,
 };
 #[cfg(feature = "lancedb-store")]
 use archelon_core::lancedb_store::{self, LanceDbVectorStore};
 
 use chrono::NaiveDateTime;
 use clap::{Args, Subcommand};
-use rusqlite::Connection;
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -314,24 +314,23 @@ impl From<EntryFields> for CoreEntryFields {
 }
 
 pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
-    let journal = open_journal(journal_dir)?;
-    let conn = cache::open_cache(&journal)?;
+    let state = open_state(journal_dir)?;
 
     match cmd {
         EntryCommand::List { filter: filter_args, json, emoji, nerd } => {
-            let week_start = journal.config().map(|c| c.journal.week_start).unwrap_or_default();
+            let week_start = state.journal.config().map(|c| c.journal.week_start).unwrap_or_default();
             let filter = build_filter(&filter_args, week_start)?;
-            let entries = ops::list_entries(&journal, &conn, &filter)?;
+            let entries = ops::list_entries(&state, &filter)?;
             let mode = DisplayMode::from_flags(emoji, nerd);
             print_entries(&entries, filter.has_any_filter(), json, mode)
         }
         EntryCommand::Tree { filter: filter_args, json, emoji, nerd } => {
-            let week_start = journal.config().map(|c| c.journal.week_start).unwrap_or_default();
+            let week_start = state.journal.config().map(|c| c.journal.week_start).unwrap_or_default();
             let filter = build_filter(&filter_args, week_start)?;
-            let entries = ops::list_entries(&journal, &conn, &filter)?;
+            let entries = ops::list_entries(&state, &filter)?;
             let has_filter = filter.has_any_filter();
             let entries = if has_filter {
-                ops::fill_ancestor_entries(entries, &journal, &conn)?
+                ops::fill_ancestor_entries(entries, &state)?
             } else {
                 entries
             };
@@ -339,44 +338,45 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
             let mode = DisplayMode::from_flags(emoji, nerd);
             print_tree(&roots, has_filter, json, mode)
         }
-        EntryCommand::Show { entry } => show(&resolve_entry(&conn, &entry)?),
-        EntryCommand::New { fields } => new(&journal, &conn, fields),
+        EntryCommand::Show { entry } => show(&resolve_entry(&state, &entry)?),
+        EntryCommand::New { fields } => new(&state, fields),
         EntryCommand::Edit { entry, new } => {
             if new {
-                edit_new(&journal, &conn)
+                edit_new(&state)
             } else if let Some(e) = entry {
-                edit(&resolve_entry(&conn, &e)?, &journal, &conn)
+                edit(&resolve_entry(&state, &e)?, &state)
             } else {
                 bail!("specify an entry or use --new to create one")
             }
         }
         EntryCommand::Modify { entry, fields, no_parent } => {
-            let path = resolve_entry(&conn, &entry)?;
-            set(&journal, &conn, &path, fields, no_parent)
+            let path = resolve_entry(&state, &entry)?;
+            set(&state, &path, fields, no_parent)
         }
-        EntryCommand::Check { entry } => check(&conn, &entry),
-        EntryCommand::Fix { entry } => fix(&conn, &entry),
+        EntryCommand::Check { entry } => check(&state, &entry),
+        EntryCommand::Fix { entry } => fix(&state, &entry),
         EntryCommand::Path { entry, new, parent } => {
-            entry_path(&journal, &conn, entry.as_deref(), new, parent.as_deref())
+            entry_path(&state, entry.as_deref(), new, parent.as_deref())
         }
-        EntryCommand::Remove { entry } => remove(&journal, &conn, &entry),
+        EntryCommand::Remove { entry } => remove(&state, &entry),
         EntryCommand::Search { query, semantic, limit } => {
-            search(&journal, &conn, &query, semantic, limit)
+            search(&state, &query, semantic, limit)
         }
     }
 }
 
-fn open_journal(journal_dir: Option<&Path>) -> Result<Journal> {
-    match journal_dir {
+fn open_state(journal_dir: Option<&Path>) -> Result<JournalState> {
+    let journal = match journal_dir {
         Some(dir) => Journal::from_root(dir.to_path_buf())
             .context("not an archelon journal — run `archelon init` to initialize one"),
         None => Journal::find()
             .context("not in an archelon journal — run `archelon init` to initialize one"),
-    }
+    }?;
+    JournalState::open(journal).map_err(Into::into)
 }
 
-fn resolve_entry(conn: &Connection, entry: &str) -> Result<PathBuf> {
-    ops::resolve_entry(&EntryRef::parse(entry), conn).map_err(Into::into)
+fn resolve_entry(state: &JournalState, entry: &str) -> Result<PathBuf> {
+    ops::resolve_entry(&EntryRef::parse(entry), &state.conn).map_err(Into::into)
 }
 
 // ── display mode ──────────────────────────────────────────────────────────────
@@ -541,17 +541,17 @@ fn show(path: &Path) -> Result<()> {
 
 // ── new ───────────────────────────────────────────────────────────────────────
 
-fn new(journal: &Journal, conn: &Connection, fields: EntryFields) -> Result<()> {
-    cache::sync_cache(journal, conn)?;
-    let dest = ops::create_entry(journal, conn, fields.into())?;
-    let _ = cache::upsert_entry_from_path(conn, &dest);
+fn new(state: &JournalState, fields: EntryFields) -> Result<()> {
+    state.sync()?;
+    let dest = ops::create_entry(state, fields.into())?;
+    let _ = cache::upsert_entry_from_path(&state.conn, &dest);
     println!("created: {}", dest.display());
     Ok(())
 }
 
 // ── edit ──────────────────────────────────────────────────────────────────────
 
-fn edit(path: &Path, _journal: &Journal, conn: &Connection) -> Result<()> {
+fn edit(path: &Path, state: &JournalState) -> Result<()> {
     if !path.exists() {
         bail!("{} does not exist", path.display());
     }
@@ -567,12 +567,12 @@ fn edit(path: &Path, _journal: &Journal, conn: &Connection) -> Result<()> {
         Some(new_path) => { println!("updated: {}", new_path.display()); new_path }
         None           => { println!("updated: {}", path.display()); path.to_path_buf() }
     };
-    let _ = cache::upsert_entry_from_path(conn, &final_path);
+    let _ = cache::upsert_entry_from_path(&state.conn, &final_path);
     Ok(())
 }
 
-fn edit_new(journal: &Journal, conn: &Connection) -> Result<()> {
-    let path = ops::prepare_new_entry(journal, None)?;
+fn edit_new(state: &JournalState) -> Result<()> {
+    let path = ops::prepare_new_entry(&state.journal, None)?;
 
     let editor = resolve_editor();
     let status = Command::new(&editor)
@@ -588,13 +588,13 @@ fn edit_new(journal: &Journal, conn: &Connection) -> Result<()> {
         Some(new_path) => { println!("created: {}", new_path.display()); new_path }
         None           => { println!("created: {}", path.display()); path }
     };
-    let _ = cache::upsert_entry_from_path(conn, &final_path);
+    let _ = cache::upsert_entry_from_path(&state.conn, &final_path);
     Ok(())
 }
 
 // ── modify ────────────────────────────────────────────────────────────────────
 
-fn set(journal: &Journal, conn: &Connection, path: &Path, fields: EntryFields, no_parent: bool) -> Result<()> {
+fn set(state: &JournalState, path: &Path, fields: EntryFields, no_parent: bool) -> Result<()> {
     if fields.title.is_none()
         && fields.body.is_none()
         && fields.parent.is_none()
@@ -610,14 +610,14 @@ fn set(journal: &Journal, conn: &Connection, path: &Path, fields: EntryFields, n
     {
         bail!("nothing to update — specify at least one field");
     }
-    cache::sync_cache(journal, conn)?;
+    state.sync()?;
     let mut core_fields: CoreEntryFields = fields.into();
     if no_parent {
         core_fields.parent = UpdateOption::Clear;
     }
-    let new_path_opt = ops::update_entry(path, conn, core_fields)?;
+    let new_path_opt = ops::update_entry(path, &state.conn, core_fields)?;
     let final_path = new_path_opt.as_deref().unwrap_or(path);
-    let _ = cache::upsert_entry_from_path(conn, final_path);
+    let _ = cache::upsert_entry_from_path(&state.conn, final_path);
     if let Some(new_path) = new_path_opt {
         println!("updated and renamed: {}", new_path.display());
     } else {
@@ -628,8 +628,8 @@ fn set(journal: &Journal, conn: &Connection, path: &Path, fields: EntryFields, n
 
 // ── check ─────────────────────────────────────────────────────────────────────
 
-fn check(conn: &Connection, entry: &str) -> Result<()> {
-    let path = resolve_entry(conn, entry)?;
+fn check(state: &JournalState, entry: &str) -> Result<()> {
+    let path = resolve_entry(state, entry)?;
     let issues = ops::check_entry(&path)?;
     if issues.is_empty() {
         println!("ok: {}", path.display());
@@ -643,8 +643,8 @@ fn check(conn: &Connection, entry: &str) -> Result<()> {
 
 // ── fix ───────────────────────────────────────────────────────────────────────
 
-fn fix(conn: &Connection, entry: &str) -> Result<()> {
-    let path = resolve_entry(conn, entry)?;
+fn fix(state: &JournalState, entry: &str) -> Result<()> {
+    let path = resolve_entry(state, entry)?;
     match ops::fix_entry(&path)? {
         Some(new_path) => println!(
             "renamed: {} → {}",
@@ -658,19 +658,19 @@ fn fix(conn: &Connection, entry: &str) -> Result<()> {
 
 // ── path ──────────────────────────────────────────────────────────────────────
 
-fn entry_path(journal: &Journal, conn: &Connection, entry: Option<&str>, new: bool, parent: Option<&str>) -> Result<()> {
+fn entry_path(state: &JournalState, entry: Option<&str>, new: bool, parent: Option<&str>) -> Result<()> {
     if new {
         let parent_id = if let Some(p) = parent {
             let entry_ref = EntryRef::parse(p);
-            cache::sync_cache(journal, conn)?;
-            Some(ops::resolve_parent_id(conn, Some(&entry_ref))?)
+            state.sync()?;
+            Some(ops::resolve_parent_id(&state.conn, Some(&entry_ref))?)
         } else {
             None
         };
-        let path = ops::prepare_new_entry(journal, parent_id.flatten())?;
+        let path = ops::prepare_new_entry(&state.journal, parent_id.flatten())?;
         println!("{}", path.display());
     } else {
-        let path = resolve_entry(conn, entry.unwrap())?;
+        let path = resolve_entry(state, entry.unwrap())?;
         println!("{}", path.display());
     }
     Ok(())
@@ -678,18 +678,18 @@ fn entry_path(journal: &Journal, conn: &Connection, entry: Option<&str>, new: bo
 
 // ── remove ────────────────────────────────────────────────────────────────────
 
-fn remove(journal: &Journal, conn: &Connection, entry: &str) -> Result<()> {
-    cache::sync_cache(journal, conn)?;
-    let path = resolve_entry(conn, entry)?;
+fn remove(state: &JournalState, entry: &str) -> Result<()> {
+    state.sync()?;
+    let path = resolve_entry(state, entry)?;
     ops::remove_entry(&path)?;
-    let _ = cache::remove_from_cache(conn, &path);
+    let _ = cache::remove_from_cache(&state.conn, &path);
     println!("removed: {}", path.display());
     Ok(())
 }
 
 // ── search ────────────────────────────────────────────────────────────────────
 
-fn search(journal: &Journal, conn: &Connection, query: &str, semantic: bool, limit: usize) -> Result<()> {
+fn search(state: &JournalState, query: &str, semantic: bool, limit: usize) -> Result<()> {
     if semantic {
         // ── vector similarity search ──────────────────────────────────────────
         let user_cfg = UserConfig::load()?;
@@ -716,10 +716,10 @@ fn search(journal: &Journal, conn: &Connection, query: &str, semantic: bool, lim
                      in ~/.config/archelon/config.toml"
                 );
             }
-            VectorDb::SqliteVec => Box::new(SqliteVecStore::open(journal, dim)?),
+            VectorDb::SqliteVec => Box::new(SqliteVecStore::open(&state.journal, dim)?),
             #[cfg(feature = "lancedb-store")]
             VectorDb::LanceDb => {
-                let root = journal.cache_dir()?;
+                let root = state.journal.cache_dir()?;
                 Box::new(LanceDbVectorStore::new(&lancedb_store::versioned_dir(&root), dim)?)
             }
             #[cfg(not(feature = "lancedb-store"))]
@@ -739,8 +739,8 @@ fn search(journal: &Journal, conn: &Connection, query: &str, semantic: bool, lim
         }
     } else {
         // ── full-text search (FTS5 trigram) ───────────────────────────────────
-        cache::sync_cache(journal, conn)?;
-        let results = cache::search_fts_entries(conn, query, limit)?;
+        state.sync()?;
+        let results = cache::search_fts_entries(&state.conn, query, limit)?;
 
         if results.is_empty() {
             println!("no results");
