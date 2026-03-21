@@ -172,13 +172,24 @@
         "archelon.defaultSortField": {
           "type": "string",
           "default": "updated_at",
-          "enum": ["id", "title", "task_status", "created_at", "updated_at", "task_due", "event_start"],
+          "enum": [
+            "id",
+            "title",
+            "task_status",
+            "created_at",
+            "updated_at",
+            "task_due",
+            "event_start"
+          ],
           "description": "Default field to sort entries by in the tree view."
         },
         "archelon.defaultSortOrder": {
           "type": "string",
           "default": "desc",
-          "enum": ["asc", "desc"],
+          "enum": [
+            "asc",
+            "desc"
+          ],
           "description": "Default sort direction in the tree view."
         }
       }
@@ -193,13 +204,16 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.109.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "typescript-eslint": "^8.56.1",
+    "@types/vscode": "^1.109.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
     "eslint": "^9.39.3",
     "typescript": "^5.9.3",
-    "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "typescript-eslint": "^8.56.1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
   }
 }

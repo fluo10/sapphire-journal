@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { EntryRecord, SortField, SortOrder, listEntries, setEntryParent, treeEntries } from './cli';
+import { EntryRecord, SortField, SortOrder } from './cli';
+import { ArchelonMcpClient } from './mcp';
 import { findJournalRoot } from './journal';
 
 export type ViewMode = 'tree' | 'list';
@@ -90,7 +91,7 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vs
     private _period: string | undefined;
     private _rootRecords: EntryRecord[] = [];
 
-    constructor() {
+    constructor(private readonly _mcp: ArchelonMcpClient) {
         const cfg = vscode.workspace.getConfiguration('archelon');
         const rawPeriod = cfg.get<string>('defaultPeriod', 'today');
         this._period = rawPeriod === '' ? undefined : rawPeriod;
@@ -152,9 +153,9 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vs
 
         try {
             if (this._viewMode === 'list') {
-                this._rootRecords = await listEntries(cwd, this._sortBy, this._sortOrder, this._period);
+                this._rootRecords = await this._mcp.listEntries(cwd, this._sortBy, this._sortOrder, this._period);
             } else {
-                this._rootRecords = await treeEntries(cwd, this._sortBy, this._sortOrder, this._period);
+                this._rootRecords = await this._mcp.treeEntries(cwd, this._sortBy, this._sortOrder, this._period);
             }
         } catch {
             return [];
@@ -189,7 +190,7 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vs
         for (const src of sources) {
             if (src.id === targetId) { continue; }
             try {
-                await setEntryParent(src.path, targetId, cwd);
+                await this._mcp.setEntryParent(src.path, targetId, cwd);
             } catch (err) {
                 errors.push(`@${src.id}: ${err}`);
             }

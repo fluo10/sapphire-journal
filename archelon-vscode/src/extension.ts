@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { cacheRebuild, fixEntry, init, listEntries, prepareNewEntry, removeEntry, resolvePath, setExtensionPath, SortField, SortOrder } from './cli';
+import { bin, setExtensionPath, SortField, SortOrder } from './cli';
+import { ArchelonMcpClient } from './mcp';
 import { EntryItem, EntryTreeProvider } from './entryTreeProvider';
 import { findJournalRoot, isManagedFilename } from './journal';
 
@@ -13,12 +14,18 @@ function getJournalCwd(): string | null {
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
 }
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
     setExtensionPath(context.extensionPath);
     vscode.commands.executeCommand('setContext', 'archelon.viewMode', 'tree');
 
+    // ── MCP client ────────────────────────────────────────────────────────────
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const mcp = new ArchelonMcpClient(bin(), workspaceRoot);
+    context.subscriptions.push(mcp);
+    await mcp.connect();
+
     // ── Tree View: Entries ────────────────────────────────────────────────────
-    const treeProvider = new EntryTreeProvider();
+    const treeProvider = new EntryTreeProvider(mcp);
     const treeView = vscode.window.createTreeView('archelon.entries', {
         treeDataProvider: treeProvider,
         dragAndDropController: treeProvider,
@@ -88,7 +95,7 @@ export function activate(context: vscode.ExtensionContext) {
             // Create as sibling of the selected entry (same parent), or root if none selected
             const parentId = treeView.selection[0]?.parentId;
             try {
-                const filePath = await prepareNewEntry(cwd, parentId);
+                const filePath = await mcp.prepareNewEntry(cwd, parentId);
                 const doc = await vscode.workspace.openTextDocument(filePath);
                 await vscode.window.showTextDocument(doc);
             } catch (err) {
@@ -107,7 +114,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
             const parentId = item?.record.id;
             try {
-                const filePath = await prepareNewEntry(cwd, parentId);
+                const filePath = await mcp.prepareNewEntry(cwd, parentId);
                 const doc = await vscode.workspace.openTextDocument(filePath);
                 await vscode.window.showTextDocument(doc);
             } catch (err) {
@@ -131,7 +138,7 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
             try {
-                const filePath = await resolvePath(id, cwd);
+                const filePath = await mcp.resolvePath(id, cwd);
                 const doc = await vscode.workspace.openTextDocument(filePath);
                 await vscode.window.showTextDocument(doc);
             } catch (err) {
@@ -179,7 +186,7 @@ export function activate(context: vscode.ExtensionContext) {
                 // Close open tabs for the file before deleting it.
                 const targetPath = entryArg.includes(path.sep)
                     ? entryArg
-                    : await resolvePath(entryArg, cwd);
+                    : await mcp.resolvePath(entryArg, cwd);
 
                 for (const group of vscode.window.tabGroups.all) {
                     for (const tab of group.tabs) {
@@ -190,7 +197,7 @@ export function activate(context: vscode.ExtensionContext) {
                     }
                 }
 
-                await removeEntry(entryArg, cwd);
+                await mcp.removeEntry(entryArg, cwd);
                 treeProvider.refresh();
                 vscode.window.showInformationMessage(`Archelon: removed ${label}`);
             } catch (err) {
@@ -262,7 +269,7 @@ export function activate(context: vscode.ExtensionContext) {
 
             let entries;
             try {
-                entries = await listEntries(cwd);
+                entries = await mcp.listEntries(cwd);
             } catch (err) {
                 vscode.window.showErrorMessage(`Archelon: failed to list entries — ${err}`);
                 return;
@@ -311,7 +318,7 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
             try {
-                await init(cwd);
+                await mcp.init(cwd);
                 vscode.window.showInformationMessage('Archelon: journal initialized.');
             } catch (err) {
                 vscode.window.showErrorMessage(`Archelon: init failed — ${err}`);
@@ -328,7 +335,7 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
             try {
-                await cacheRebuild(cwd);
+                await mcp.cacheRebuild(cwd);
                 vscode.window.showInformationMessage('Archelon: cache rebuilt.');
             } catch (err) {
                 vscode.window.showErrorMessage(`Archelon: cache rebuild failed — ${err}`);
@@ -353,7 +360,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             try {
-                const newPath = await fixEntry(filePath);
+                const newPath = await mcp.fixEntry(filePath);
                 treeProvider.refresh();
                 if (newPath) {
                     // File was renamed: open new file and close old tabs.

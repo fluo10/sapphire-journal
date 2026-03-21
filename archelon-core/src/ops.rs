@@ -28,12 +28,45 @@ use crate::{
 /// Represents the three possible states for an optional field in an update
 /// operation: set it to a new value, clear it (set to `None`), or leave it
 /// unchanged.
+///
+/// # JSON / MCP representation
+///
+/// When used as a struct field with `#[serde(default)]`:
+/// - field absent  → `Unchanged` (via `Default`)
+/// - field `null`  → `Clear`
+/// - field `<value>` → `Set(value)`
+///
+/// The JSON schema is identical to `Option<T>` (nullable value).
 #[derive(Debug, Default)]
 pub enum UpdateOption<T> {
     Set(T),
     Clear,
     #[default]
     Unchanged,
+}
+
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for UpdateOption<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        Ok(match Option::<T>::deserialize(deserializer)? {
+            None    => UpdateOption::Clear,
+            Some(v) => UpdateOption::Set(v),
+        })
+    }
+}
+
+impl<T: schemars::JsonSchema> schemars::JsonSchema for UpdateOption<T> {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        format!("Nullable_{}", T::schema_name()).into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // Reuse Option<T>'s schema: the inner value or null.
+        Option::<T>::json_schema(generator)
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
 }
 
 // ── SortField / SortOrder ─────────────────────────────────────────────────────

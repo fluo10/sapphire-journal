@@ -12,7 +12,7 @@ export function setExtensionPath(p: string) {
     _extensionPath = p;
 }
 
-function bin(): string {
+export function bin(): string {
     const configured = vscode.workspace.getConfiguration('archelon').get<string>('binaryPath', '');
     if (configured) { return configured; }
 

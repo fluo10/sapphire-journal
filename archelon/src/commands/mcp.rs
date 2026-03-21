@@ -183,8 +183,8 @@ struct EntryNewParams {
     title: Option<String>,
     /// Body content (Markdown)
     body: Option<String>,
-    /// Parent entry — accepts `@ID`, a file path, or an exact title
-    parent: Option<String>,
+    /// Parent entry
+    parent: Option<EntryRef>,
     /// Slug override in the frontmatter
     slug: Option<String>,
     /// Tags as comma-separated string (e.g. "work,project")
@@ -210,8 +210,9 @@ struct EntryModifyParams {
     title: Option<String>,
     /// New body content (Markdown). Replaces the existing body.
     body: Option<String>,
-    /// New parent entry — accepts `@ID`, a file path, or an exact title
-    parent: Option<String>,
+    /// New parent entry. Omit to leave unchanged; pass null to remove the parent.
+    #[serde(default)]
+    parent: UpdateOption<EntryRef>,
     /// New slug override
     slug: Option<String>,
     /// New tags as comma-separated string. Pass empty string to clear all tags.
@@ -454,8 +455,8 @@ impl ArchelonServer {
             let fields = EntryFields {
                 title: p.title,
                 body: p.body,
-                parent: match p.parent.as_deref() {
-                    Some(s) => UpdateOption::Set(EntryRef::parse(s)),
+                parent: match p.parent {
+                    Some(r) => UpdateOption::Set(r),
                     None => UpdateOption::Unchanged,
                 },
                 ..fields
@@ -500,10 +501,7 @@ impl ArchelonServer {
             let fields = EntryFields {
                 title: p.title,
                 body: p.body,
-                parent: match p.parent.as_deref() {
-                    Some(s) => UpdateOption::Set(EntryRef::parse(s)),
-                    None => UpdateOption::Unchanged,
-                },
+                parent: p.parent,
                 ..fields
             };
             self.with_state(|s| {
