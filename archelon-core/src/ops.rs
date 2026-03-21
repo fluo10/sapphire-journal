@@ -18,6 +18,7 @@ use crate::{
     entry_ref::EntryRef,
     error::{Error, Result},
     journal::{DuplicateTitlePolicy, Journal, slugify},
+    journal_state::JournalState,
     parser::{read_entry, render_entry},
     period::Period,
 };
@@ -426,7 +427,7 @@ pub fn build_entry_tree(entries: Vec<(EntryHeader, Vec<MatchFlag>)>) -> Vec<Entr
 /// If `filtered` is empty or no ancestors are missing this is a no-op.
 pub fn fill_ancestor_entries(
     mut filtered: Vec<(EntryHeader, Vec<MatchFlag>)>,
-    journal_dir: Option<&Path>,
+    state: &JournalState,
 ) -> Result<Vec<(EntryHeader, Vec<MatchFlag>)>> {
     use std::collections::{HashMap, HashSet};
 
@@ -437,23 +438,16 @@ pub fn fill_ancestor_entries(
     // IDs already present in the filtered set.
     let present: HashSet<CarettaId> = filtered.iter().map(|(e, _)| e.frontmatter.id).collect();
 
-    // Load the full entry index for parent lookups.
+    // Load the full entry index for parent lookups (cache already synced by caller).
     let all_map: HashMap<CarettaId, EntryHeader> = {
-        let journal = if let Some(dir) = journal_dir {
-            Journal::from_root(dir.to_path_buf())?
-        } else {
-            Journal::find()?
-        };
-        let all = if let Ok(conn) = cache::open_cache(&journal) {
-            let _ = cache::sync_cache(&journal, &conn);
-            cache::list_entries_from_cache(&conn).unwrap_or_else(|_| vec![])
-        } else {
-            journal
-                .collect_entries()?
+        let all = cache::list_entries_from_cache(&state.conn).unwrap_or_else(|_| {
+            state.journal
+                .collect_entries()
+                .unwrap_or_default()
                 .iter()
                 .filter_map(|p| read_entry(p).ok().map(EntryHeader::from))
                 .collect()
-        };
+        });
         all.into_iter().map(|e| (e.frontmatter.id, e)).collect()
     };
 
@@ -487,57 +481,31 @@ pub fn fill_ancestor_entries(
 
 // ── list ──────────────────────────────────────────────────────────────────────
 
-/// Collect and filter journal entries.
+/// Collect and filter journal entries using the open cache in `state`.
 ///
-/// - `journal_dir`: explicit journal root override (`None` = auto-detect)
-/// - `path`: scan only this directory instead of the journal (`None` = use journal)
-/// - `filter`: filter criteria; all fields are optional
+/// Incrementally syncs the cache before querying.
+/// Falls back to a disk scan if the cache is unavailable.
 ///
-/// Returns `(entry, match_labels)` pairs.  When no filter is active every
+/// Returns `(entry, match_labels)` pairs. When no filter is active every
 /// entry is returned with an empty label list.
 pub fn list_entries(
-    journal_dir: Option<&Path>,
+    state: &JournalState,
     filter: &EntryFilter,
 ) -> Result<Vec<(EntryHeader, Vec<MatchFlag>)>> {
-    let journal = if let Some(dir) = journal_dir {
-        Journal::from_root(dir.to_path_buf())?
-    } else {
-        Journal::find()?
-    };
-
-    // Try the cache first; the sync also keeps it up-to-date as a side effect.
-    if let Ok(conn) = cache::open_cache(&journal) {
-        let _ = cache::sync_cache(&journal, &conn);
-        if let Ok(entries) = cache::list_entries_from_cache(&conn) {
-            return apply_filter_and_sort(entries, filter);
-        }
+    let _ = cache::sync_cache(&state.journal, &state.conn);
+    if let Ok(entries) = cache::list_entries_from_cache(&state.conn) {
+        return apply_filter_and_sort(entries, filter);
     }
-
     // Fallback: read from disk when the cache is unavailable.
-    let paths = journal.collect_entries()?;
-    let has_filter = filter.has_any_filter();
-    let mut result = Vec::new();
-    for p in &paths {
-        let header = match read_entry(p) {
-            Ok(e) => EntryHeader::from(e),
-            Err(e) => {
-                eprintln!("warn: {} — {e}", p.display());
-                continue;
-            }
-        };
-        let (include, labels) = filter.matches(&header);
-        if has_filter && !include {
-            continue;
-        }
-        result.push((header, labels));
-    }
-    if filter.sort_by != SortField::Unsorted {
-        result.sort_by(|(a, _), (b, _)| {
-            let ord = sort_cmp(a, b, filter.sort_by);
-            if filter.sort_order == SortOrder::Desc { ord.reverse() } else { ord }
-        });
-    }
-    Ok(result)
+    let entries: Vec<EntryHeader> = state.journal
+        .collect_entries()?
+        .iter()
+        .filter_map(|p| match read_entry(p) {
+            Ok(e) => Some(EntryHeader::from(e)),
+            Err(e) => { eprintln!("warn: {} — {e}", p.display()); None }
+        })
+        .collect();
+    apply_filter_and_sort(entries, filter)
 }
 
 fn apply_filter_and_sort(entries: Vec<EntryHeader>, filter: &EntryFilter) -> Result<Vec<(EntryHeader, Vec<MatchFlag>)>> {
@@ -632,7 +600,9 @@ pub struct EntryFields {
 /// - [`Error::EntryAlreadyExists`] if the destination file already exists on disk.
 /// - [`Error::EntryNotFound`] / [`Error::EntryNotFoundByTitle`] if `fields.parent`
 ///   cannot be resolved.
-pub fn create_entry(journal: &Journal, conn: &Connection, fields: EntryFields) -> Result<PathBuf> {
+pub fn create_entry(state: &JournalState, fields: EntryFields) -> Result<PathBuf> {
+    let journal = &state.journal;
+    let conn = &state.conn;
     let id = CarettaId::now_unix();
     let year = chrono::Local::now().year();
 
@@ -892,29 +862,12 @@ pub fn prepare_new_entry(journal: &Journal, parent_id: Option<CarettaId>) -> Res
 /// - `Path` variant: returned as-is.
 /// - `Id` variant: looks up by exact CarettaId via the cache.
 /// - `Title` variant: looks up by exact title (case-sensitive) via the cache.
-pub fn resolve_entry(entry_ref: &EntryRef, journal_dir: Option<&Path>) -> Result<PathBuf> {
+/// Resolve an [`EntryRef`] to an absolute path using an already-open cache connection.
+pub fn resolve_entry(entry_ref: &EntryRef, conn: &Connection) -> Result<PathBuf> {
     match entry_ref {
         EntryRef::Path(p) => Ok(p.clone()),
-        EntryRef::Id(id) => {
-            let journal = open_journal_for_resolve(journal_dir)?;
-            let conn = cache::open_cache(&journal)?;
-            cache::sync_cache(&journal, &conn)?;
-            cache::find_entry_by_id(&conn, *id).map(|e| e.path)
-        }
-        EntryRef::Title(title) => {
-            let journal = open_journal_for_resolve(journal_dir)?;
-            let conn = cache::open_cache(&journal)?;
-            cache::sync_cache(&journal, &conn)?;
-            cache::find_entry_by_title(&conn, title).map(|e| e.path)
-        }
-    }
-}
-
-fn open_journal_for_resolve(journal_dir: Option<&Path>) -> Result<Journal> {
-    if let Some(dir) = journal_dir {
-        Journal::from_root(dir.to_path_buf())
-    } else {
-        Journal::find()
+        EntryRef::Id(id) => cache::find_entry_by_id(conn, *id).map(|e| e.path),
+        EntryRef::Title(title) => cache::find_entry_by_title(conn, title).map(|e| e.path),
     }
 }
 
