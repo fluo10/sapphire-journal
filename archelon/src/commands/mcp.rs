@@ -9,6 +9,7 @@ use archelon_core::{
     ops::{self, EntryFields, EntryFilter, EntryListItem, FieldSelector, SortField, SortOrder, UpdateOption},
     parser::read_entry,
     period::{parse_datetime, parse_datetime_end, parse_period},
+    user_config::UserConfig,
     JournalState,
 };
 use rmcp::{
@@ -56,7 +57,11 @@ impl ArchelonServer {
         let mut guard = self.state.lock().unwrap();
         if guard.is_none() {
             let journal = self.open_default_journal()?;
-            *guard = Some(JournalState::open(journal)?);
+            let state = JournalState::open(journal)?;
+            let user_cfg = UserConfig::load().unwrap_or_default();
+            let _ = state.load_vector_store(&user_cfg); // best-effort; errors are non-fatal
+            let _ = state.load_embedder(&user_cfg);     // best-effort; errors are non-fatal
+            *guard = Some(state);
         }
         f(guard.as_ref().unwrap())
     }
@@ -71,6 +76,9 @@ impl ArchelonServer {
         };
         let state = JournalState::open(journal)?;
         state.sync()?;
+        let user_cfg = UserConfig::load().unwrap_or_default();
+        let _ = state.load_vector_store(&user_cfg); // best-effort; errors are non-fatal
+        let _ = state.load_embedder(&user_cfg);     // best-effort; errors are non-fatal
         let info = state.cache_info()?;
         let root = state.journal.root.display().to_string();
         let count = info.entry_count;

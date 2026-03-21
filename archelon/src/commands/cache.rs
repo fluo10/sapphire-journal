@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use archelon_core::{
     cache,
+    embed,
     journal::Journal,
     user_config::{UserConfig, VectorDb},
     vector_store::{self, SqliteVecStore},
@@ -221,7 +222,8 @@ fn embed(journal: &Journal) -> Result<()> {
         VectorDb::SqliteVec => {
             let store = SqliteVecStore::open(journal, dim)?;
             cache::sync_cache(journal, store.conn())?;
-            vector_store::embed_pending_chunks(store.conn(), &store, embed_cfg, progress)?
+            let embedder = embed::build_embedder(embed_cfg)?;
+            vector_store::embed_pending_chunks(store.conn(), &store, embedder.as_ref(), progress)?
         }
         #[cfg(feature = "lancedb-store")]
         VectorDb::LanceDb => {
@@ -229,7 +231,8 @@ fn embed(journal: &Journal) -> Result<()> {
             cache::sync_cache(journal, &conn)?;
             let root = journal.cache_dir()?;
             let store = LanceDbVectorStore::new(&lancedb_store::versioned_dir(&root), dim)?;
-            vector_store::embed_pending_chunks(&conn, &store, embed_cfg, progress)?
+            let embedder = embed::build_embedder(embed_cfg)?;
+            vector_store::embed_pending_chunks(&conn, &store, embedder.as_ref(), progress)?
         }
         #[cfg(not(feature = "lancedb-store"))]
         VectorDb::LanceDb => {

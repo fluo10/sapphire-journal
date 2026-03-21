@@ -1,18 +1,14 @@
 use anyhow::{bail, Context, Result};
 use archelon_core::{
     cache,
-    embed,
     entry_ref::EntryRef,
     journal::{Journal, WeekStart},
     labels::EntryFlag,
     ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryListItem, EntryTreeNode, FieldSelector, MatchFlag, SortField, SortOrder, UpdateOption},
     period::{parse_datetime, parse_datetime_end, parse_period},
-    user_config::{UserConfig, VectorDb},
-    vector_store::{SqliteVecStore, VectorStore},
+    user_config::UserConfig,
     JournalState,
 };
-#[cfg(feature = "lancedb-store")]
-use archelon_core::lancedb_store::{self, LanceDbVectorStore};
 
 use chrono::NaiveDateTime;
 use clap::{Args, Subcommand};
@@ -693,40 +689,26 @@ fn search(state: &JournalState, query: &str, semantic: bool, limit: usize) -> Re
     if semantic {
         // ── vector similarity search ──────────────────────────────────────────
         let user_cfg = UserConfig::load()?;
-        let embed_cfg = user_cfg.cache.embedding.as_ref().ok_or_else(|| {
+        state.load_embedder(&user_cfg).map_err(anyhow::Error::msg)?;
+        let embedder = state.embedder().ok_or_else(|| {
             anyhow::anyhow!(
                 "[cache.embedding] is required in ~/.config/archelon/config.toml \
                  for semantic search"
             )
         })?;
-        let dim = embed_cfg.dimension.ok_or_else(|| {
-            anyhow::anyhow!("`dimension` is required in [cache.embedding]")
-        })?;
-
-        let query_vec = embed::embed_texts(embed_cfg, &[query])
+        let query_vec = embedder.embed_texts(&[query])
             .map_err(anyhow::Error::msg)?
             .into_iter()
             .next()
             .ok_or_else(|| anyhow::anyhow!("embedding API returned empty result"))?;
 
-        let store: Box<dyn VectorStore> = match user_cfg.cache.vector_db {
-            VectorDb::None => {
-                anyhow::bail!(
-                    "semantic search requires vector_db = \"sqlite_vec\" or \"lancedb\" \
-                     in ~/.config/archelon/config.toml"
-                );
-            }
-            VectorDb::SqliteVec => Box::new(SqliteVecStore::open(&state.journal, dim)?),
-            #[cfg(feature = "lancedb-store")]
-            VectorDb::LanceDb => {
-                let root = state.journal.cache_dir()?;
-                Box::new(LanceDbVectorStore::new(&lancedb_store::versioned_dir(&root), dim)?)
-            }
-            #[cfg(not(feature = "lancedb-store"))]
-            VectorDb::LanceDb => {
-                anyhow::bail!("lancedb support is not compiled in (enable the `lancedb-store` feature)");
-            }
-        };
+        state.load_vector_store(&user_cfg).map_err(anyhow::Error::msg)?;
+        let store = state.vector_store().ok_or_else(|| {
+            anyhow::anyhow!(
+                "semantic search requires vector_db = \"sqlite_vec\" or \"lancedb\" \
+                 in ~/.config/archelon/config.toml"
+            )
+        })?;
 
         let results = store.search_similar(&query_vec, limit)?;
 

@@ -35,10 +35,9 @@ use rusqlite::params;
 
 use crate::{
     cache,
-    embed,
+    embed::Embedder,
     error::Result,
     journal::Journal,
-    user_config::EmbeddingConfig,
 };
 
 // ── public types ──────────────────────────────────────────────────────────────
@@ -263,7 +262,7 @@ pub fn pending_chunks(
 ///
 /// 1. Queries `store.embedded_chunk_keys()` to find what is already stored.
 /// 2. Calls [`pending_chunks`] on `conn` to collect unembedded chunks.
-/// 3. Calls the embedding API in batches of 100.
+/// 3. Calls the embedder in batches of 100.
 /// 4. Calls `store.insert_embeddings()` for each batch.
 ///
 /// Calls `on_progress(done, total)` after each batch.
@@ -271,7 +270,7 @@ pub fn pending_chunks(
 pub fn embed_pending_chunks(
     conn: &rusqlite::Connection,
     store: &dyn VectorStore,
-    config: &EmbeddingConfig,
+    embedder: &dyn Embedder,
     on_progress: impl Fn(usize, usize),
 ) -> Result<usize> {
     let embedded_keys = store.embedded_chunk_keys()?;
@@ -281,7 +280,7 @@ pub fn embed_pending_chunks(
 
     for batch in pending.chunks(100) {
         let texts: Vec<&str> = batch.iter().map(|c| c.text.as_str()).collect();
-        let embeddings = embed::embed_texts(config, &texts)?;
+        let embeddings = embedder.embed_texts(&texts)?;
         store.insert_embeddings(batch, &embeddings)?;
         done += batch.len();
         on_progress(done, total);

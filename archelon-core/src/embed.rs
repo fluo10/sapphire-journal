@@ -9,17 +9,128 @@
 //! - **`"ollama"`** — Ollama `/api/embed` endpoint.
 //! - **`"fastembed"`** — Local ONNX inference via the `fastembed` crate.
 //!   No server required; model weights are downloaded from Hugging Face
-//!   on first use and cached under `~/.cache/huggingface/hub/`.
+//!   on first use and cached under `~/.cache/archelon/fastembed/`.
 
 use crate::{
     error::{Error, Result},
     user_config::EmbeddingConfig,
 };
 
-/// Generate embeddings for a batch of texts.
+// ── Embedder trait ────────────────────────────────────────────────────────────
+
+/// Abstraction over a text embedding provider.
 ///
-/// Returns one `Vec<f32>` per input text, in the same order.
-/// Returns an empty `Vec` when `texts` is empty (no API call is made).
+/// Implementations hold any long-lived state needed for efficient repeated
+/// inference (e.g. the loaded ONNX model for `fastembed`).  REST-backed
+/// providers (OpenAI, Ollama) are stateless and simply store their config.
+pub trait Embedder: Send {
+    /// Generate embeddings for a batch of texts.
+    ///
+    /// Returns one `Vec<f32>` per input text, in the same order.
+    /// Returns an empty `Vec` when `texts` is empty.
+    fn embed_texts(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>>;
+}
+
+/// Build an [`Embedder`] from a config section.
+///
+/// For `"fastembed"` this loads the ONNX model from disk (or downloads it on
+/// first use), which can take several seconds.  For REST providers the
+/// returned value is lightweight.
+pub fn build_embedder(config: &EmbeddingConfig) -> Result<Box<dyn Embedder + Send>> {
+    match config.provider.as_str() {
+        "openai" | "ollama" => Ok(Box::new(RestEmbedder { config: config.clone() })),
+        #[cfg(feature = "fastembed-embed")]
+        "fastembed" => Ok(Box::new(FastEmbedEmbedder::new(config)?)),
+        other => Err(Error::Embed(format!(
+            "unknown embedding provider `{other}`; supported values: openai, ollama{}",
+            if cfg!(feature = "fastembed-embed") { ", fastembed" } else { "" }
+        ))),
+    }
+}
+
+// ── REST embedder (OpenAI / Ollama) ───────────────────────────────────────────
+
+struct RestEmbedder {
+    config: EmbeddingConfig,
+}
+
+impl Embedder for RestEmbedder {
+    fn embed_texts(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        match self.config.provider.as_str() {
+            "openai" => embed_openai(&self.config, texts),
+            "ollama" => embed_ollama(&self.config, texts),
+            other => Err(Error::Embed(format!("unknown REST provider `{other}`"))),
+        }
+    }
+}
+
+// ── fastembed embedder ────────────────────────────────────────────────────────
+
+#[cfg(feature = "fastembed-embed")]
+struct FastEmbedEmbedder {
+    model: fastembed::TextEmbedding,
+}
+
+#[cfg(feature = "fastembed-embed")]
+impl FastEmbedEmbedder {
+    fn new(config: &EmbeddingConfig) -> Result<Self> {
+        use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+
+        let model_variant = match config.model.as_str() {
+            "AllMiniLML6V2"       => EmbeddingModel::AllMiniLML6V2,
+            "BGESmallENV15"       => EmbeddingModel::BGESmallENV15,
+            "BGEBaseENV15"        => EmbeddingModel::BGEBaseENV15,
+            "BGELargeENV15"       => EmbeddingModel::BGELargeENV15,
+            "NomicEmbedTextV1"    => EmbeddingModel::NomicEmbedTextV1,
+            "NomicEmbedTextV15"   => EmbeddingModel::NomicEmbedTextV15,
+            "MultilingualE5Small" => EmbeddingModel::MultilingualE5Small,
+            "MultilingualE5Base"  => EmbeddingModel::MultilingualE5Base,
+            "MultilingualE5Large" => EmbeddingModel::MultilingualE5Large,
+            other => {
+                return Err(Error::Embed(format!(
+                    "unknown fastembed model `{other}`; \
+                     supported: AllMiniLML6V2, BGESmallENV15, BGEBaseENV15, BGELargeENV15, \
+                     NomicEmbedTextV1, NomicEmbedTextV15, \
+                     MultilingualE5Small, MultilingualE5Base, MultilingualE5Large"
+                )))
+            }
+        };
+
+        let cache_dir = xdg_cache_home().join("archelon").join("fastembed");
+        let model = TextEmbedding::try_new(
+            InitOptions::new(model_variant)
+                .with_cache_dir(cache_dir)
+                .with_show_download_progress(true),
+        )
+        .map_err(|e| Error::Embed(format!("failed to load fastembed model: {e}")))?;
+
+        Ok(Self { model })
+    }
+}
+
+#[cfg(feature = "fastembed-embed")]
+impl Embedder for FastEmbedEmbedder {
+    fn embed_texts(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let texts_owned: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
+        self.model
+            .embed(texts_owned, None)
+            .map_err(|e| Error::Embed(format!("fastembed embedding failed: {e}")))
+    }
+}
+
+// ── free function (backward compat) ───────────────────────────────────────────
+
+/// Generate embeddings for a batch of texts using the given config.
+///
+/// This creates a fresh provider instance on every call.
+/// Prefer holding a cached [`Embedder`] (via [`build_embedder`] stored in
+/// [`crate::JournalState`]) to avoid repeated model loading.
 pub fn embed_texts(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
     if texts.is_empty() {
         return Ok(Vec::new());
@@ -28,7 +139,10 @@ pub fn embed_texts(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f
         "openai" => embed_openai(config, texts),
         "ollama" => embed_ollama(config, texts),
         #[cfg(feature = "fastembed-embed")]
-        "fastembed" => embed_fastembed(config, texts),
+        "fastembed" => {
+            let embedder = FastEmbedEmbedder::new(config)?;
+            embedder.embed_texts(texts)
+        }
         other => Err(Error::Embed(format!(
             "unknown embedding provider `{other}`; supported values: openai, ollama{}",
             if cfg!(feature = "fastembed-embed") { ", fastembed" } else { "" }
@@ -109,60 +223,6 @@ fn embed_ollama(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f32>
         .iter()
         .map(|arr| parse_float_array(arr))
         .collect()
-}
-
-// ── fastembed (local ONNX) ────────────────────────────────────────────────────
-
-/// Supported fastembed model names and their output dimensions.
-///
-/// | Config `model` value   | Dimension |
-/// |------------------------|-----------|
-/// | `AllMiniLML6V2`        | 384       |
-/// | `BGESmallENV15`        | 384       |
-/// | `BGEBaseENV15`         | 768       |
-/// | `BGELargeENV15`        | 1024      |
-/// | `NomicEmbedTextV1`     | 768       |
-/// | `NomicEmbedTextV15`    | 768       |
-/// | `MultilingualE5Small`  | 384       |
-/// | `MultilingualE5Base`   | 768       |
-/// | `MultilingualE5Large`  | 1024      |
-#[cfg(feature = "fastembed-embed")]
-fn embed_fastembed(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-    use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
-
-    let model_variant = match config.model.as_str() {
-        "AllMiniLML6V2"       => EmbeddingModel::AllMiniLML6V2,
-        "BGESmallENV15"       => EmbeddingModel::BGESmallENV15,
-        "BGEBaseENV15"        => EmbeddingModel::BGEBaseENV15,
-        "BGELargeENV15"       => EmbeddingModel::BGELargeENV15,
-        "NomicEmbedTextV1"    => EmbeddingModel::NomicEmbedTextV1,
-        "NomicEmbedTextV15"   => EmbeddingModel::NomicEmbedTextV15,
-        "MultilingualE5Small" => EmbeddingModel::MultilingualE5Small,
-        "MultilingualE5Base"  => EmbeddingModel::MultilingualE5Base,
-        "MultilingualE5Large" => EmbeddingModel::MultilingualE5Large,
-        other => {
-            return Err(Error::Embed(format!(
-                "unknown fastembed model `{other}`; \
-                 supported: AllMiniLML6V2, BGESmallENV15, BGEBaseENV15, BGELargeENV15, \
-                 NomicEmbedTextV1, NomicEmbedTextV15, \
-                 MultilingualE5Small, MultilingualE5Base, MultilingualE5Large"
-            )))
-        }
-    };
-
-    let cache_dir = xdg_cache_home().join("archelon").join("fastembed");
-
-    let model = TextEmbedding::try_new(
-        InitOptions::new(model_variant)
-            .with_cache_dir(cache_dir)
-            .with_show_download_progress(true),
-    )
-    .map_err(|e| Error::Embed(format!("failed to load fastembed model: {e}")))?;
-
-    let texts_owned: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
-    model
-        .embed(texts_owned, None)
-        .map_err(|e| Error::Embed(format!("fastembed embedding failed: {e}")))
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
