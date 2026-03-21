@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context as _;
 use archelon_core::{
@@ -18,24 +19,75 @@ use rmcp::{
 };
 use serde::Deserialize;
 
+// ── cached journal state ───────────────────────────────────────────────────────
+
+struct JournalState {
+    journal: Journal,
+    conn: rusqlite::Connection,
+}
+
 // ── server struct ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct ArchelonServer {
-    journal_dir: Option<PathBuf>,
+    /// Default journal directory passed at server startup (if any).
+    default_dir: Option<PathBuf>,
+    /// Cached journal + SQLite connection, shared across tool calls.
+    state: Arc<Mutex<Option<JournalState>>>,
     tool_router: ToolRouter<Self>,
+}
+
+impl std::fmt::Debug for ArchelonServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ArchelonServer")
+            .field("default_dir", &self.default_dir)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ArchelonServer {
     fn new(journal_dir: Option<PathBuf>) -> Self {
         Self {
-            journal_dir,
+            default_dir: journal_dir,
+            state: Arc::new(Mutex::new(None)),
             tool_router: Self::tool_router(),
         }
     }
 
-    fn open_journal(&self) -> anyhow::Result<Journal> {
-        match &self.journal_dir {
+    /// Provide access to the cached journal + connection, auto-opening on first use.
+    fn with_state<F, T>(&self, f: F) -> anyhow::Result<T>
+    where
+        F: FnOnce(&Journal, &rusqlite::Connection) -> anyhow::Result<T>,
+    {
+        let mut guard = self.state.lock().unwrap();
+        if guard.is_none() {
+            let journal = self.open_default_journal()?;
+            let conn = cache::open_cache(&journal)?;
+            *guard = Some(JournalState { journal, conn });
+        }
+        let s = guard.as_ref().unwrap();
+        f(&s.journal, &s.conn)
+    }
+
+    /// Open a journal and replace the cached state.
+    /// Returns (journal_root_string, entry_count).
+    fn reload_state(&self, journal_dir: Option<&Path>) -> anyhow::Result<(String, u64)> {
+        let journal = match journal_dir {
+            Some(dir) => Journal::from_root(dir.to_path_buf())
+                .context("not an archelon journal — run `journal_init` first")?,
+            None => self.open_default_journal()?,
+        };
+        let conn = cache::open_cache(&journal)?;
+        cache::sync_cache(&journal, &conn)?;
+        let info = cache::cache_info(&journal, &conn)?;
+        let root = journal.root.display().to_string();
+        let count = info.entry_count;
+        *self.state.lock().unwrap() = Some(JournalState { journal, conn });
+        Ok((root, count))
+    }
+
+    fn open_default_journal(&self) -> anyhow::Result<Journal> {
+        match &self.default_dir {
             Some(dir) => Journal::from_root(dir.clone())
                 .context("not an archelon journal — run `journal_init` first"),
             None => Journal::find()
@@ -43,20 +95,21 @@ impl ArchelonServer {
         }
     }
 
-    fn resolve_entry(&self, entry: EntryRef) -> anyhow::Result<PathBuf> {
-        ops::resolve_entry(&entry, self.journal_dir.as_deref())
-            .map_err(Into::into)
-    }
-
     fn week_start(&self) -> WeekStart {
-        self.open_journal()
-            .and_then(|j| j.config().map_err(Into::into))
-            .map(|c| c.journal.week_start)
+        self.with_state(|j, _| j.config().map(|c| c.journal.week_start).map_err(Into::into))
             .unwrap_or_default()
     }
 }
 
 // ── parameter structs ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct JournalOpenParams {
+    /// Path to the journal root directory.
+    /// If omitted, searches upward from the current directory
+    /// (or uses the directory provided at server startup).
+    path: Option<String>,
+}
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct InitParams {
@@ -234,10 +287,49 @@ fn parse_entry_fields(
     })
 }
 
+fn build_filter(p: &EntryListParams, week_start: WeekStart) -> anyhow::Result<EntryFilter> {
+    let parse = |s: &str| parse_period(s, week_start).map_err(anyhow::Error::msg);
+    let base = if p.active.unwrap_or(false) { FieldSelector::active() } else { FieldSelector::default() };
+    Ok(EntryFilter {
+        period: p.period.as_deref().map(parse).transpose()?,
+        fields: FieldSelector {
+            task_overdue:     base.task_overdue     || p.task_overdue.unwrap_or(false),
+            task_in_progress: base.task_in_progress || p.task_in_progress.unwrap_or(false),
+            task_unstarted:   base.task_unstarted   || p.task_unstarted.unwrap_or(false),
+            event_span:       base.event_span       || p.event_span.unwrap_or(false),
+            created_at:       base.created_at       || p.created_at.unwrap_or(false),
+            updated_at:       base.updated_at       || p.updated_at.unwrap_or(false),
+        },
+        task_status: p.task_status.clone().unwrap_or_default(),
+        tags: p.tags.clone().unwrap_or_default(),
+        sort_by: p.sort_by.as_deref()
+            .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
+            .transpose()?
+            .unwrap_or_default(),
+        sort_order: p.sort_order.as_deref()
+            .map(|s| s.parse::<SortOrder>().map_err(anyhow::Error::msg))
+            .transpose()?
+            .unwrap_or_default(),
+    })
+}
+
 // ── tool implementations ──────────────────────────────────────────────────────
 
 #[tool_router]
 impl ArchelonServer {
+    #[tool(description = "Open (or reopen) a journal workspace. \
+        Loads the journal directory and its SQLite cache into memory so subsequent \
+        operations reuse the same connection without reopening files on each call. \
+        Call this when switching to a different journal or to refresh the in-memory state.")]
+    fn journal_open(&self, Parameters(p): Parameters<JournalOpenParams>) -> Result<String, String> {
+        (|| -> anyhow::Result<String> {
+            let dir = p.path.as_deref().map(Path::new);
+            let (root, count) = self.reload_state(dir)?;
+            Ok(format!("opened: {root}\n{count} entries indexed"))
+        })()
+        .map_err(|e| e.to_string())
+    }
+
     #[tool(description = "Initialize a new archelon journal in the given directory (defaults to current directory)")]
     fn journal_init(&self, Parameters(p): Parameters<InitParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
@@ -283,37 +375,11 @@ impl ArchelonServer {
         included. task_status and tags are independent AND filters.")]
     fn entry_list(&self, Parameters(p): Parameters<EntryListParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let week_start = self.week_start();
-            let parse = |s: &str| parse_period(s, week_start).map_err(anyhow::Error::msg);
-
-            let filter = EntryFilter {
-                period: p.period.as_deref().map(parse).transpose()?,
-                fields: {
-                    let base = if p.active.unwrap_or(false) { FieldSelector::active() } else { FieldSelector::default() };
-                    FieldSelector {
-                        task_overdue:     base.task_overdue     || p.task_overdue.unwrap_or(false),
-                        task_in_progress: base.task_in_progress || p.task_in_progress.unwrap_or(false),
-                        task_unstarted:   base.task_unstarted   || p.task_unstarted.unwrap_or(false),
-                        event_span:       base.event_span       || p.event_span.unwrap_or(false),
-                        created_at:       base.created_at       || p.created_at.unwrap_or(false),
-                        updated_at:       base.updated_at       || p.updated_at.unwrap_or(false),
-                    }
-                },
-                task_status: p.task_status.unwrap_or_default(),
-                tags: p.tags.unwrap_or_default(),
-                sort_by: p.sort_by.as_deref()
-                    .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
-                    .transpose()?
-                    .unwrap_or_default(),
-                sort_order: p.sort_order.as_deref()
-                    .map(|s| s.parse::<SortOrder>().map_err(anyhow::Error::msg))
-                    .transpose()?
-                    .unwrap_or_default(),
-            };
-
+            let filter = build_filter(&p, self.week_start())?;
             let has_filter = filter.has_any_filter();
-            let entries = ops::list_entries(self.journal_dir.as_deref(), &filter)?;
-
+            let entries = self.with_state(|journal, conn| {
+                ops::list_entries(journal, conn, &filter).map_err(Into::into)
+            })?;
             let records: Vec<EntryListItem> = entries
                 .iter()
                 .map(|(entry, match_flags)| EntryListItem {
@@ -321,7 +387,6 @@ impl ArchelonServer {
                     match_flags: if has_filter { Some(match_flags.clone()) } else { None },
                 })
                 .collect();
-
             Ok(serde_json::to_string_pretty(&records)?)
         })()
         .map_err(|e| e.to_string())
@@ -332,39 +397,11 @@ impl ArchelonServer {
         Each node contains an `id`, `title`, `task`, `tags`, and a `children` array of nested nodes.")]
     fn entry_tree(&self, Parameters(p): Parameters<EntryTreeParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let week_start = self.week_start();
-            let parse = |s: &str| parse_period(s, week_start).map_err(anyhow::Error::msg);
-
-            let filter = EntryFilter {
-                period: p.period.as_deref().map(parse).transpose()?,
-                fields: {
-                    let base = if p.active.unwrap_or(false) { FieldSelector::active() } else { FieldSelector::default() };
-                    FieldSelector {
-                        task_overdue:     base.task_overdue     || p.task_overdue.unwrap_or(false),
-                        task_in_progress: base.task_in_progress || p.task_in_progress.unwrap_or(false),
-                        task_unstarted:   base.task_unstarted   || p.task_unstarted.unwrap_or(false),
-                        event_span:       base.event_span       || p.event_span.unwrap_or(false),
-                        created_at:       base.created_at       || p.created_at.unwrap_or(false),
-                        updated_at:       base.updated_at       || p.updated_at.unwrap_or(false),
-                    }
-                },
-                task_status: p.task_status.unwrap_or_default(),
-                tags: p.tags.unwrap_or_default(),
-                sort_by: p.sort_by.as_deref()
-                    .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
-                    .transpose()?
-                    .unwrap_or_default(),
-                sort_order: p.sort_order.as_deref()
-                    .map(|s| s.parse::<SortOrder>().map_err(anyhow::Error::msg))
-                    .transpose()?
-                    .unwrap_or_default(),
-            };
-
-            let has_filter = filter.has_any_filter();
-            let entries = ops::list_entries(self.journal_dir.as_deref(), &filter)?;
+            let filter = build_filter(&p, self.week_start())?;
+            let entries = self.with_state(|journal, conn| {
+                ops::list_entries(journal, conn, &filter).map_err(Into::into)
+            })?;
             let roots = ops::build_entry_tree(entries);
-
-            let _ = has_filter;
             Ok(serde_json::to_string_pretty(&roots)?)
         })()
         .map_err(|e| e.to_string())
@@ -373,7 +410,9 @@ impl ArchelonServer {
     #[tool(description = "Show the contents of a journal entry by ID or file path")]
     fn entry_show(&self, Parameters(p): Parameters<EntryShowParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let path = self.resolve_entry(p.entry)?;
+            let path = self.with_state(|_, conn| {
+                ops::resolve_entry(&p.entry, conn).map_err(Into::into)
+            })?;
             let entry = read_entry(&path)?;
             let fm = &entry.frontmatter;
 
@@ -406,7 +445,6 @@ impl ArchelonServer {
     #[tool(description = "Create a new journal entry")]
     fn entry_new(&self, Parameters(p): Parameters<EntryNewParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let journal = self.open_journal()?;
             let fields = parse_entry_fields(
                 p.slug,
                 p.tags,
@@ -417,8 +455,6 @@ impl ArchelonServer {
                 p.event_start.as_deref(),
                 p.event_end.as_deref(),
             )?;
-            let conn = cache::open_cache(&journal)?;
-            cache::sync_cache(&journal, &conn)?;
             let fields = EntryFields {
                 title: p.title,
                 body: p.body,
@@ -428,9 +464,12 @@ impl ArchelonServer {
                 },
                 ..fields
             };
-            let dest = ops::create_entry(&journal, &conn, fields)?;
-            let _ = cache::upsert_entry_from_path(&conn, &dest);
-            Ok(format!("created: {}", dest.display()))
+            self.with_state(|journal, conn| {
+                cache::sync_cache(journal, conn)?;
+                let dest = ops::create_entry(journal, conn, fields)?;
+                let _ = cache::upsert_entry_from_path(conn, &dest);
+                Ok(format!("created: {}", dest.display()))
+            })
         })()
         .map_err(|e| e.to_string())
     }
@@ -452,7 +491,6 @@ impl ArchelonServer {
                 anyhow::bail!("nothing to update — specify at least one field");
             }
 
-            let path = self.resolve_entry(p.entry)?;
             let fields = parse_entry_fields(
                 p.slug,
                 p.tags,
@@ -463,9 +501,6 @@ impl ArchelonServer {
                 p.event_start.as_deref(),
                 p.event_end.as_deref(),
             )?;
-            let journal = self.open_journal()?;
-            let conn = cache::open_cache(&journal)?;
-            cache::sync_cache(&journal, &conn)?;
             let fields = EntryFields {
                 title: p.title,
                 body: p.body,
@@ -475,14 +510,18 @@ impl ArchelonServer {
                 },
                 ..fields
             };
-            let msg = if let Some(new_path) = ops::update_entry(&path, &conn, fields)? {
-                let _ = cache::upsert_entry_from_path(&conn, &new_path);
-                format!("updated and renamed: {}", new_path.display())
-            } else {
-                let _ = cache::upsert_entry_from_path(&conn, &path);
-                format!("updated: {}", path.display())
-            };
-            Ok(msg)
+            self.with_state(|journal, conn| {
+                cache::sync_cache(journal, conn)?;
+                let path = ops::resolve_entry(&p.entry, conn)?;
+                let msg = if let Some(new_path) = ops::update_entry(&path, conn, fields)? {
+                    let _ = cache::upsert_entry_from_path(conn, &new_path);
+                    format!("updated and renamed: {}", new_path.display())
+                } else {
+                    let _ = cache::upsert_entry_from_path(conn, &path);
+                    format!("updated: {}", path.display())
+                };
+                Ok(msg)
+            })
         })()
         .map_err(|e| e.to_string())
     }
@@ -491,7 +530,9 @@ impl ArchelonServer {
         Returns 'ok' or a list of issues (e.g. filename mismatch).")]
     fn entry_check(&self, Parameters(p): Parameters<EntryCheckParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let path = self.resolve_entry(p.entry)?;
+            let path = self.with_state(|_, conn| {
+                ops::resolve_entry(&p.entry, conn).map_err(Into::into)
+            })?;
             let issues = ops::check_entry(&path)?;
             if issues.is_empty() {
                 Ok(format!("ok: {}", path.display()))
@@ -511,7 +552,9 @@ impl ArchelonServer {
         Reports the rename or confirms the filename is already correct.")]
     fn entry_fix(&self, Parameters(p): Parameters<EntryFixParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let path = self.resolve_entry(p.entry)?;
+            let path = self.with_state(|_, conn| {
+                ops::resolve_entry(&p.entry, conn).map_err(Into::into)
+            })?;
             match ops::fix_entry(&path)? {
                 Some(new_path) => Ok(format!(
                     "renamed: {} → {}",
@@ -527,15 +570,13 @@ impl ArchelonServer {
     #[tool(description = "Delete an entry file from the journal")]
     fn entry_remove(&self, Parameters(p): Parameters<EntryRemoveParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let path = self.resolve_entry(p.entry)?;
-            ops::remove_entry(&path)?;
-            // Keep the cache consistent after explicit deletion.
-            if let Ok(journal) = self.open_journal() {
-                if let Ok(conn) = cache::open_cache(&journal) {
-                    let _ = cache::remove_from_cache(&conn, &path);
-                }
-            }
-            Ok(format!("removed: {}", path.display()))
+            self.with_state(|journal, conn| {
+                cache::sync_cache(journal, conn)?;
+                let path = ops::resolve_entry(&p.entry, conn)?;
+                ops::remove_entry(&path)?;
+                let _ = cache::remove_from_cache(conn, &path);
+                Ok(format!("removed: {}", path.display()))
+            })
         })()
         .map_err(|e| e.to_string())
     }
@@ -543,18 +584,18 @@ impl ArchelonServer {
     #[tool(description = "Show cache location, schema version, and entry/tag counts.")]
     fn cache_info(&self, _: Parameters<serde_json::Value>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let journal = self.open_journal()?;
-            let conn = cache::open_cache(&journal)?;
-            let info = cache::cache_info(&journal, &conn)?;
-            Ok(format!(
-                "path: {}\nschema version: v{} (app: v{})\nfiles tracked: {}\nentries: {}\nunique tags: {}",
-                info.db_path.display(),
-                info.schema_version,
-                cache::SCHEMA_VERSION,
-                info.file_count,
-                info.entry_count,
-                info.unique_tag_count,
-            ))
+            self.with_state(|journal, conn| {
+                let info = cache::cache_info(journal, conn)?;
+                Ok(format!(
+                    "path: {}\nschema version: v{} (app: v{})\nfiles tracked: {}\nentries: {}\nunique tags: {}",
+                    info.db_path.display(),
+                    info.schema_version,
+                    cache::SCHEMA_VERSION,
+                    info.file_count,
+                    info.entry_count,
+                    info.unique_tag_count,
+                ))
+            })
         })()
         .map_err(|e| e.to_string())
     }
@@ -564,11 +605,11 @@ impl ArchelonServer {
         Returns the number of entries in the cache after sync.")]
     fn cache_sync(&self, _: Parameters<serde_json::Value>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let journal = self.open_journal()?;
-            let conn = cache::open_cache(&journal)?;
-            cache::sync_cache(&journal, &conn)?;
-            let info = cache::cache_info(&journal, &conn)?;
-            Ok(format!("synced: {} entries", info.entry_count))
+            self.with_state(|journal, conn| {
+                cache::sync_cache(journal, conn)?;
+                let info = cache::cache_info(journal, conn)?;
+                Ok(format!("synced: {} entries", info.entry_count))
+            })
         })()
         .map_err(|e| e.to_string())
     }
@@ -579,10 +620,16 @@ impl ArchelonServer {
         Returns the number of entries indexed.")]
     fn cache_rebuild(&self, _: Parameters<serde_json::Value>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let journal = self.open_journal()?;
+            let mut guard = self.state.lock().unwrap();
+            let journal_root = match guard.as_ref() {
+                Some(s) => s.journal.root.clone(),
+                None => self.open_default_journal()?.root,
+            };
+            let journal = Journal::from_root(journal_root)?;
             let conn = cache::rebuild_cache(&journal)?;
             cache::sync_cache(&journal, &conn)?;
             let info = cache::cache_info(&journal, &conn)?;
+            *guard = Some(JournalState { journal, conn });
             Ok(format!("rebuilt: {} entries indexed", info.entry_count))
         })()
         .map_err(|e| e.to_string())
@@ -595,6 +642,7 @@ impl ServerHandler for ArchelonServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(
                 "Archelon is a Markdown-based journal/task manager. \
+                 Use journal_open to load a workspace into memory (auto-opens on first use). \
                  Use entry_list to browse entries, entry_show to read one, \
                  entry_new to create, and entry_modify to update metadata."
                     .to_owned(),
@@ -602,13 +650,10 @@ impl ServerHandler for ArchelonServer {
     }
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
 // ── main ──────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
-pub async fn run(journal_dir: Option<&Path>, ) -> anyhow::Result<()> {
-
+pub async fn run(journal_dir: Option<&Path>) -> anyhow::Result<()> {
     // Log to stderr so stdout remains clean for the MCP JSON-RPC protocol
     tracing_subscriber::fmt().with_writer(std::io::stderr).init();
 
