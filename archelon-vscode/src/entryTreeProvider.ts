@@ -157,7 +157,8 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vs
             } else {
                 this._rootRecords = await this._mcp.treeEntries(cwd, this._sortBy, this._sortOrder, this._period);
             }
-        } catch {
+        } catch (err) {
+            vscode.window.showErrorMessage(`Archelon: failed to load entries — ${err}`);
             return [];
         }
 

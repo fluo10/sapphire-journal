@@ -123,7 +123,8 @@ export class ArchelonMcpClient implements vscode.Disposable {
 
     async removeEntry(entry: string, cwd: string): Promise<void> {
         await this.ensureJournal(cwd);
-        await this.callTool('entry_remove', { entry: { id: entry } });
+        const entryRef = entry.includes('/') ? { path: entry } : { id: entry };
+        await this.callTool('entry_remove', { entry: entryRef });
     }
 
     /**
