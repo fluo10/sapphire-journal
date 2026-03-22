@@ -75,6 +75,7 @@ jobs:
         working-directory: archelon-vscode
 
       - name: Download CLI binary from GitHub Releases
+        shell: bash
         run: |
           gh release download "cli-v${{ needs.prepare.outputs.cli_version }}" \
             --pattern "${{ matrix.artifact }}" \
