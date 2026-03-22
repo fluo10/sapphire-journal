@@ -7,7 +7,7 @@ opt-level = 1
 
 [workspace.package]
 edition = "2024"
-version = "0.6.0"
+version = "0.7.0"
 description = "Markdown-based task and note manager that keeps your data alive as plain text - timeless like fossils"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/fluo10/archelon"

@@ -2,6 +2,33 @@
 
 All notable changes to `archelon` and `archelon-core` are documented here.
 
+## [0.7.0] - 2026-03-22
+
+### Added
+
+- `entry_search` MCP tool and VS Code search command for full-text and vector search
+- LanceDB vector search backend (`lancedb-store` optional feature)
+- sqlite-vec vector search and FTS5 full-text search
+- fastembed provider for server-free local embedding (`fastembed-embed` optional feature)
+- Versioned cache paths and `cache clean` command
+- User-level config and `config show` command
+- `JournalState` in `archelon-core` — unified state holding `Journal`, SQLite connection, vector store, and embedder
+
+### Changed
+
+- Ops API unified to accept `JournalState`; vector store and embedder cached for MCP/GUI reuse
+- `VectorStore` trait abstraction with paragraph-level chunking
+- Release workflow split into independent CLI and VSCode tracks
+
+### Fixed
+
+- `entry_modify`: parent field now included in "nothing to update" guard
+- `VectorDb::LanceDb` serde repr renamed to `"lancedb"`
+- fastembed model cache stored under `~/.cache/archelon/fastembed/`
+- lancedb_v1/ placed directly under cache dir (not `lancedb/lancedb_v1/`)
+- sqlite-vec loaded via `sqlite3_auto_extension` instead of direct call
+- Chunk vectors invalidated when chunk text changes on upsert
+
 ## [0.6.0] - 2026-03-17
 
 ### Added
