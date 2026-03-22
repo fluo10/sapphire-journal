@@ -782,6 +782,7 @@ fn ensure_vec_tables(conn: &Connection, dim: u32) -> Result<()> {
 }
 
 /// A result returned by [`search_fts_entries`].
+#[derive(serde::Serialize)]
 pub struct SearchResult {
     /// The entry's numeric ID (CarettaId stored as i64).
     pub id: i64,

@@ -1,7 +1,6 @@
-import * as path from 'path';
 import * as vscode from 'vscode';
-import { EntryRecord, SortField, SortOrder, listEntries, setEntryParent, treeEntries } from './cli';
-import { findJournalRoot } from './journal';
+import { EntryRecord, SortField, SortOrder } from './cli';
+import { ArchelonMcpClient } from './mcp';
 
 export type ViewMode = 'tree' | 'list';
 
@@ -90,7 +89,7 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vs
     private _period: string | undefined;
     private _rootRecords: EntryRecord[] = [];
 
-    constructor() {
+    constructor(private readonly _mcp: ArchelonMcpClient) {
         const cfg = vscode.workspace.getConfiguration('archelon');
         const rawPeriod = cfg.get<string>('defaultPeriod', 'today');
         this._period = rawPeriod === '' ? undefined : rawPeriod;
@@ -152,11 +151,12 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vs
 
         try {
             if (this._viewMode === 'list') {
-                this._rootRecords = await listEntries(cwd, this._sortBy, this._sortOrder, this._period);
+                this._rootRecords = await this._mcp.listEntries(cwd, this._sortBy, this._sortOrder, this._period);
             } else {
-                this._rootRecords = await treeEntries(cwd, this._sortBy, this._sortOrder, this._period);
+                this._rootRecords = await this._mcp.treeEntries(cwd, this._sortBy, this._sortOrder, this._period);
             }
-        } catch {
+        } catch (err) {
+            vscode.window.showErrorMessage(`Archelon: failed to load entries — ${err}`);
             return [];
         }
 
@@ -189,7 +189,7 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vs
         for (const src of sources) {
             if (src.id === targetId) { continue; }
             try {
-                await setEntryParent(src.path, targetId, cwd);
+                await this._mcp.setEntryParent(src.path, targetId, cwd);
             } catch (err) {
                 errors.push(`@${src.id}: ${err}`);
             }
@@ -221,10 +221,6 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vs
     }
 
     private _getCwd(): string | null {
-        const activeFile = vscode.window.activeTextEditor?.document.uri.fsPath;
-        if (activeFile && findJournalRoot(activeFile)) {
-            return path.dirname(activeFile);
-        }
         return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
     }
 }
