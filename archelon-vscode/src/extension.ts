@@ -5,12 +5,8 @@ import { ArchelonMcpClient } from './mcp';
 import { EntryItem, EntryTreeProvider } from './entryTreeProvider';
 import { findJournalRoot, isManagedFilename } from './journal';
 
-/** Return a cwd suitable for CLI calls: active file's dir if inside a journal, else workspace root. */
+/** Return the workspace root, which is assumed to be the journal root. */
 function getJournalCwd(): string | null {
-    const activeFile = vscode.window.activeTextEditor?.document.uri.fsPath;
-    if (activeFile && findJournalRoot(activeFile)) {
-        return path.dirname(activeFile);
-    }
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
 }
 

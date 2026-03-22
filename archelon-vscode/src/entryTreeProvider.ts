@@ -1,8 +1,6 @@
-import * as path from 'path';
 import * as vscode from 'vscode';
 import { EntryRecord, SortField, SortOrder } from './cli';
 import { ArchelonMcpClient } from './mcp';
-import { findJournalRoot } from './journal';
 
 export type ViewMode = 'tree' | 'list';
 
@@ -223,10 +221,6 @@ export class EntryTreeProvider implements vscode.TreeDataProvider<EntryItem>, vs
     }
 
     private _getCwd(): string | null {
-        const activeFile = vscode.window.activeTextEditor?.document.uri.fsPath;
-        if (activeFile && findJournalRoot(activeFile)) {
-            return path.dirname(activeFile);
-        }
         return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
     }
 }
