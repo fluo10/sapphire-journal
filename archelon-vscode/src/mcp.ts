@@ -7,17 +7,30 @@ import { findJournalRoot } from './journal';
 // Re-export types so callers can import from a single place.
 export type { EntryRecord, SortField, SortOrder } from './cli';
 
+export interface SearchResultItem {
+    title: string;
+    path: string;
+    score: number;
+}
+
 export class ArchelonMcpClient implements vscode.Disposable {
     private readonly _client: Client;
     private readonly _transport: StdioClientTransport;
+    private readonly _outputChannel: vscode.OutputChannel;
     private _openedJournalDir: string | null = null;
 
     constructor(binPath: string, workspaceRoot?: string) {
+        this._outputChannel = vscode.window.createOutputChannel('Archelon');
         this._transport = new StdioClientTransport({
             command: binPath,
             args: ['mcp'],
-            // Set cwd so Journal::find() can auto-discover a journal at the workspace root.
+            stderr: 'pipe',
             ...(workspaceRoot ? { cwd: workspaceRoot } : {}),
+        });
+        // Attach stderr listener immediately — the SDK returns a PassThrough
+        // stream before start() is called, so no early output is lost.
+        this._transport.stderr?.on('data', (chunk: Buffer) => {
+            this._outputChannel.append(chunk.toString());
         });
         this._client = new Client(
             { name: 'archelon-vscode', version: '1.0.0' },
@@ -140,6 +153,15 @@ export class ArchelonMcpClient implements vscode.Disposable {
         return JSON.parse(text);
     }
 
+    async searchEntries(cwd: string, query: string, limit?: number): Promise<SearchResultItem[]> {
+        await this.ensureJournal(cwd);
+        const text = await this.callTool('entry_search', {
+            query,
+            ...(limit !== undefined ? { limit } : {}),
+        });
+        return JSON.parse(text);
+    }
+
     async treeEntries(
         cwd: string,
         sortBy?: string,
@@ -158,5 +180,6 @@ export class ArchelonMcpClient implements vscode.Disposable {
 
     dispose(): void {
         this._client.close().catch(() => {});
+        this._outputChannel.dispose();
     }
 }

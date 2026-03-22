@@ -9,7 +9,6 @@ use archelon_core::{
     ops::{self, EntryFields, EntryFilter, EntryListItem, FieldSelector, SortField, SortOrder, UpdateOption},
     parser::read_entry,
     period::{parse_datetime, parse_datetime_end, parse_period},
-    user_config::UserConfig,
     JournalState,
 };
 use rmcp::{
@@ -58,9 +57,10 @@ impl ArchelonServer {
         if guard.is_none() {
             let journal = self.open_default_journal()?;
             let state = JournalState::open(journal)?;
-            let user_cfg = UserConfig::load().unwrap_or_default();
-            let _ = state.load_vector_store(&user_cfg); // best-effort; errors are non-fatal
-            let _ = state.load_embedder(&user_cfg);     // best-effort; errors are non-fatal
+            // VectorStore and Embedder are NOT loaded here: their sync initializers
+            // call Runtime::new().block_on() internally, which panics when nested
+            // inside the tokio runtime that drives the MCP server.
+            // Load them via the async variants when a semantic-search tool is added.
             *guard = Some(state);
         }
         f(guard.as_ref().unwrap())
@@ -76,9 +76,7 @@ impl ArchelonServer {
         };
         let state = JournalState::open(journal)?;
         state.sync()?;
-        let user_cfg = UserConfig::load().unwrap_or_default();
-        let _ = state.load_vector_store(&user_cfg); // best-effort; errors are non-fatal
-        let _ = state.load_embedder(&user_cfg);     // best-effort; errors are non-fatal
+        // VectorStore / Embedder skipped — see with_state for details.
         let info = state.cache_info()?;
         let root = state.journal.root.display().to_string();
         let count = info.entry_count;
@@ -244,6 +242,14 @@ struct EntryFixParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct EntryRemoveParams {
     entry: EntryRef,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct EntrySearchParams {
+    /// Search query text. Supports substring and CJK queries (FTS5 trigram index).
+    query: String,
+    /// Maximum number of results to return (default: 10).
+    limit: Option<usize>,
 }
 
 // ── helpers for parameter parsing ─────────────────────────────────────────────
@@ -625,6 +631,22 @@ impl ArchelonServer {
             let info = state.cache_info()?;
             *guard = Some(state);
             Ok(format!("rebuilt: {} entries indexed", info.entry_count))
+        })()
+        .map_err(|e| e.to_string())
+    }
+
+    #[tool(description = "Search journal entries by full-text (FTS5 trigram index). \
+        Supports substring and CJK queries. \
+        Returns a JSON array of results ordered by relevance, each with \
+        `title`, `path`, and `score` (BM25 rank; more negative = higher relevance). \
+        Note: semantic/vector search is not supported in this tool.")]
+    fn entry_search(&self, Parameters(p): Parameters<EntrySearchParams>) -> Result<String, String> {
+        (|| -> anyhow::Result<String> {
+            self.with_state(|s| {
+                s.sync()?;
+                let results = cache::search_fts_entries(&s.conn, &p.query, p.limit.unwrap_or(10))?;
+                Ok(serde_json::to_string_pretty(&results)?)
+            })
         })()
         .map_err(|e| e.to_string())
     }

@@ -22,7 +22,13 @@ export async function activate(context: vscode.ExtensionContext) {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const mcp = new ArchelonMcpClient(bin(), workspaceRoot);
     context.subscriptions.push(mcp);
-    await mcp.connect();
+    try {
+        await mcp.connect();
+    } catch (err) {
+        vscode.window.showErrorMessage(
+            `Archelon: failed to start MCP server — ${err}. Check the "Archelon" output channel for details.`
+        );
+    }
 
     // ── Tree View: Entries ────────────────────────────────────────────────────
     const treeProvider = new EntryTreeProvider(mcp);
@@ -340,6 +346,59 @@ export async function activate(context: vscode.ExtensionContext) {
             } catch (err) {
                 vscode.window.showErrorMessage(`Archelon: cache rebuild failed — ${err}`);
             }
+        })
+    );
+
+    // ── Command: Search Entries ───────────────────────────────────────────────
+    context.subscriptions.push(
+        vscode.commands.registerCommand('archelon.searchEntries', async () => {
+            const cwd = getJournalCwd();
+            if (!cwd) {
+                vscode.window.showErrorMessage('Archelon: no workspace folder open.');
+                return;
+            }
+
+            const qp = vscode.window.createQuickPick();
+            qp.placeholder = 'Search entries…';
+            qp.matchOnDescription = true;
+
+            let debounce: ReturnType<typeof setTimeout> | undefined;
+
+            qp.onDidChangeValue(value => {
+                qp.busy = true;
+                qp.items = [];
+                if (debounce) { clearTimeout(debounce); }
+                if (!value) { qp.busy = false; return; }
+
+                debounce = setTimeout(async () => {
+                    try {
+                        const results = await mcp.searchEntries(cwd, value);
+                        qp.items = results.map(r => ({
+                            label: r.title || path.basename(r.path),
+                            description: r.path,
+                            entryPath: r.path,
+                        }));
+                    } catch {
+                        qp.items = [];
+                    } finally {
+                        qp.busy = false;
+                    }
+                }, 200);
+            });
+
+            qp.onDidAccept(async () => {
+                const selected = qp.selectedItems[0] as typeof qp.items[0] & { entryPath: string };
+                qp.hide();
+                if (!selected?.entryPath) { return; }
+                try {
+                    const doc = await vscode.workspace.openTextDocument(selected.entryPath);
+                    await vscode.window.showTextDocument(doc);
+                } catch (err) {
+                    vscode.window.showErrorMessage(`Archelon: failed to open entry — ${err}`);
+                }
+            });
+
+            qp.show();
         })
     );
 

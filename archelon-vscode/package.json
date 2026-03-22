@@ -40,39 +40,44 @@
     "menus": {
       "view/title": [
         {
-          "command": "archelon.newEntry",
+          "command": "archelon.searchEntries",
           "when": "view == archelon.entries",
           "group": "navigation@1"
         },
         {
-          "command": "archelon.filterTree",
+          "command": "archelon.newEntry",
           "when": "view == archelon.entries",
           "group": "navigation@2"
         },
         {
-          "command": "archelon.setPeriod",
+          "command": "archelon.filterTree",
           "when": "view == archelon.entries",
           "group": "navigation@3"
         },
         {
-          "command": "archelon.sortTree",
+          "command": "archelon.setPeriod",
           "when": "view == archelon.entries",
           "group": "navigation@4"
         },
         {
-          "command": "archelon.refreshTree",
+          "command": "archelon.sortTree",
           "when": "view == archelon.entries",
           "group": "navigation@5"
         },
         {
+          "command": "archelon.refreshTree",
+          "when": "view == archelon.entries",
+          "group": "navigation@6"
+        },
+        {
           "command": "archelon.showTreeView",
           "when": "view == archelon.entries && archelon.viewMode == list",
-          "group": "navigation@6"
+          "group": "navigation@7"
         },
         {
           "command": "archelon.showListView",
           "when": "view == archelon.entries && archelon.viewMode == tree",
-          "group": "navigation@6"
+          "group": "navigation@7"
         }
       ],
       "view/item/context": [
@@ -149,6 +154,11 @@
       {
         "command": "archelon.cacheRebuild",
         "title": "Archelon: Rebuild Cache"
+      },
+      {
+        "command": "archelon.searchEntries",
+        "title": "Archelon: Search Entries",
+        "icon": "$(search)"
       }
     ],
     "configuration": {
