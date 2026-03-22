@@ -94,7 +94,7 @@ jobs:
         run: Rename-Item archelon-vscode/bin/${{ matrix.artifact }} archelon.exe
 
       - name: Package VSIX
-        run: npx vsce package --target ${{ matrix.vsce_target }}
+        run: npx vsce package --target ${{ matrix.vsce_target }} --no-dependencies
         working-directory: archelon-vscode
 
       - uses: actions/upload-artifact@v4
