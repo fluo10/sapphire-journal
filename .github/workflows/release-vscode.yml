@@ -1,4 +1,4 @@
-name: Release
+name: Release VSCode Extension
 
 on:
   pull_request:
@@ -7,12 +7,13 @@ on:
 
 jobs:
   prepare:
-    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/vscode/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
+      cli_version: ${{ steps.cli_version.outputs.cli_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,67 +23,24 @@ jobs:
         id: version
         run: |
           BRANCH="${{ github.event.pull_request.head.ref }}"
-          VERSION="${BRANCH#release/}"
+          VERSION="${BRANCH#release/vscode/}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Extract CLI version from package.json
+        id: cli_version
+        run: |
+          CLI_VERSION=$(node -p "require('./archelon-vscode/package.json').archelonVersion")
+          echo "cli_version=$CLI_VERSION" >> $GITHUB_OUTPUT
 
       - name: Create tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ steps.version.outputs.version }}
-          git push origin ${{ steps.version.outputs.version }}
-
-  build:
-    needs: prepare
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            binary: archelon
-            asset_name: archelon-linux-x86_64
-          - os: macos-latest
-            binary: archelon
-            asset_name: archelon-macos-aarch64
-          - os: windows-latest
-            binary: archelon.exe
-            asset_name: archelon-windows-x86_64.exe
-          - os: ubuntu-24.04-arm
-            binary: archelon
-            asset_name: archelon-linux-aarch64
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install protoc (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - name: Install protoc (macOS)
-        if: runner.os == 'macOS'
-        run: brew install protobuf
-      - name: Install protoc (Windows)
-        if: runner.os == 'Windows'
-        run: choco install protoc
-      - run: cargo build --release -p archelon
-
-      - name: Rename binary (Unix)
-        if: runner.os != 'Windows'
-        run: cp target/release/${{ matrix.binary }} ${{ matrix.asset_name }}
-
-      - name: Rename binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: Copy-Item target/release/${{ matrix.binary }} ${{ matrix.asset_name }}
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.asset_name }}
-          path: ${{ matrix.asset_name }}
+          git tag vscode-v${{ steps.version.outputs.version }}
+          git push origin vscode-v${{ steps.version.outputs.version }}
 
   vsix:
-    needs: [prepare, build]
+    needs: prepare
     strategy:
       matrix:
         include:
@@ -116,11 +74,13 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: archelon-vscode
 
-      - name: Download CLI binary
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: archelon-vscode/bin/
+      - name: Download CLI binary from GitHub Releases
+        run: |
+          gh release download "cli-v${{ needs.prepare.outputs.cli_version }}" \
+            --pattern "${{ matrix.artifact }}" \
+            --dir archelon-vscode/bin/
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Rename binary to archelon (Unix)
         if: runner.os != 'Windows'
@@ -143,7 +103,7 @@ jobs:
           path: archelon-vscode/*.vsix
 
   release:
-    needs: [prepare, build, vsix]
+    needs: [prepare, vsix]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -155,7 +115,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.prepare.outputs.version }}
+          tag_name: vscode-v${{ needs.prepare.outputs.version }}
           generate_release_notes: true
           files: artifacts/*
 

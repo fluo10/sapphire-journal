@@ -3,10 +3,10 @@ $ErrorActionPreference = 'Stop'
 $Repo = 'fluo10/archelon'
 $InstallDir = Join-Path $HOME '.local\bin'
 
-$Response = Invoke-WebRequest -Uri "https://github.com/$Repo/releases/latest" -MaximumRedirection 0 -ErrorAction Ignore
-$Version = $Response.Headers.Location -replace '.*/tag/', ''
+$Releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases"
+$Version = ($Releases | Where-Object { $_.tag_name -like 'cli-v*' } | Select-Object -First 1).tag_name
 if (-not $Version) {
-    Write-Error 'Failed to fetch latest version.'
+    Write-Error 'Failed to fetch latest CLI version.'
     exit 1
 }
 

@@ -16,10 +16,8 @@ case "$(uname -m)" in
   *) echo "error: unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
-VERSION=$(curl -sfI "https://github.com/${REPO}/releases/latest" \
-  | awk '/^[Ll]ocation:/{print $2}' \
-  | tr -d '\r' \
-  | sed 's|.*/tag/||')
+VERSION=$(curl -sf "https://api.github.com/repos/${REPO}/releases" \
+  | awk -F'"' '/tag_name.*cli-v/{print $4; exit}')
 
 if [ -z "$VERSION" ]; then
   echo "error: failed to fetch latest version" >&2
