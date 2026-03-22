@@ -24,6 +24,7 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage(
             `Archelon: failed to start MCP server — ${err}. Check the "Archelon" output channel for details.`
         );
+        return;
     }
 
     // ── Tree View: Entries ────────────────────────────────────────────────────

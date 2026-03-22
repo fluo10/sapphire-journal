@@ -40,6 +40,12 @@ export class ArchelonMcpClient implements vscode.Disposable {
 
     async connect(): Promise<void> {
         await this._client.connect(this._transport);
+        this._transport.onclose = () => {
+            this._outputChannel.appendLine('[Archelon MCP] server process closed unexpectedly');
+        };
+        this._transport.onerror = (err: Error) => {
+            this._outputChannel.appendLine(`[Archelon MCP] transport error: ${err.message}`);
+        };
     }
 
     // ── private helpers ──────────────────────────────────────────────────────
