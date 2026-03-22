@@ -490,6 +490,7 @@ impl ArchelonServer {
                 && p.task_closed_at.is_none()
                 && p.event_start.is_none()
                 && p.event_end.is_none()
+                && matches!(p.parent, UpdateOption::Unchanged)
             {
                 anyhow::bail!("nothing to update — specify at least one field");
             }
