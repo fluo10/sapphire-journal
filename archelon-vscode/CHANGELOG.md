@@ -2,6 +2,22 @@
 
 All notable changes to `archelon-vscode` are documented here.
 
+## [0.7.0] - 2026-03-22
+
+### Added
+
+- Search Entries command powered by `entry_search` MCP tool (full-text and vector search)
+
+### Changed
+
+- Migrated to local MCP server via stdio; no longer requires a separately running MCP process
+
+### Fixed
+
+- Workspace root is now used as the journal root instead of the active file's directory
+- `getChildren` errors are now surfaced in the tree view
+- Entry tools now receive `EntryRef` objects instead of plain strings
+
 ## [0.6.0] - 2026-03-17
 
 ### Changed
