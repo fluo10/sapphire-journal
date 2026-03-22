@@ -87,7 +87,7 @@ export class ArchelonMcpClient implements vscode.Disposable {
         if (journalRoot) {
             await this.ensureJournal(journalRoot);
         }
-        const result = await this.callTool('entry_fix', { entry: filePath });
+        const result = await this.callTool('entry_fix', { entry: { path: filePath } });
         // "renamed: <old_filename> → <new_filename>"
         const m = result.match(/^renamed: .+ → (.+)$/);
         if (m) {
@@ -123,7 +123,7 @@ export class ArchelonMcpClient implements vscode.Disposable {
 
     async removeEntry(entry: string, cwd: string): Promise<void> {
         await this.ensureJournal(cwd);
-        await this.callTool('entry_remove', { entry });
+        await this.callTool('entry_remove', { entry: { id: entry } });
     }
 
     /**
@@ -134,7 +134,7 @@ export class ArchelonMcpClient implements vscode.Disposable {
         await this.ensureJournal(cwd);
         // null → UpdateOption::Clear (remove parent); @ID → UpdateOption::Set
         const parent = parentId !== undefined ? { id: parentId } : null;
-        await this.callTool('entry_modify', { entry: entryPath, parent });
+        await this.callTool('entry_modify', { entry: { path: entryPath }, parent });
     }
 
     async listEntries(
