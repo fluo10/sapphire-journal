@@ -1,28 +1,41 @@
-# Change Log
+# Changelog (VSCode Extension)
 
-All notable changes to the "archelon-vscode" extension will be documented in this file.
-
-Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
+All notable changes to `archelon-vscode` are documented here.
 
 ## [0.6.0] - 2026-03-17
 
 ### Changed
 
-- `New Entry` command now creates a sibling entry relative to the currently selected entry
-- Bundled CLI binary updated to v0.6.0: `EntryFlag`/`MatchFlag` enums, structured `EntryRef` in MCP, unicode/hyphen-preserving slugify, and always-serialized `slug`/`tags` in frontmatter
+- `New Entry` command now creates a sibling entry relative to the currently selected entry; task-related icons unified
 
-## [0.3.0] - 2026-03-09
+## [0.5.0] - 2026-03-16
 
 ### Added
 
-- Bundled CLI binary updated to v0.3.0: `task.started_at` timestamp with `--task-started` filter, and preservation of unknown frontmatter fields
+- `archelon init` command to initialize a new journal from the editor
+- Cache rebuild command (`archelon cache rebuild`) accessible from the Command Palette
 
-## [0.2.1] - 2026-03-08
+## [0.4.0] - 2026-03-15
+
+### Added
+
+- ThemeIcon decorations in tree view replacing emoji prefixes
+- Entry type icons, period filter, and view improvements
+- Context menu, rich tooltips, and tree/list toggle in the sidebar
+- Drag-and-drop reparenting in the tree view
+- `new-child-entry` command
+- Published to VS Code Marketplace and Open VSX Registry
+
+### Changed
+
+- `--active` flag used by default in `listEntries` and `treeEntries`
 
 ### Fixed
 
-- Bundled CLI binary updated to v0.2.1: repeated `entry fix` calls no longer accumulate blank lines between the frontmatter fence and the body
+- Installed extension is disabled in the dev host to prevent conflicts
 
 ## [0.2.0] - 2026-03-08
 
-- Initial release
+### Added
+
+- Initial release: auto-fix on save, New Entry, Open Entry, Remove Entry, and List Entries commands; CLI binary bundled in platform-specific VSIX

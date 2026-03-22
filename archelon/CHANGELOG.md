@@ -1,6 +1,6 @@
-# Changelog
+# Changelog (CLI)
 
-All notable changes to this project will be documented in this file.
+All notable changes to `archelon` and `archelon-core` are documented here.
 
 ## [0.6.0] - 2026-03-17
 
@@ -11,7 +11,6 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - MCP: entry references now use structured `EntryRef` instead of a flat string
-- VS Code: `New Entry` command now creates a sibling entry relative to the currently selected entry; task-related icons unified
 
 ### Fixed
 
@@ -23,8 +22,6 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - `entries_dir` config field to customize the root directory for entry storage (default: journal root)
-- VS Code: `archelon init` command to initialize a new journal from the editor
-- VS Code: cache rebuild command (`archelon cache rebuild`) accessible from the Command Palette
 
 ### Changed
 
@@ -39,18 +36,12 @@ All notable changes to this project will be documented in this file.
 - SQLite cache with schema versioning and `cache` subcommands (`info`, `sync`, `rebuild`); FTS5 full-text search index is built but UI-side search is not yet implemented (planned)
 - Entry hierarchy: `parent_id` frontmatter field, `--parent` flag for `entry new` / `entry modify`, `--no-parent` flag to clear parent
 - `entry tree` command and `entry_tree` MCP tool — displays entries in a parent-child hierarchy (supports same filters as `entry list`)
-- `new-child-entry` VS Code command and `--parent` flag for `entry path --new`
 - Title-based entry lookup: `@title` syntax as an alternative to ID prefix
 - Duplicate title detection with configurable `duplicate_title` policy (`warn` | `allow` | `deny`)
 - `--task-overdue`, `--task-in-progress`, `--task-unstarted` field selectors for `entry list` / MCP `entry_list`
 - `--active` composite flag: matches tasks that are overdue or in-progress
 - `--all-periods` flag for `entry list`; period is now a positional argument; extended period keywords
 - Symbol system for entry list output: freshness and overdue indicators in a 2-slot prefix
-- VS Code: ThemeIcon decorations in tree view replacing emoji prefixes
-- VS Code: entry type icons, period filter, and view improvements
-- VS Code: context menu, rich tooltips, and tree/list toggle in the sidebar
-- VS Code: drag-and-drop reparenting in the tree view
-- VS Code: published to VS Code Marketplace and Open VSX Registry
 
 ### Changed
 
@@ -58,14 +49,12 @@ All notable changes to this project will be documented in this file.
 - JSON output fields: `status_labels` → `flags`, `match_labels` → `match_flags`
 - Period selector no longer falls back to all-fields when any specific selector is explicitly set
 - Default `duplicate_title` policy changed from `allow` to `warn`
-- VS Code: `--active` flag used by default in `listEntries` and `treeEntries`
 
 ### Fixed
 
 - `entry fix`: entry is moved to the correct year directory when the year derived from `created_at` differs from its current location
 - ID collision retry is now applied to `sync_cache` as well as `create_entry`
 - Fullwidth middle dot used instead of fullwidth space as placeholder in `symbols_text`
-- VS Code: installed extension is disabled in the dev host to prevent conflicts
 
 ### Removed
 
@@ -92,7 +81,6 @@ All notable changes to this project will be documented in this file.
 
 - Install scripts for Linux/macOS (`install.sh`) and Windows (`install.ps1`) — installs pre-built binaries to `~/.local/bin`
 - `cargo-binstall` support for `archelon-cli` and `archelon-mcp`
-- VS Code extension (`archelon-vscode`) with auto-fix on save, New Entry, Open Entry, Remove Entry, and List Entries commands; CLI binary bundled in platform-specific VSIX
 - `--version` flag for `archelon-cli` and `archelon-mcp`
 - `--journal-dir` global option for `archelon-mcp`
 - `entry fix --touch` flag to optionally refresh `updated_at` when fixing an entry
