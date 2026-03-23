@@ -123,6 +123,7 @@ Platform-specific VSIX files (with the CLI binary bundled) are also on the [Rele
 archelon/
 ├── archelon-core/    # Data model, Markdown parser/serializer, SQLite cache
 ├── archelon/         # Unified binary: CLI + MCP server (archelon mcp)
+├── archelon-dioxus/  # GUI app (desktop / mobile)
 └── archelon-vscode/  # VS Code extension
 ```
 
@@ -132,4 +133,13 @@ Early development — CLI and MCP server are functional for entry management inc
 
 ## License
 
-MIT OR Apache-2.0
+This repository contains components under different licenses:
+
+| Component | License |
+|-----------|---------|
+| `archelon-core` | MIT OR Apache-2.0 |
+| `archelon` | MIT OR Apache-2.0 |
+| `archelon-dioxus` | GPL-3.0-or-later |
+| `archelon-vscode` | MIT |
+
+See the `LICENSE` (or `LICENSE-MIT` / `LICENSE-APACHE`) file in each component's directory for the full license text.
