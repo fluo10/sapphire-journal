@@ -23,7 +23,7 @@ use crate::{
 /// Implementations hold any long-lived state needed for efficient repeated
 /// inference (e.g. the loaded ONNX model for `fastembed`).  REST-backed
 /// providers (OpenAI, Ollama) are stateless and simply store their config.
-pub trait Embedder: Send {
+pub trait Embedder: Send + Sync {
     /// Generate embeddings for a batch of texts.
     ///
     /// Returns one `Vec<f32>` per input text, in the same order.
@@ -36,7 +36,7 @@ pub trait Embedder: Send {
 /// For `"fastembed"` this loads the ONNX model from disk (or downloads it on
 /// first use), which can take several seconds.  For REST providers the
 /// returned value is lightweight.
-pub fn build_embedder(config: &EmbeddingConfig) -> Result<Box<dyn Embedder + Send>> {
+pub fn build_embedder(config: &EmbeddingConfig) -> Result<Box<dyn Embedder + Send + Sync>> {
     match config.provider.as_str() {
         "openai" | "ollama" => Ok(Box::new(RestEmbedder { config: config.clone() })),
         #[cfg(feature = "fastembed-embed")]

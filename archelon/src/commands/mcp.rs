@@ -436,7 +436,8 @@ impl ArchelonServer {
     fn entry_show(&self, Parameters(p): Parameters<EntryShowParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let path = self.with_state(|s| {
-                ops::resolve_entry(&p.entry, &s.conn).map_err(Into::into)
+                let conn = s.open_conn()?;
+                ops::resolve_entry(&p.entry, &conn).map_err(Into::into)
             })?;
             let entry = read_entry(&path)?;
             let fm = &entry.frontmatter;
@@ -492,7 +493,9 @@ impl ArchelonServer {
             self.with_state(|s| {
                 s.sync()?;
                 let dest = ops::create_entry(s, fields)?;
-                let _ = cache::upsert_entry_from_path(&s.conn, &dest);
+                if let Ok(conn) = s.open_conn() {
+                    let _ = cache::upsert_entry_from_path(&conn, &dest);
+                }
                 Ok(format!("created: {}", dest.display()))
             })
         })()
@@ -535,12 +538,13 @@ impl ArchelonServer {
             };
             self.with_state(|s| {
                 s.sync()?;
-                let path = ops::resolve_entry(&p.entry, &s.conn)?;
-                let msg = if let Some(new_path) = ops::update_entry(&path, &s.conn, fields)? {
-                    let _ = cache::upsert_entry_from_path(&s.conn, &new_path);
+                let conn = s.open_conn()?;
+                let path = ops::resolve_entry(&p.entry, &conn)?;
+                let msg = if let Some(new_path) = ops::update_entry(&path, &conn, fields)? {
+                    let _ = cache::upsert_entry_from_path(&conn, &new_path);
                     format!("updated and renamed: {}", new_path.display())
                 } else {
-                    let _ = cache::upsert_entry_from_path(&s.conn, &path);
+                    let _ = cache::upsert_entry_from_path(&conn, &path);
                     format!("updated: {}", path.display())
                 };
                 Ok(msg)
@@ -554,7 +558,8 @@ impl ArchelonServer {
     fn entry_check(&self, Parameters(p): Parameters<EntryCheckParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let path = self.with_state(|s| {
-                ops::resolve_entry(&p.entry, &s.conn).map_err(Into::into)
+                let conn = s.open_conn()?;
+                ops::resolve_entry(&p.entry, &conn).map_err(Into::into)
             })?;
             let issues = ops::check_entry(&path)?;
             if issues.is_empty() {
@@ -576,7 +581,8 @@ impl ArchelonServer {
     fn entry_fix(&self, Parameters(p): Parameters<EntryFixParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let path = self.with_state(|s| {
-                ops::resolve_entry(&p.entry, &s.conn).map_err(Into::into)
+                let conn = s.open_conn()?;
+                ops::resolve_entry(&p.entry, &conn).map_err(Into::into)
             })?;
             match ops::fix_entry(&path)? {
                 Some(new_path) => Ok(format!(
@@ -595,9 +601,10 @@ impl ArchelonServer {
         (|| -> anyhow::Result<String> {
             self.with_state(|s| {
                 s.sync()?;
-                let path = ops::resolve_entry(&p.entry, &s.conn)?;
+                let conn = s.open_conn()?;
+                let path = ops::resolve_entry(&p.entry, &conn)?;
                 ops::remove_entry(&path)?;
-                let _ = cache::remove_from_cache(&s.conn, &path);
+                let _ = cache::remove_from_cache(&conn, &path);
                 Ok(format!("removed: {}", path.display()))
             })
         })()
@@ -672,13 +679,15 @@ impl ArchelonServer {
 
                 // Auto-embed a small number of pending chunks so freshly-synced
                 // entries are included in vector search results.
-                if let (Some(store), Some(embedder)) = (s.vector_store(), s.embedder()) {
+                let conn = s.open_conn()?;
+                if let (Some(store_mutex), Some(embedder)) = (s.vector_store(), s.embedder()) {
+                    let store = store_mutex.lock().unwrap();
                     let embedded_keys = store.embedded_chunk_keys().unwrap_or_default();
-                    let pending = vector_store::pending_chunks(&s.conn, &embedded_keys)
+                    let pending = vector_store::pending_chunks(&conn, &embedded_keys)
                         .unwrap_or_default();
                     if !pending.is_empty() && pending.len() <= 50 {
                         let _ = vector_store::embed_pending_chunks(
-                            &s.conn, store, embedder, |_, _| {}
+                            &conn, &**store, embedder, |_, _| {}
                         );
                     }
 
@@ -693,7 +702,7 @@ impl ArchelonServer {
                 }
 
                 // Fallback: full-text search.
-                let results = cache::search_fts_entries(&s.conn, &p.query, p.limit.unwrap_or(10))?;
+                let results = cache::search_fts_entries(&conn, &p.query, p.limit.unwrap_or(10))?;
                 Ok(serde_json::to_string_pretty(&results)?)
             })
         })()

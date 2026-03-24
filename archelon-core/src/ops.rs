@@ -473,14 +473,17 @@ pub fn fill_ancestor_entries(
 
     // Load the full entry index for parent lookups (cache already synced by caller).
     let all_map: HashMap<CarettaId, EntryHeader> = {
-        let all = cache::list_entries_from_cache(&state.conn).unwrap_or_else(|_| {
-            state.journal
-                .collect_entries()
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|p| read_entry(p).ok().map(EntryHeader::from))
-                .collect()
-        });
+        let all = state.open_conn()
+            .ok()
+            .and_then(|c| cache::list_entries_from_cache(&c).ok())
+            .unwrap_or_else(|| {
+                state.journal
+                    .collect_entries()
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|p| read_entry(p).ok().map(EntryHeader::from))
+                    .collect()
+            });
         all.into_iter().map(|e| (e.frontmatter.id, e)).collect()
     };
 
@@ -525,9 +528,11 @@ pub fn list_entries(
     state: &JournalState,
     filter: &EntryFilter,
 ) -> Result<Vec<(EntryHeader, Vec<MatchFlag>)>> {
-    let _ = cache::sync_cache(&state.journal, &state.conn);
-    if let Ok(entries) = cache::list_entries_from_cache(&state.conn) {
-        return apply_filter_and_sort(entries, filter);
+    if let Ok(conn) = state.open_conn() {
+        let _ = cache::sync_cache(&state.journal, &conn);
+        if let Ok(entries) = cache::list_entries_from_cache(&conn) {
+            return apply_filter_and_sort(entries, filter);
+        }
     }
     // Fallback: read from disk when the cache is unavailable.
     let entries: Vec<EntryHeader> = state.journal
@@ -635,7 +640,7 @@ pub struct EntryFields {
 ///   cannot be resolved.
 pub fn create_entry(state: &JournalState, fields: EntryFields) -> Result<PathBuf> {
     let journal = &state.journal;
-    let conn = &state.conn;
+    let conn = state.open_conn()?;
     let id = CarettaId::now_unix();
     let year = chrono::Local::now().year();
 
@@ -667,7 +672,7 @@ pub fn create_entry(state: &JournalState, fields: EntryFields) -> Result<PathBuf
 
     // ── resolve parent ─────────────────────────────────────────────────────
     let parent_id = match &fields.parent {
-        UpdateOption::Set(r) => resolve_parent_id(conn, Some(r))?,
+        UpdateOption::Set(r) => resolve_parent_id(&conn, Some(r))?,
         UpdateOption::Clear | UpdateOption::Unchanged => None,
     };
 
