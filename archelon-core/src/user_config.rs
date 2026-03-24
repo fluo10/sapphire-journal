@@ -26,17 +26,74 @@ impl UserConfig {
         xdg_config_home().join("archelon").join("config.toml")
     }
 
-    /// Load the user config from disk.
+    /// Load the user config from disk, then apply environment variable overrides.
     ///
     /// Returns the default config (all fields at their defaults) if the file
     /// does not exist.
+    ///
+    /// The following environment variables override the corresponding `config.toml`
+    /// fields when set to a non-empty value:
+    ///
+    /// | Variable                              | Field                          |
+    /// |---------------------------------------|--------------------------------|
+    /// | `ARCHELON_CACHE_VECTOR_DB`            | `cache.vector_db`              |
+    /// | `ARCHELON_CACHE_EMBEDDING_PROVIDER`   | `cache.embedding.provider`     |
+    /// | `ARCHELON_CACHE_EMBEDDING_MODEL`      | `cache.embedding.model`        |
+    /// | `ARCHELON_CACHE_EMBEDDING_API_KEY_ENV`| `cache.embedding.api_key_env`  |
+    /// | `ARCHELON_CACHE_EMBEDDING_BASE_URL`   | `cache.embedding.base_url`     |
+    /// | `ARCHELON_CACHE_EMBEDDING_DIMENSION`  | `cache.embedding.dimension`    |
     pub fn load() -> Result<Self> {
         let path = Self::path();
-        if !path.exists() {
-            return Ok(UserConfig::default());
+        let mut config = if !path.exists() {
+            UserConfig::default()
+        } else {
+            let contents = std::fs::read_to_string(&path)?;
+            toml::from_str(&contents).map_err(|e| Error::InvalidConfig(e.to_string()))?
+        };
+        config.apply_env_overrides();
+        Ok(config)
+    }
+
+    /// Apply environment variable overrides on top of the already-loaded config.
+    fn apply_env_overrides(&mut self) {
+        if let Ok(val) = std::env::var("ARCHELON_CACHE_VECTOR_DB") {
+            match val.as_str() {
+                "none" => self.cache.vector_db = VectorDb::None,
+                "sqlite_vec" => self.cache.vector_db = VectorDb::SqliteVec,
+                "lancedb" => self.cache.vector_db = VectorDb::LanceDb,
+                _ => {}
+            }
         }
-        let contents = std::fs::read_to_string(&path)?;
-        toml::from_str(&contents).map_err(|e| Error::InvalidConfig(e.to_string()))
+
+        let provider = std::env::var("ARCHELON_CACHE_EMBEDDING_PROVIDER").ok();
+        let model = std::env::var("ARCHELON_CACHE_EMBEDDING_MODEL").ok();
+        let api_key_env = std::env::var("ARCHELON_CACHE_EMBEDDING_API_KEY_ENV").ok();
+        let base_url = std::env::var("ARCHELON_CACHE_EMBEDDING_BASE_URL").ok();
+        let dimension = std::env::var("ARCHELON_CACHE_EMBEDDING_DIMENSION")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok());
+
+        let any_embedding = provider.is_some()
+            || model.is_some()
+            || api_key_env.is_some()
+            || base_url.is_some()
+            || dimension.is_some();
+
+        if any_embedding {
+            let embed = self.cache.embedding.get_or_insert_with(|| EmbeddingConfig {
+                provider: String::new(),
+                model: String::new(),
+                api_key_env: None,
+                base_url: None,
+                dimension: None,
+                extra: IndexMap::new(),
+            });
+            if let Some(v) = provider { embed.provider = v; }
+            if let Some(v) = model { embed.model = v; }
+            if let Some(v) = api_key_env { embed.api_key_env = Some(v); }
+            if let Some(v) = base_url { embed.base_url = Some(v); }
+            if let Some(v) = dimension { embed.dimension = Some(v); }
+        }
     }
 }
 

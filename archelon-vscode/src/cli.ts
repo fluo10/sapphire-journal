@@ -1,12 +1,40 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-const execFileAsync = promisify(execFile);
-
 let _extensionPath: string | undefined;
+
+/**
+ * Build environment variable overrides from VSCode settings.
+ *
+ * Any `archelon.cache.*` setting with a non-empty value is translated to the
+ * corresponding `ARCHELON_CACHE_*` environment variable so that the CLI treats
+ * VSCode settings as overrides on top of `config.toml`.
+ */
+export function configEnv(): Record<string, string> {
+    const cfg = vscode.workspace.getConfiguration('archelon');
+    const env: Record<string, string> = {};
+
+    const vectorDb = cfg.get<string>('cache.vectorDb', '');
+    if (vectorDb) { env['ARCHELON_CACHE_VECTOR_DB'] = vectorDb; }
+
+    const provider = cfg.get<string>('cache.embedding.provider', '');
+    if (provider) { env['ARCHELON_CACHE_EMBEDDING_PROVIDER'] = provider; }
+
+    const model = cfg.get<string>('cache.embedding.model', '');
+    if (model) { env['ARCHELON_CACHE_EMBEDDING_MODEL'] = model; }
+
+    const apiKeyEnv = cfg.get<string>('cache.embedding.apiKeyEnv', '');
+    if (apiKeyEnv) { env['ARCHELON_CACHE_EMBEDDING_API_KEY_ENV'] = apiKeyEnv; }
+
+    const baseUrl = cfg.get<string>('cache.embedding.baseUrl', '');
+    if (baseUrl) { env['ARCHELON_CACHE_EMBEDDING_BASE_URL'] = baseUrl; }
+
+    const dimension = cfg.get<string>('cache.embedding.dimension', '');
+    if (dimension) { env['ARCHELON_CACHE_EMBEDDING_DIMENSION'] = dimension; }
+
+    return env;
+}
 
 export function setExtensionPath(p: string) {
     _extensionPath = p;
@@ -25,89 +53,6 @@ export function bin(): string {
     return 'archelon';
 }
 
-/**
- * Run `archelon init [path]`.
- * Throws on non-zero exit.
- */
-export async function init(dirPath?: string): Promise<string> {
-    const args = ['init'];
-    if (dirPath) { args.push(dirPath); }
-    const { stdout } = await execFileAsync(bin(), args);
-    return stdout.trim();
-}
-
-/**
- * Run `archelon cache rebuild`.
- * Throws on non-zero exit.
- */
-export async function cacheRebuild(cwd: string): Promise<string> {
-    const { stdout } = await execFileAsync(bin(), ['cache', 'rebuild'], { cwd });
-    return stdout.trim();
-}
-
-/**
- * Run `archelon entry fix <filePath>`.
- *
- * Returns the new absolute path if the file was renamed, or null if it stayed in place.
- * Throws on non-zero exit (e.g. not a managed entry, journal not found).
- */
-export async function fixEntry(filePath: string): Promise<string | null> {
-    const { stdout } = await execFileAsync(
-        bin(),
-        ['entry', 'fix', filePath],
-        { cwd: path.dirname(filePath) }
-    );
-    // "renamed: <old_filename> → <new_filename>"
-    const m = stdout.trim().match(/^renamed: .+ → (.+)$/);
-    if (m) {
-        return path.join(path.dirname(filePath), m[1]);
-    }
-    return null;
-}
-
-/**
- * Run `archelon entry path --new` with the given working directory.
- *
- * When `parentId` is provided, passes `--parent @<parentId>` so the new
- * template file includes the parent_id frontmatter field.
- *
- * Returns the absolute path of the newly created template file.
- * Throws on non-zero exit (e.g. journal not found).
- */
-export async function prepareNewEntry(cwd: string, parentId?: string): Promise<string> {
-    const args = ['entry', 'path', '--new'];
-    if (parentId) { args.push('--parent', `@${parentId}`); }
-    const { stdout } = await execFileAsync(bin(), args, { cwd });
-    return stdout.trim();
-}
-
-/**
- * Run `archelon entry path <entry>` and return the absolute file path.
- * Throws on non-zero exit (e.g. ID not found).
- */
-export async function resolvePath(entry: string, cwd: string): Promise<string> {
-    const { stdout } = await execFileAsync(bin(), ['entry', 'path', entry], { cwd });
-    return stdout.trim();
-}
-
-/**
- * Run `archelon entry remove <entry>`.
- * Throws on non-zero exit.
- */
-export async function removeEntry(entry: string, cwd: string): Promise<void> {
-    await execFileAsync(bin(), ['entry', 'remove', entry], { cwd });
-}
-
-/**
- * Run `archelon entry modify <entryPath> --parent @<parentId>` to reparent an
- * entry, or `--no-parent` when `parentId` is undefined to make it a root entry.
- * Throws on non-zero exit.
- */
-export async function setEntryParent(entryPath: string, parentId: string | undefined, cwd: string): Promise<void> {
-    const flag = parentId !== undefined ? ['--parent', `@${parentId}`] : ['--no-parent'];
-    await execFileAsync(bin(), ['entry', 'modify', entryPath, ...flag], { cwd });
-}
-
 export interface EntryRecord {
     id: string;
     path: string;
@@ -120,31 +65,5 @@ export interface EntryRecord {
     children?: EntryRecord[];
 }
 
-/**
- * Run `archelon entry list --json` and return parsed records.
- * Throws on non-zero exit (e.g. journal not found).
- */
-export async function listEntries(cwd: string, sortBy?: SortField, sortOrder?: SortOrder, period?: string): Promise<EntryRecord[]> {
-    const args = ['entry', 'list', '--json', '--active'];
-    if (sortBy) { args.push('--sort-by', sortBy); }
-    if (sortOrder) { args.push('--sort-order', sortOrder); }
-    if (period) { args.push(period); } else { args.push('--all-periods'); }
-    const { stdout } = await execFileAsync(bin(), args, { cwd });
-    return JSON.parse(stdout) as EntryRecord[];
-}
-
 export type SortField = 'id' | 'title' | 'task_status' | 'created_at' | 'updated_at' | 'task_due' | 'event_start';
 export type SortOrder = 'asc' | 'desc';
-
-/**
- * Run `archelon entry tree --json` and return the nested tree.
- * Throws on non-zero exit (e.g. journal not found).
- */
-export async function treeEntries(cwd: string, sortBy?: SortField, sortOrder?: SortOrder, period?: string): Promise<EntryRecord[]> {
-    const args = ['entry', 'tree', '--json', '--active'];
-    if (sortBy) { args.push('--sort-by', sortBy); }
-    if (sortOrder) { args.push('--sort-order', sortOrder); }
-    if (period) { args.push(period); } else { args.push('--all-periods'); }
-    const { stdout } = await execFileAsync(bin(), args, { cwd });
-    return JSON.parse(stdout) as EntryRecord[];
-}

@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { findJournalRoot } from './journal';
+import { configEnv } from './cli';
 
 // Re-export types so callers can import from a single place.
 export type { EntryRecord, SortField, SortOrder } from './cli';
@@ -25,6 +26,7 @@ export class ArchelonMcpClient implements vscode.Disposable {
             command: binPath,
             args: ['mcp'],
             stderr: 'pipe',
+            env: { ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)), ...configEnv() },
             ...(workspaceRoot ? { cwd: workspaceRoot } : {}),
         });
         // Attach stderr listener immediately — the SDK returns a PassThrough
