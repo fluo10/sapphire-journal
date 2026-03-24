@@ -9,6 +9,8 @@ use archelon_core::{
     ops::{self, EntryFields, EntryFilter, EntryListItem, FieldSelector, SortField, SortOrder, UpdateOption},
     parser::read_entry,
     period::{parse_datetime, parse_datetime_end, parse_period},
+    user_config::UserConfig,
+    vector_store::{self},
     JournalState,
 };
 use rmcp::{
@@ -49,6 +51,10 @@ impl ArchelonServer {
     }
 
     /// Provide access to the cached state, auto-opening on first use.
+    ///
+    /// When `cache.embedding.enabled = true`, the vector store and embedder
+    /// are initialised on first call via [`tokio::task::block_in_place`], which
+    /// is safe on the multi-thread runtime used by the MCP server.
     fn with_state<F, T>(&self, f: F) -> anyhow::Result<T>
     where
         F: FnOnce(&JournalState) -> anyhow::Result<T>,
@@ -57,10 +63,18 @@ impl ArchelonServer {
         if guard.is_none() {
             let journal = self.open_default_journal()?;
             let state = JournalState::open(journal)?;
-            // VectorStore and Embedder are NOT loaded here: their sync initializers
-            // call Runtime::new().block_on() internally, which panics when nested
-            // inside the tokio runtime that drives the MCP server.
-            // Load them via the async variants when a semantic-search tool is added.
+            let config = UserConfig::load()?;
+            if config.cache.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
+                // block_in_place suspends the current tokio worker and lets us
+                // call block_on without nesting runtimes.  Requires the
+                // multi-thread runtime (the default for #[tokio::main]).
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        state.load_vector_store_async(&config).await?;
+                        state.load_embedder_async(&config).await
+                    })
+                })?;
+            }
             *guard = Some(state);
         }
         f(guard.as_ref().unwrap())
@@ -76,7 +90,15 @@ impl ArchelonServer {
         };
         let state = JournalState::open(journal)?;
         state.sync()?;
-        // VectorStore / Embedder skipped — see with_state for details.
+        let config = UserConfig::load()?;
+        if config.cache.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    state.load_vector_store_async(&config).await?;
+                    state.load_embedder_async(&config).await
+                })
+            })?;
+        }
         let info = state.cache_info()?;
         let root = state.journal.root.display().to_string();
         let count = info.entry_count;
@@ -636,15 +658,41 @@ impl ArchelonServer {
         .map_err(|e| e.to_string())
     }
 
-    #[tool(description = "Search journal entries by full-text (FTS5 trigram index). \
-        Supports substring and CJK queries. \
+    #[tool(description = "Search journal entries. \
+        When `cache.embedding.enabled = true` in the user config, uses approximate \
+        (vector/semantic) search for more relevant results. \
+        Otherwise falls back to full-text search (FTS5 trigram index, supports \
+        substring and CJK queries). \
         Returns a JSON array of results ordered by relevance, each with \
-        `title`, `path`, and `score` (BM25 rank; more negative = higher relevance). \
-        Note: semantic/vector search is not supported in this tool.")]
+        `title`, `path`, and `score`.")]
     fn entry_search(&self, Parameters(p): Parameters<EntrySearchParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             self.with_state(|s| {
                 s.sync()?;
+
+                // Auto-embed a small number of pending chunks so freshly-synced
+                // entries are included in vector search results.
+                if let (Some(store), Some(embedder)) = (s.vector_store(), s.embedder()) {
+                    let embedded_keys = store.embedded_chunk_keys().unwrap_or_default();
+                    let pending = vector_store::pending_chunks(&s.conn, &embedded_keys)
+                        .unwrap_or_default();
+                    if !pending.is_empty() && pending.len() <= 50 {
+                        let _ = vector_store::embed_pending_chunks(
+                            &s.conn, store, embedder, |_, _| {}
+                        );
+                    }
+
+                    // Vector search: embed the query and find similar chunks.
+                    let limit = p.limit.unwrap_or(10);
+                    let query_vecs = embedder.embed_texts(&[p.query.as_str()])?;
+                    let query_vec = query_vecs.into_iter().next()
+                        .ok_or_else(|| anyhow::anyhow!("embedder returned empty result"))?;
+                    let raw = store.search_similar(&query_vec, limit * 3)?;
+                    let results = cache::search_vector_entries(raw, limit);
+                    return Ok(serde_json::to_string_pretty(&results)?);
+                }
+
+                // Fallback: full-text search.
                 let results = cache::search_fts_entries(&s.conn, &p.query, p.limit.unwrap_or(10))?;
                 Ok(serde_json::to_string_pretty(&results)?)
             })

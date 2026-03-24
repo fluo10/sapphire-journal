@@ -5,6 +5,7 @@ use archelon_core::{
     journal::Journal,
     user_config::{UserConfig, VectorDb},
     vector_store::{self, SqliteVecStore},
+    JournalState,
 };
 #[cfg(feature = "lancedb-store")]
 use archelon_core::lancedb_store::{self, LanceDbVectorStore};
@@ -30,8 +31,9 @@ pub enum CacheCommand {
 
     /// Generate and store embeddings for entries that do not yet have a vector
     ///
-    /// Requires `vector_db = "sqlite_vec"` or `vector_db = "lancedb"` and a
-    /// `[cache.embedding]` section in ~/.config/archelon/config.toml.
+    /// Requires `[cache.embedding]` with `enabled = true`, `vector_db`, and
+    /// `dimension` set in ~/.config/archelon/config.toml.
+    /// When `enabled = true`, this also runs automatically after `cache sync`.
     Embed,
 
     /// Remove stale cache files from previous schema versions
@@ -88,10 +90,12 @@ fn info(journal: &Journal) -> Result<()> {
         }
     }
 
-    match user_cfg.cache.vector_db {
-        VectorDb::None => {}
-        VectorDb::SqliteVec => {
-            if let Some(embed_cfg) = &user_cfg.cache.embedding {
+    if let Some(embed_cfg) = &user_cfg.cache.embedding {
+        let enabled_str = if embed_cfg.enabled { "enabled" } else { "disabled" };
+        println!("embedding:      {} (provider={}, model={})", enabled_str, embed_cfg.provider, embed_cfg.model);
+        match embed_cfg.vector_db {
+            VectorDb::None => {}
+            VectorDb::SqliteVec => {
                 if let Some(dim) = embed_cfg.dimension {
                     match SqliteVecStore::open(journal, dim) {
                         Ok(store) => match store.vec_info() {
@@ -112,13 +116,9 @@ fn info(journal: &Journal) -> Result<()> {
                 } else {
                     println!("vector backend: sqlite_vec (dimension not configured)");
                 }
-            } else {
-                println!("vector backend: sqlite_vec (no [cache.embedding] configured)");
             }
-        }
-        #[cfg(feature = "lancedb-store")]
-        VectorDb::LanceDb => {
-            if let Some(embed_cfg) = &user_cfg.cache.embedding {
+            #[cfg(feature = "lancedb-store")]
+            VectorDb::LanceDb => {
                 if let Some(dim) = embed_cfg.dimension {
                     match journal.cache_dir() {
                         Ok(root) => {
@@ -162,13 +162,11 @@ fn info(journal: &Journal) -> Result<()> {
                 } else {
                     println!("vector backend: lancedb (dimension not configured)");
                 }
-            } else {
-                println!("vector backend: lancedb (no [cache.embedding] configured)");
             }
-        }
-        #[cfg(not(feature = "lancedb-store"))]
-        VectorDb::LanceDb => {
-            println!("vector backend: lancedb (not compiled in)");
+            #[cfg(not(feature = "lancedb-store"))]
+            VectorDb::LanceDb => {
+                println!("vector backend: lancedb (not compiled in)");
+            }
         }
     }
 
@@ -176,11 +174,19 @@ fn info(journal: &Journal) -> Result<()> {
 }
 
 fn sync(journal: &Journal) -> Result<()> {
-    let conn = cache::open_cache(journal)?;
-    cache::sync_cache(journal, &conn)?;
+    let user_cfg = UserConfig::load()?;
+    let state = JournalState::open(journal.clone())?;
 
-    let info = cache::cache_info(journal, &conn)?;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let embedded = rt.block_on(state.sync_and_embed(&user_cfg))?;
+
+    let info = state.cache_info()?;
     println!("synced: {} entries", info.entry_count);
+    if embedded > 0 {
+        println!("embedded: {embedded} new chunks");
+    }
     Ok(())
 }
 
@@ -212,10 +218,10 @@ fn embed(journal: &Journal) -> Result<()> {
         let _ = std::io::stderr().flush();
     };
 
-    let total_embedded = match user_cfg.cache.vector_db {
+    let total_embedded = match embed_cfg.vector_db {
         VectorDb::None => {
             anyhow::bail!(
-                "vector_db is \"none\" in ~/.config/archelon/config.toml — \
+                "cache.embedding.vector_db is \"none\" in ~/.config/archelon/config.toml — \
                  set it to \"sqlite_vec\" or \"lancedb\" to use vector search"
             );
         }
