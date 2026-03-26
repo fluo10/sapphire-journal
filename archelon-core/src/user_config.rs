@@ -34,14 +34,15 @@ impl UserConfig {
     /// The following environment variables override the corresponding `config.toml`
     /// fields when set to a non-empty value:
     ///
-    /// | Variable                              | Field                          |
-    /// |---------------------------------------|--------------------------------|
-    /// | `ARCHELON_CACHE_VECTOR_DB`            | `cache.vector_db`              |
-    /// | `ARCHELON_CACHE_EMBEDDING_PROVIDER`   | `cache.embedding.provider`     |
-    /// | `ARCHELON_CACHE_EMBEDDING_MODEL`      | `cache.embedding.model`        |
-    /// | `ARCHELON_CACHE_EMBEDDING_API_KEY_ENV`| `cache.embedding.api_key_env`  |
-    /// | `ARCHELON_CACHE_EMBEDDING_BASE_URL`   | `cache.embedding.base_url`     |
-    /// | `ARCHELON_CACHE_EMBEDDING_DIMENSION`  | `cache.embedding.dimension`    |
+    /// | Variable                                | Field                              |
+    /// |-----------------------------------------|------------------------------------|
+    /// | `ARCHELON_CACHE_EMBEDDING_ENABLED`      | `cache.embedding.enabled`          |
+    /// | `ARCHELON_CACHE_EMBEDDING_VECTOR_DB`    | `cache.embedding.vector_db`        |
+    /// | `ARCHELON_CACHE_EMBEDDING_PROVIDER`     | `cache.embedding.provider`         |
+    /// | `ARCHELON_CACHE_EMBEDDING_MODEL`        | `cache.embedding.model`            |
+    /// | `ARCHELON_CACHE_EMBEDDING_API_KEY_ENV`  | `cache.embedding.api_key_env`      |
+    /// | `ARCHELON_CACHE_EMBEDDING_BASE_URL`     | `cache.embedding.base_url`         |
+    /// | `ARCHELON_CACHE_EMBEDDING_DIMENSION`    | `cache.embedding.dimension`        |
     pub fn load() -> Result<Self> {
         let path = Self::path();
         let mut config = if !path.exists() {
@@ -55,16 +56,26 @@ impl UserConfig {
     }
 
     /// Apply environment variable overrides on top of the already-loaded config.
+    ///
+    /// | Variable                                | Field                              |
+    /// |-----------------------------------------|------------------------------------|
+    /// | `ARCHELON_CACHE_EMBEDDING_ENABLED`      | `cache.embedding.enabled`          |
+    /// | `ARCHELON_CACHE_EMBEDDING_VECTOR_DB`    | `cache.embedding.vector_db`        |
+    /// | `ARCHELON_CACHE_EMBEDDING_PROVIDER`     | `cache.embedding.provider`         |
+    /// | `ARCHELON_CACHE_EMBEDDING_MODEL`        | `cache.embedding.model`            |
+    /// | `ARCHELON_CACHE_EMBEDDING_API_KEY_ENV`  | `cache.embedding.api_key_env`      |
+    /// | `ARCHELON_CACHE_EMBEDDING_BASE_URL`     | `cache.embedding.base_url`         |
+    /// | `ARCHELON_CACHE_EMBEDDING_DIMENSION`    | `cache.embedding.dimension`        |
     fn apply_env_overrides(&mut self) {
-        if let Ok(val) = std::env::var("ARCHELON_CACHE_VECTOR_DB") {
-            match val.as_str() {
-                "none" => self.cache.vector_db = VectorDb::None,
-                "sqlite_vec" => self.cache.vector_db = VectorDb::SqliteVec,
-                "lancedb" => self.cache.vector_db = VectorDb::LanceDb,
-                _ => {}
-            }
-        }
-
+        let enabled = std::env::var("ARCHELON_CACHE_EMBEDDING_ENABLED").ok()
+            .map(|v| matches!(v.as_str(), "1" | "true" | "yes"));
+        let vector_db = std::env::var("ARCHELON_CACHE_EMBEDDING_VECTOR_DB").ok()
+            .and_then(|v| match v.as_str() {
+                "none" => Some(VectorDb::None),
+                "sqlite_vec" => Some(VectorDb::SqliteVec),
+                "lancedb" => Some(VectorDb::LanceDb),
+                _ => None,
+            });
         let provider = std::env::var("ARCHELON_CACHE_EMBEDDING_PROVIDER").ok();
         let model = std::env::var("ARCHELON_CACHE_EMBEDDING_MODEL").ok();
         let api_key_env = std::env::var("ARCHELON_CACHE_EMBEDDING_API_KEY_ENV").ok();
@@ -73,7 +84,9 @@ impl UserConfig {
             .ok()
             .and_then(|v| v.parse::<u32>().ok());
 
-        let any_embedding = provider.is_some()
+        let any_embedding = enabled.is_some()
+            || vector_db.is_some()
+            || provider.is_some()
             || model.is_some()
             || api_key_env.is_some()
             || base_url.is_some()
@@ -81,6 +94,8 @@ impl UserConfig {
 
         if any_embedding {
             let embed = self.cache.embedding.get_or_insert_with(|| EmbeddingConfig {
+                enabled: false,
+                vector_db: VectorDb::default(),
                 provider: String::new(),
                 model: String::new(),
                 api_key_env: None,
@@ -88,6 +103,8 @@ impl UserConfig {
                 dimension: None,
                 extra: IndexMap::new(),
             });
+            if let Some(v) = enabled { embed.enabled = v; }
+            if let Some(v) = vector_db { embed.vector_db = v; }
             if let Some(v) = provider { embed.provider = v; }
             if let Some(v) = model { embed.model = v; }
             if let Some(v) = api_key_env { embed.api_key_env = Some(v); }
@@ -100,18 +117,12 @@ impl UserConfig {
 /// Cache-related configuration (`[cache]` section in the user config).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheConfig {
-    /// Vector DB backend used for approximate (semantic) text search.
-    ///
-    /// Defaults to [`VectorDb::None`], which disables vector search entirely.
-    /// Changing this requires a text embedding provider to also be configured
-    /// in the `[cache.embedding]` section.
-    #[serde(default)]
-    pub vector_db: VectorDb,
-
     /// Text embedding provider settings.
     ///
-    /// Required when `vector_db` is not [`VectorDb::None`].
-    /// When `vector_db = "none"` this section is ignored.
+    /// When `enabled = true` inside this section, `cache sync` and MCP
+    /// `entry_search` will automatically embed pending chunks after each sync,
+    /// and the VSCode sidebar search will use approximate (vector) search
+    /// instead of full-text search.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding: Option<EmbeddingConfig>,
 
@@ -123,7 +134,6 @@ pub struct CacheConfig {
 impl Default for CacheConfig {
     fn default() -> Self {
         CacheConfig {
-            vector_db: VectorDb::default(),
             embedding: None,
             extra: IndexMap::new(),
         }
@@ -168,6 +178,20 @@ impl VectorDb {
 /// Text embedding provider configuration (`[cache.embedding]` subsection).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingConfig {
+    /// Enable embedding and vector search.
+    ///
+    /// When `true`, `cache sync` and MCP `entry_search` will run
+    /// `embed_pending_chunks` after every sync, and the VSCode sidebar
+    /// search will use approximate (vector) search instead of FTS5.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Vector DB backend used for approximate (semantic) text search.
+    ///
+    /// Required when `enabled = true`.
+    #[serde(default)]
+    pub vector_db: VectorDb,
+
     /// Embedding provider identifier.
     ///
     /// - `"openai"` — OpenAI-compatible REST API

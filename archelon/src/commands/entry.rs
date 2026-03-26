@@ -372,7 +372,8 @@ fn open_state(journal_dir: Option<&Path>) -> Result<JournalState> {
 }
 
 fn resolve_entry(state: &JournalState, entry: &str) -> Result<PathBuf> {
-    ops::resolve_entry(&EntryRef::parse(entry), &state.conn).map_err(Into::into)
+    let conn = state.open_conn()?;
+    ops::resolve_entry(&EntryRef::parse(entry), &conn).map_err(Into::into)
 }
 
 // ── display mode ──────────────────────────────────────────────────────────────
@@ -540,7 +541,9 @@ fn show(path: &Path) -> Result<()> {
 fn new(state: &JournalState, fields: EntryFields) -> Result<()> {
     state.sync()?;
     let dest = ops::create_entry(state, fields.into())?;
-    let _ = cache::upsert_entry_from_path(&state.conn, &dest);
+    if let Ok(conn) = state.open_conn() {
+        let _ = cache::upsert_entry_from_path(&conn, &dest);
+    }
     println!("created: {}", dest.display());
     Ok(())
 }
@@ -563,7 +566,9 @@ fn edit(path: &Path, state: &JournalState) -> Result<()> {
         Some(new_path) => { println!("updated: {}", new_path.display()); new_path }
         None           => { println!("updated: {}", path.display()); path.to_path_buf() }
     };
-    let _ = cache::upsert_entry_from_path(&state.conn, &final_path);
+    if let Ok(conn) = state.open_conn() {
+        let _ = cache::upsert_entry_from_path(&conn, &final_path);
+    }
     Ok(())
 }
 
@@ -584,7 +589,9 @@ fn edit_new(state: &JournalState) -> Result<()> {
         Some(new_path) => { println!("created: {}", new_path.display()); new_path }
         None           => { println!("created: {}", path.display()); path }
     };
-    let _ = cache::upsert_entry_from_path(&state.conn, &final_path);
+    if let Ok(conn) = state.open_conn() {
+        let _ = cache::upsert_entry_from_path(&conn, &final_path);
+    }
     Ok(())
 }
 
@@ -607,13 +614,14 @@ fn set(state: &JournalState, path: &Path, fields: EntryFields, no_parent: bool) 
         bail!("nothing to update — specify at least one field");
     }
     state.sync()?;
+    let conn = state.open_conn()?;
     let mut core_fields: CoreEntryFields = fields.into();
     if no_parent {
         core_fields.parent = UpdateOption::Clear;
     }
-    let new_path_opt = ops::update_entry(path, &state.conn, core_fields)?;
+    let new_path_opt = ops::update_entry(path, &conn, core_fields)?;
     let final_path = new_path_opt.as_deref().unwrap_or(path);
-    let _ = cache::upsert_entry_from_path(&state.conn, final_path);
+    let _ = cache::upsert_entry_from_path(&conn, final_path);
     if let Some(new_path) = new_path_opt {
         println!("updated and renamed: {}", new_path.display());
     } else {
@@ -659,7 +667,8 @@ fn entry_path(state: &JournalState, entry: Option<&str>, new: bool, parent: Opti
         let parent_id = if let Some(p) = parent {
             let entry_ref = EntryRef::parse(p);
             state.sync()?;
-            Some(ops::resolve_parent_id(&state.conn, Some(&entry_ref))?)
+            let conn = state.open_conn()?;
+            Some(ops::resolve_parent_id(&conn, Some(&entry_ref))?)
         } else {
             None
         };
@@ -678,7 +687,9 @@ fn remove(state: &JournalState, entry: &str) -> Result<()> {
     state.sync()?;
     let path = resolve_entry(state, entry)?;
     ops::remove_entry(&path)?;
-    let _ = cache::remove_from_cache(&state.conn, &path);
+    if let Ok(conn) = state.open_conn() {
+        let _ = cache::remove_from_cache(&conn, &path);
+    }
     println!("removed: {}", path.display());
     Ok(())
 }
@@ -703,12 +714,13 @@ fn search(state: &JournalState, query: &str, semantic: bool, limit: usize) -> Re
             .ok_or_else(|| anyhow::anyhow!("embedding API returned empty result"))?;
 
         state.load_vector_store(&user_cfg).map_err(anyhow::Error::msg)?;
-        let store = state.vector_store().ok_or_else(|| {
+        let store_mutex = state.vector_store().ok_or_else(|| {
             anyhow::anyhow!(
                 "semantic search requires vector_db = \"sqlite_vec\" or \"lancedb\" \
                  in ~/.config/archelon/config.toml"
             )
         })?;
+        let store = store_mutex.lock().unwrap();
 
         let results = store.search_similar(&query_vec, limit)?;
 
@@ -722,7 +734,8 @@ fn search(state: &JournalState, query: &str, semantic: bool, limit: usize) -> Re
     } else {
         // ── full-text search (FTS5 trigram) ───────────────────────────────────
         state.sync()?;
-        let results = cache::search_fts_entries(&state.conn, query, limit)?;
+        let conn = state.open_conn()?;
+        let results = cache::search_fts_entries(&conn, query, limit)?;
 
         if results.is_empty() {
             println!("no results");

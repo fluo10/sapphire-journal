@@ -9,6 +9,8 @@ use archelon_core::{
     ops::{self, EntryFields, EntryFilter, EntryListItem, FieldSelector, SortField, SortOrder, UpdateOption},
     parser::read_entry,
     period::{parse_datetime, parse_datetime_end, parse_period},
+    user_config::UserConfig,
+    vector_store::{self},
     JournalState,
 };
 use rmcp::{
@@ -49,6 +51,10 @@ impl ArchelonServer {
     }
 
     /// Provide access to the cached state, auto-opening on first use.
+    ///
+    /// When `cache.embedding.enabled = true`, the vector store and embedder
+    /// are initialised on first call via [`tokio::task::block_in_place`], which
+    /// is safe on the multi-thread runtime used by the MCP server.
     fn with_state<F, T>(&self, f: F) -> anyhow::Result<T>
     where
         F: FnOnce(&JournalState) -> anyhow::Result<T>,
@@ -57,10 +63,18 @@ impl ArchelonServer {
         if guard.is_none() {
             let journal = self.open_default_journal()?;
             let state = JournalState::open(journal)?;
-            // VectorStore and Embedder are NOT loaded here: their sync initializers
-            // call Runtime::new().block_on() internally, which panics when nested
-            // inside the tokio runtime that drives the MCP server.
-            // Load them via the async variants when a semantic-search tool is added.
+            let config = UserConfig::load()?;
+            if config.cache.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
+                // block_in_place suspends the current tokio worker and lets us
+                // call block_on without nesting runtimes.  Requires the
+                // multi-thread runtime (the default for #[tokio::main]).
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        state.load_vector_store_async(&config).await?;
+                        state.load_embedder_async(&config).await
+                    })
+                })?;
+            }
             *guard = Some(state);
         }
         f(guard.as_ref().unwrap())
@@ -76,7 +90,15 @@ impl ArchelonServer {
         };
         let state = JournalState::open(journal)?;
         state.sync()?;
-        // VectorStore / Embedder skipped — see with_state for details.
+        let config = UserConfig::load()?;
+        if config.cache.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    state.load_vector_store_async(&config).await?;
+                    state.load_embedder_async(&config).await
+                })
+            })?;
+        }
         let info = state.cache_info()?;
         let root = state.journal.root.display().to_string();
         let count = info.entry_count;
@@ -414,7 +436,8 @@ impl ArchelonServer {
     fn entry_show(&self, Parameters(p): Parameters<EntryShowParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let path = self.with_state(|s| {
-                ops::resolve_entry(&p.entry, &s.conn).map_err(Into::into)
+                let conn = s.open_conn()?;
+                ops::resolve_entry(&p.entry, &conn).map_err(Into::into)
             })?;
             let entry = read_entry(&path)?;
             let fm = &entry.frontmatter;
@@ -470,7 +493,9 @@ impl ArchelonServer {
             self.with_state(|s| {
                 s.sync()?;
                 let dest = ops::create_entry(s, fields)?;
-                let _ = cache::upsert_entry_from_path(&s.conn, &dest);
+                if let Ok(conn) = s.open_conn() {
+                    let _ = cache::upsert_entry_from_path(&conn, &dest);
+                }
                 Ok(format!("created: {}", dest.display()))
             })
         })()
@@ -513,12 +538,13 @@ impl ArchelonServer {
             };
             self.with_state(|s| {
                 s.sync()?;
-                let path = ops::resolve_entry(&p.entry, &s.conn)?;
-                let msg = if let Some(new_path) = ops::update_entry(&path, &s.conn, fields)? {
-                    let _ = cache::upsert_entry_from_path(&s.conn, &new_path);
+                let conn = s.open_conn()?;
+                let path = ops::resolve_entry(&p.entry, &conn)?;
+                let msg = if let Some(new_path) = ops::update_entry(&path, &conn, fields)? {
+                    let _ = cache::upsert_entry_from_path(&conn, &new_path);
                     format!("updated and renamed: {}", new_path.display())
                 } else {
-                    let _ = cache::upsert_entry_from_path(&s.conn, &path);
+                    let _ = cache::upsert_entry_from_path(&conn, &path);
                     format!("updated: {}", path.display())
                 };
                 Ok(msg)
@@ -532,7 +558,8 @@ impl ArchelonServer {
     fn entry_check(&self, Parameters(p): Parameters<EntryCheckParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let path = self.with_state(|s| {
-                ops::resolve_entry(&p.entry, &s.conn).map_err(Into::into)
+                let conn = s.open_conn()?;
+                ops::resolve_entry(&p.entry, &conn).map_err(Into::into)
             })?;
             let issues = ops::check_entry(&path)?;
             if issues.is_empty() {
@@ -554,7 +581,8 @@ impl ArchelonServer {
     fn entry_fix(&self, Parameters(p): Parameters<EntryFixParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let path = self.with_state(|s| {
-                ops::resolve_entry(&p.entry, &s.conn).map_err(Into::into)
+                let conn = s.open_conn()?;
+                ops::resolve_entry(&p.entry, &conn).map_err(Into::into)
             })?;
             match ops::fix_entry(&path)? {
                 Some(new_path) => Ok(format!(
@@ -573,9 +601,10 @@ impl ArchelonServer {
         (|| -> anyhow::Result<String> {
             self.with_state(|s| {
                 s.sync()?;
-                let path = ops::resolve_entry(&p.entry, &s.conn)?;
+                let conn = s.open_conn()?;
+                let path = ops::resolve_entry(&p.entry, &conn)?;
                 ops::remove_entry(&path)?;
-                let _ = cache::remove_from_cache(&s.conn, &path);
+                let _ = cache::remove_from_cache(&conn, &path);
                 Ok(format!("removed: {}", path.display()))
             })
         })()
@@ -636,16 +665,44 @@ impl ArchelonServer {
         .map_err(|e| e.to_string())
     }
 
-    #[tool(description = "Search journal entries by full-text (FTS5 trigram index). \
-        Supports substring and CJK queries. \
+    #[tool(description = "Search journal entries. \
+        When `cache.embedding.enabled = true` in the user config, uses approximate \
+        (vector/semantic) search for more relevant results. \
+        Otherwise falls back to full-text search (FTS5 trigram index, supports \
+        substring and CJK queries). \
         Returns a JSON array of results ordered by relevance, each with \
-        `title`, `path`, and `score` (BM25 rank; more negative = higher relevance). \
-        Note: semantic/vector search is not supported in this tool.")]
+        `title`, `path`, and `score`.")]
     fn entry_search(&self, Parameters(p): Parameters<EntrySearchParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             self.with_state(|s| {
                 s.sync()?;
-                let results = cache::search_fts_entries(&s.conn, &p.query, p.limit.unwrap_or(10))?;
+
+                // Auto-embed a small number of pending chunks so freshly-synced
+                // entries are included in vector search results.
+                let conn = s.open_conn()?;
+                if let (Some(store_mutex), Some(embedder)) = (s.vector_store(), s.embedder()) {
+                    let store = store_mutex.lock().unwrap();
+                    let embedded_keys = store.embedded_chunk_keys().unwrap_or_default();
+                    let pending = vector_store::pending_chunks(&conn, &embedded_keys)
+                        .unwrap_or_default();
+                    if !pending.is_empty() && pending.len() <= 50 {
+                        let _ = vector_store::embed_pending_chunks(
+                            &conn, &**store, embedder, |_, _| {}
+                        );
+                    }
+
+                    // Vector search: embed the query and find similar chunks.
+                    let limit = p.limit.unwrap_or(10);
+                    let query_vecs = embedder.embed_texts(&[p.query.as_str()])?;
+                    let query_vec = query_vecs.into_iter().next()
+                        .ok_or_else(|| anyhow::anyhow!("embedder returned empty result"))?;
+                    let raw = store.search_similar(&query_vec, limit * 3)?;
+                    let results = cache::search_vector_entries(raw, limit);
+                    return Ok(serde_json::to_string_pretty(&results)?);
+                }
+
+                // Fallback: full-text search.
+                let results = cache::search_fts_entries(&conn, &p.query, p.limit.unwrap_or(10))?;
                 Ok(serde_json::to_string_pretty(&results)?)
             })
         })()

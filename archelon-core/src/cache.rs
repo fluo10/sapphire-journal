@@ -824,6 +824,42 @@ pub fn search_fts_entries(
     Ok(results)
 }
 
+/// Convert vector search results to [`SearchResult`], deduplicated per entry.
+///
+/// When multiple chunks from the same entry match, only the best-scoring
+/// (lowest L2 distance) chunk is kept. Returns up to `limit` results ordered
+/// by ascending score (most similar first).
+pub fn search_vector_entries(
+    results: Vec<crate::vector_store::ChunkSearchResult>,
+    limit: usize,
+) -> Vec<SearchResult> {
+    use std::collections::HashMap;
+
+    let mut best: HashMap<i64, crate::vector_store::ChunkSearchResult> = HashMap::new();
+    for r in results {
+        best.entry(r.entry_id)
+            .and_modify(|e| {
+                if r.score < e.score {
+                    *e = r.clone();
+                }
+            })
+            .or_insert(r);
+    }
+
+    let mut deduped: Vec<_> = best.into_values().collect();
+    deduped.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+    deduped.truncate(limit);
+    deduped
+        .into_iter()
+        .map(|r| SearchResult {
+            id: r.entry_id,
+            title: r.entry_title,
+            path: r.entry_path,
+            score: r.score,
+        })
+        .collect()
+}
+
 fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
     let fm = &entry.frontmatter;
     let path_str = entry.path.to_string_lossy();

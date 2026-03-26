@@ -32,17 +32,18 @@ fn show(journal_dir: Option<&Path>) -> Result<()> {
         println!();
         println!("# To customise, create the file above with settings such as:");
         println!("#");
-        println!("# [cache]");
-        println!("# vector_db = \"none\"   # \"none\" | \"sqlite_vec\" | \"lancedb\"");
-        println!("#");
         println!("# [cache.embedding]");
-        println!("# provider    = \"openai\"");
-        println!("# model       = \"text-embedding-3-small\"");
+        println!("# enabled   = true");
+        println!("# vector_db = \"sqlite_vec\"   # \"none\" | \"sqlite_vec\" | \"lancedb\"");
+        println!("# provider  = \"openai\"");
+        println!("# model     = \"text-embedding-3-small\"");
+        println!("# dimension = 1536");
         println!("# api_key_env = \"OPENAI_API_KEY\"");
         println!("#");
-        println!("# For local providers (Ollama, etc.):");
+        println!("# For local providers (Ollama, fastembed, etc.):");
         println!("# provider = \"ollama\"");
         println!("# model    = \"nomic-embed-text\"");
+        println!("# dimension = 768");
         println!("# base_url = \"http://localhost:11434\"");
     }
 

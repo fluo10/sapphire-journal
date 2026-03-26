@@ -58,6 +58,7 @@ pub struct Chunk {
 }
 
 /// A result returned by [`VectorStore::search_similar`].
+#[derive(Debug, Clone)]
 pub struct ChunkSearchResult {
     pub entry_id: i64,
     pub entry_title: String,
