@@ -529,7 +529,7 @@ pub fn list_entries(
     filter: &EntryFilter,
 ) -> Result<Vec<(EntryHeader, Vec<MatchFlag>)>> {
     if let Ok(conn) = state.open_conn() {
-        let _ = cache::sync_cache(&state.journal, &conn);
+        let _ = cache::sync_cache(&state.journal, &conn, state.retrieve_db());
         if let Ok(entries) = cache::list_entries_from_cache(&conn) {
             return apply_filter_and_sort(entries, filter);
         }

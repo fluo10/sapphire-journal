@@ -1,29 +1,24 @@
 #![cfg(feature = "lancedb-store")]
 //! LanceDB vector store backend.
 //!
-//! Stores chunk embeddings in a LanceDB database at
-//! `$XDG_CACHE_HOME/archelon/{journal_id}/lancedb/`.
+//! Stores chunk embeddings in a LanceDB database at a caller-specified directory.
 //!
 //! # Chunk table schema
 //!
 //! | column        | type                        | notes                        |
 //! |---------------|-----------------------------|------------------------------|
-//! | `entry_id`    | `Int64`                     | CarettaId; stable across      |
-//! |               |                             | SQLite cache rebuilds         |
+//! | `doc_id`      | `Int64`                     | stable document ID           |
 //! | `chunk_index` | `Int32`                     | paragraph position (0-based) |
-//! | `entry_title` | `Utf8`                      | denormalised for display     |
-//! | `entry_path`  | `Utf8`                      | absolute file path           |
+//! | `doc_title`   | `Utf8`                      | denormalised for display     |
+//! | `doc_path`    | `Utf8`                      | absolute file path           |
 //! | `text`        | `Utf8`                      | embeddable chunk text        |
 //! | `embedding`   | `FixedSizeList<Float32, N>` | N = embedding_dim            |
-//!
-//! The composite key `(entry_id, chunk_index)` is stable because `entry_id`
-//! is the CarettaId stored in the file's frontmatter, not an auto-increment.
 //!
 //! # Async boundary
 //!
 //! All LanceDB operations are inherently async.  [`LanceDbVectorStore`]
 //! wraps them in an internal `tokio::runtime::Runtime` so that the
-//! [`VectorStore`] trait (and hence all CLI commands) remains synchronous.
+//! [`VectorStore`] trait remains synchronous.
 
 use std::{
     collections::HashSet,
@@ -48,15 +43,12 @@ const TABLE_NAME: &str = "chunks";
 
 /// Schema version for the LanceDB store.
 ///
-/// Used to compute the versioned subdirectory within [`Journal::lancedb_root()`]:
-/// `lancedb/lancedb_v{LANCEDB_SCHEMA_VERSION}/`.  Bump this whenever the Arrow table
-/// schema changes (e.g. new columns) so old data is preserved alongside the new
-/// store until explicitly removed with `archelon cache clean`.
+/// Used to compute the versioned subdirectory:
+/// `{root}/lancedb_v{LANCEDB_SCHEMA_VERSION}/`.  Bump whenever the Arrow
+/// table schema changes so old data is preserved until explicitly removed.
 pub const LANCEDB_SCHEMA_VERSION: i32 = 1;
 
 /// Returns the active LanceDB store directory for the given root.
-///
-/// Resolves to `{root}/v{LANCEDB_SCHEMA_VERSION}/`.
 pub fn versioned_dir(root: &Path) -> std::path::PathBuf {
     root.join(format!("lancedb_v{LANCEDB_SCHEMA_VERSION}"))
 }
@@ -100,13 +92,12 @@ impl LanceStore {
         Ok(LanceStore { table, dim })
     }
 
-    /// Return all (entry_id, chunk_index) pairs stored in LanceDB.
     async fn embedded_chunk_keys(&self) -> Result<HashSet<(i64, usize)>> {
         let batches: Vec<RecordBatch> = self
             .table
             .query()
             .select(lancedb::query::Select::Columns(vec![
-                "entry_id".to_string(),
+                "doc_id".to_string(),
                 "chunk_index".to_string(),
             ]))
             .execute()
@@ -118,38 +109,37 @@ impl LanceStore {
 
         let mut keys = HashSet::new();
         for batch in &batches {
-            let entry_ids = batch
-                .column_by_name("entry_id")
+            let doc_ids = batch
+                .column_by_name("doc_id")
                 .and_then(|c| c.as_any().downcast_ref::<Int64Array>());
             let chunk_idxs = batch
                 .column_by_name("chunk_index")
                 .and_then(|c| c.as_any().downcast_ref::<Int32Array>());
-            if let (Some(eids), Some(cidxs)) = (entry_ids, chunk_idxs) {
+            if let (Some(dids), Some(cidxs)) = (doc_ids, chunk_idxs) {
                 for i in 0..batch.num_rows() {
-                    keys.insert((eids.value(i), cidxs.value(i) as usize));
+                    keys.insert((dids.value(i), cidxs.value(i) as usize));
                 }
             }
         }
         Ok(keys)
     }
 
-    /// Insert a batch of chunks with their embeddings.
     async fn insert_embeddings(&self, chunks: &[Chunk], embeddings: &[Vec<f32>]) -> Result<()> {
         if chunks.is_empty() {
             return Ok(());
         }
         let schema = make_schema(self.dim);
 
-        let entry_ids: Vec<i64> = chunks.iter().map(|c| c.entry_id).collect();
+        let doc_ids: Vec<i64> = chunks.iter().map(|c| c.doc_id).collect();
         let chunk_idxs: Vec<i32> = chunks.iter().map(|c| c.chunk_index as i32).collect();
-        let titles: Vec<&str> = chunks.iter().map(|c| c.entry_title.as_str()).collect();
-        let paths: Vec<&str> = chunks.iter().map(|c| c.entry_path.as_str()).collect();
+        let titles: Vec<&str> = chunks.iter().map(|c| c.doc_title.as_str()).collect();
+        let paths: Vec<&str> = chunks.iter().map(|c| c.doc_path.as_str()).collect();
         let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
 
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
-                Arc::new(Int64Array::from(entry_ids)),
+                Arc::new(Int64Array::from(doc_ids)),
                 Arc::new(Int32Array::from(chunk_idxs)),
                 Arc::new(StringArray::from(titles)),
                 Arc::new(StringArray::from(paths)),
@@ -167,7 +157,6 @@ impl LanceStore {
         Ok(())
     }
 
-    /// KNN search: return the `limit` most similar chunks.
     async fn search_similar(
         &self,
         query_vec: &[f32],
@@ -188,22 +177,22 @@ impl LanceStore {
 
         let mut results = Vec::new();
         for batch in &batches {
-            let entry_ids = batch
-                .column_by_name("entry_id")
+            let doc_ids = batch
+                .column_by_name("doc_id")
                 .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
-                .ok_or_else(|| Error::Embed("missing `entry_id` in search result".into()))?;
+                .ok_or_else(|| Error::Embed("missing `doc_id` in search result".into()))?;
             let chunk_idxs = batch
                 .column_by_name("chunk_index")
                 .and_then(|c| c.as_any().downcast_ref::<Int32Array>())
                 .ok_or_else(|| Error::Embed("missing `chunk_index` in search result".into()))?;
             let titles = batch
-                .column_by_name("entry_title")
+                .column_by_name("doc_title")
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>())
-                .ok_or_else(|| Error::Embed("missing `entry_title` in search result".into()))?;
+                .ok_or_else(|| Error::Embed("missing `doc_title` in search result".into()))?;
             let paths = batch
-                .column_by_name("entry_path")
+                .column_by_name("doc_path")
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>())
-                .ok_or_else(|| Error::Embed("missing `entry_path` in search result".into()))?;
+                .ok_or_else(|| Error::Embed("missing `doc_path` in search result".into()))?;
             let texts = batch
                 .column_by_name("text")
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>())
@@ -215,10 +204,10 @@ impl LanceStore {
 
             for i in 0..batch.num_rows() {
                 results.push(ChunkSearchResult {
-                    entry_id: entry_ids.value(i),
+                    doc_id: doc_ids.value(i),
                     chunk_index: chunk_idxs.value(i) as usize,
-                    entry_title: titles.value(i).to_owned(),
-                    entry_path: paths.value(i).to_owned(),
+                    doc_title: titles.value(i).to_owned(),
+                    doc_path: paths.value(i).to_owned(),
                     chunk_text: texts.value(i).to_owned(),
                     score: dists.value(i) as f64,
                 });
@@ -228,10 +217,7 @@ impl LanceStore {
     }
 
     async fn embedded_count(&self) -> u64 {
-        self.table
-            .count_rows(None)
-            .await
-            .unwrap_or(0) as u64
+        self.table.count_rows(None).await.unwrap_or(0) as u64
     }
 }
 
@@ -247,7 +233,7 @@ pub struct LanceDbVectorStore {
 }
 
 impl LanceDbVectorStore {
-    /// Open (or create) the LanceDB vector store for `data_dir` with
+    /// Open (or create) the LanceDB vector store at `data_dir` with
     /// `embedding_dim` dimensions.
     pub fn new(data_dir: &Path, embedding_dim: u32) -> Result<Self> {
         let rt = tokio::runtime::Runtime::new()
@@ -256,7 +242,10 @@ impl LanceDbVectorStore {
         Ok(Self { inner, rt })
     }
 
-    /// Read vector index statistics for display in `cache info`.
+    /// Read vector index statistics.
+    ///
+    /// `sqlite_conn` must be a connection to the retrieve SQLite database
+    /// (which holds the `chunks` table used to compute the pending count).
     pub fn vec_info(&self, sqlite_conn: &rusqlite::Connection) -> Result<VecInfo> {
         let vector_count = self.rt.block_on(self.inner.embedded_count());
         let chunk_count: u64 = sqlite_conn
@@ -288,10 +277,10 @@ impl VectorStore for LanceDbVectorStore {
 
 fn make_schema(dim: i32) -> Arc<Schema> {
     Arc::new(Schema::new(vec![
-        Field::new("entry_id", DataType::Int64, false),
+        Field::new("doc_id", DataType::Int64, false),
         Field::new("chunk_index", DataType::Int32, false),
-        Field::new("entry_title", DataType::Utf8, false),
-        Field::new("entry_path", DataType::Utf8, false),
+        Field::new("doc_title", DataType::Utf8, false),
+        Field::new("doc_path", DataType::Utf8, false),
         Field::new("text", DataType::Utf8, false),
         Field::new(
             "embedding",

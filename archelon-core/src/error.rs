@@ -54,3 +54,19 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+impl From<archelon_retrieve::Error> for Error {
+    fn from(e: archelon_retrieve::Error) -> Self {
+        match e {
+            archelon_retrieve::Error::Sqlite(e) => Error::Cache(e),
+            archelon_retrieve::Error::Embed(s) => Error::Embed(s),
+            archelon_retrieve::Error::Io(e) => Error::Io(e),
+            archelon_retrieve::Error::SchemaTooNew { db_version, app_version } => {
+                Error::InvalidConfig(format!(
+                    "retrieve DB schema v{db_version} is newer than supported (v{app_version}); \
+                     delete the retrieve DB and re-sync"
+                ))
+            }
+        }
+    }
+}

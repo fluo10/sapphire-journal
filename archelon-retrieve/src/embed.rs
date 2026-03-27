@@ -1,7 +1,6 @@
 //! Text embedding providers.
 //!
-//! Converts text (entry title + body) into float vectors used for semantic
-//! similarity search via the sqlite-vec backend.
+//! Converts text into float vectors used for semantic similarity search.
 //!
 //! The supported providers are:
 //!
@@ -9,12 +8,27 @@
 //! - **`"ollama"`** — Ollama `/api/embed` endpoint.
 //! - **`"fastembed"`** — Local ONNX inference via the `fastembed` crate.
 //!   No server required; model weights are downloaded from Hugging Face
-//!   on first use and cached under `~/.cache/archelon/fastembed/`.
+//!   on first use and cached under `~/.cache/archelon-retrieve/fastembed/`.
 
-use crate::{
-    error::{Error, Result},
-    user_config::EmbeddingConfig,
-};
+use crate::error::{Error, Result};
+
+// ── configuration ─────────────────────────────────────────────────────────────
+
+/// Embedding provider configuration passed to [`build_embedder`].
+#[derive(Debug, Clone)]
+pub struct EmbeddingConfig {
+    /// Embedding provider: `"openai"`, `"ollama"`, or `"fastembed"`.
+    pub provider: String,
+    /// Model name or identifier (provider-specific).
+    pub model: String,
+    /// Environment variable holding the API key (default: `"OPENAI_API_KEY"`).
+    /// Only used by the `"openai"` provider.
+    pub api_key_env: Option<String>,
+    /// Base URL override for the embedding endpoint.
+    /// For `"openai"`: defaults to `https://api.openai.com`.
+    /// For `"ollama"`: defaults to `http://localhost:11434`.
+    pub base_url: Option<String>,
+}
 
 // ── Embedder trait ────────────────────────────────────────────────────────────
 
@@ -31,7 +45,7 @@ pub trait Embedder: Send + Sync {
     fn embed_texts(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>>;
 }
 
-/// Build an [`Embedder`] from a config section.
+/// Build an [`Embedder`] from a config.
 ///
 /// For `"fastembed"` this loads the ONNX model from disk (or downloads it on
 /// first use), which can take several seconds.  For REST providers the
@@ -99,7 +113,7 @@ impl FastEmbedEmbedder {
             }
         };
 
-        let cache_dir = xdg_cache_home().join("archelon").join("fastembed");
+        let cache_dir = xdg_cache_home().join("archelon-retrieve").join("fastembed");
         let model = TextEmbedding::try_new(
             InitOptions::new(model_variant)
                 .with_cache_dir(cache_dir)
@@ -121,32 +135,6 @@ impl Embedder for FastEmbedEmbedder {
         self.model
             .embed(texts_owned, None)
             .map_err(|e| Error::Embed(format!("fastembed embedding failed: {e}")))
-    }
-}
-
-// ── free function (backward compat) ───────────────────────────────────────────
-
-/// Generate embeddings for a batch of texts using the given config.
-///
-/// This creates a fresh provider instance on every call.
-/// Prefer holding a cached [`Embedder`] (via [`build_embedder`] stored in
-/// [`crate::JournalState`]) to avoid repeated model loading.
-pub fn embed_texts(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-    if texts.is_empty() {
-        return Ok(Vec::new());
-    }
-    match config.provider.as_str() {
-        "openai" => embed_openai(config, texts),
-        "ollama" => embed_ollama(config, texts),
-        #[cfg(feature = "fastembed-embed")]
-        "fastembed" => {
-            let embedder = FastEmbedEmbedder::new(config)?;
-            embedder.embed_texts(texts)
-        }
-        other => Err(Error::Embed(format!(
-            "unknown embedding provider `{other}`; supported values: openai, ollama{}",
-            if cfg!(feature = "fastembed-embed") { ", fastembed" } else { "" }
-        ))),
     }
 }
 

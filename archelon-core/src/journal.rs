@@ -170,6 +170,14 @@ impl Journal {
         Ok(xdg_cache_home().join("archelon").join(id.to_string()))
     }
 
+    /// Path to the retrieve database (FTS + vector index) for this journal.
+    ///
+    /// Resolves to `{cache_dir}/retrieve_v1.db`.
+    pub fn retrieve_db_path(&self) -> Result<PathBuf> {
+        use archelon_retrieve::db::SCHEMA_VERSION as RETRIEVE_SCHEMA_VERSION;
+        Ok(self.cache_dir()?.join(format!("retrieve_v{RETRIEVE_SCHEMA_VERSION}.db")))
+    }
+
 }
 
 fn xdg_cache_home() -> PathBuf {

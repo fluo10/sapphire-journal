@@ -1,14 +1,10 @@
 use anyhow::{Context, Result};
 use archelon_core::{
     cache,
-    embed,
     journal::Journal,
     user_config::{UserConfig, VectorDb},
-    vector_store::{self, SqliteVecStore},
     JournalState,
 };
-#[cfg(feature = "lancedb-store")]
-use archelon_core::lancedb_store::{self, LanceDbVectorStore};
 use clap::Subcommand;
 use std::{io::Write as _, path::Path};
 
@@ -65,8 +61,8 @@ fn open_journal(journal_dir: Option<&Path>) -> Result<Journal> {
 
 fn info(journal: &Journal) -> Result<()> {
     let user_cfg = UserConfig::load()?;
-    let conn = cache::open_cache(journal)?;
-    let info = cache::cache_info(journal, &conn)?;
+    let state = JournalState::open(journal.clone())?;
+    let info = state.cache_info()?;
     println!("path:           {}", info.db_path.display());
     println!("schema version: v{} (app: v{})", info.schema_version, cache::SCHEMA_VERSION);
     println!("files tracked:  {}", info.file_count);
@@ -93,25 +89,18 @@ fn info(journal: &Journal) -> Result<()> {
     if let Some(embed_cfg) = &user_cfg.cache.embedding {
         let enabled_str = if embed_cfg.enabled { "enabled" } else { "disabled" };
         println!("embedding:      {} (provider={}, model={})", enabled_str, embed_cfg.provider, embed_cfg.model);
+
         match embed_cfg.vector_db {
             VectorDb::None => {}
             VectorDb::SqliteVec => {
-                if let Some(dim) = embed_cfg.dimension {
-                    match SqliteVecStore::open(journal, dim) {
-                        Ok(store) => match store.vec_info() {
-                            Ok(vi) => {
-                                println!(
-                                    "vector backend: sqlite_vec (dim={})",
-                                    vi.embedding_dim
-                                );
-                                println!(
-                                    "vectors:        {} indexed, {} pending",
-                                    vi.vector_count, vi.pending_count
-                                );
-                            }
-                            Err(e) => eprintln!("warn: could not read vector stats: {e}"),
-                        },
-                        Err(e) => eprintln!("warn: could not open vector index: {e}"),
+                if embed_cfg.dimension.is_some() {
+                    state.load_retrieve_backend(&user_cfg).map_err(anyhow::Error::msg)?;
+                    match state.retrieve_db().vec_info() {
+                        Ok(vi) => {
+                            println!("vector backend: sqlite_vec (dim={})", vi.embedding_dim);
+                            println!("vectors:        {} indexed, {} pending", vi.vector_count, vi.pending_count);
+                        }
+                        Err(e) => eprintln!("warn: could not read vector stats: {e}"),
                     }
                 } else {
                     println!("vector backend: sqlite_vec (dimension not configured)");
@@ -119,45 +108,37 @@ fn info(journal: &Journal) -> Result<()> {
             }
             #[cfg(feature = "lancedb-store")]
             VectorDb::LanceDb => {
-                if let Some(dim) = embed_cfg.dimension {
-                    match journal.cache_dir() {
-                        Ok(root) => {
-                            let dir = lancedb_store::versioned_dir(&root);
-                            println!("vector backend: lancedb");
-                            println!("lancedb path:   {}", dir.display());
-                            match LanceDbVectorStore::new(&dir, dim) {
-                                Ok(store) => match store.vec_info(&conn) {
-                                    Ok(vi) => {
-                                        println!(
-                                            "vectors:        {} indexed, {} pending",
-                                            vi.vector_count, vi.pending_count
-                                        );
-                                    }
-                                    Err(e) => eprintln!("warn: could not read vector stats: {e}"),
-                                },
-                                Err(e) => eprintln!("warn: could not open lancedb store: {e}"),
+                if embed_cfg.dimension.is_some() {
+                    if let Ok(root) = journal.cache_dir() {
+                        use archelon_core::lancedb_store;
+                        let dir = lancedb_store::versioned_dir(&root);
+                        println!("vector backend: lancedb");
+                        println!("lancedb path:   {}", dir.display());
+                        state.load_retrieve_backend(&user_cfg).map_err(anyhow::Error::msg)?;
+                        match state.retrieve_db().vec_info() {
+                            Ok(vi) => {
+                                println!("vectors:        {} indexed, {} pending", vi.vector_count, vi.pending_count);
                             }
-                            // Show stale LanceDB versions if any.
-                            let stale_dirs = find_stale_lancedb(&root);
-                            if !stale_dirs.is_empty() {
-                                let total = stale_dirs.iter().map(|(_, sz)| sz).sum::<u64>();
-                                let names: Vec<String> = stale_dirs
-                                    .iter()
-                                    .map(|(p, _)| {
-                                        p.file_name()
-                                            .unwrap_or_default()
-                                            .to_string_lossy()
-                                            .into_owned()
-                                    })
-                                    .collect();
-                                println!(
-                                    "stale lancedb:  {} ({}) — run `archelon cache clean` to remove",
-                                    names.join(", "),
-                                    human_size(total)
-                                );
-                            }
+                            Err(e) => eprintln!("warn: could not read vector stats: {e}"),
                         }
-                        Err(e) => eprintln!("warn: could not determine lancedb path: {e}"),
+                        let stale_dirs = find_stale_lancedb(&root);
+                        if !stale_dirs.is_empty() {
+                            let total = stale_dirs.iter().map(|(_, sz)| sz).sum::<u64>();
+                            let names: Vec<String> = stale_dirs
+                                .iter()
+                                .map(|(p, _)| {
+                                    p.file_name()
+                                        .unwrap_or_default()
+                                        .to_string_lossy()
+                                        .into_owned()
+                                })
+                                .collect();
+                            println!(
+                                "stale lancedb:  {} ({}) — run `archelon cache clean` to remove",
+                                names.join(", "),
+                                human_size(total)
+                            );
+                        }
                     }
                 } else {
                     println!("vector backend: lancedb (dimension not configured)");
@@ -191,10 +172,9 @@ fn sync(journal: &Journal) -> Result<()> {
 }
 
 fn rebuild(journal: &Journal) -> Result<()> {
-    let conn = cache::rebuild_cache(journal)?;
-    cache::sync_cache(journal, &conn)?;
-
-    let info = cache::cache_info(journal, &conn)?;
+    let state = JournalState::rebuild(journal.clone())?;
+    state.sync()?;
+    let info = state.cache_info()?;
     println!("rebuilt: {} entries indexed", info.entry_count);
     Ok(())
 }
@@ -206,45 +186,33 @@ fn embed(journal: &Journal) -> Result<()> {
             "[cache.embedding] section is required in ~/.config/archelon/config.toml"
         )
     })?;
-    let dim = embed_cfg.dimension.ok_or_else(|| {
-        anyhow::anyhow!(
+    if !embed_cfg.enabled {
+        anyhow::bail!(
+            "cache.embedding.enabled is false in ~/.config/archelon/config.toml"
+        );
+    }
+    if embed_cfg.vector_db == VectorDb::None {
+        anyhow::bail!(
+            "cache.embedding.vector_db is \"none\" in ~/.config/archelon/config.toml — \
+             set it to \"sqlite_vec\" or \"lancedb\" to use vector search"
+        );
+    }
+    if embed_cfg.dimension.is_none() {
+        anyhow::bail!(
             "`dimension` is required in [cache.embedding] \
              (e.g. dimension = 1536 for text-embedding-3-small)"
-        )
-    })?;
+        );
+    }
+
+    let state = JournalState::open(journal.clone())?;
+    state.sync()?;
 
     let progress = |done: usize, total: usize| {
         eprint!("\rembedding chunks: {done}/{total}");
         let _ = std::io::stderr().flush();
     };
 
-    let total_embedded = match embed_cfg.vector_db {
-        VectorDb::None => {
-            anyhow::bail!(
-                "cache.embedding.vector_db is \"none\" in ~/.config/archelon/config.toml — \
-                 set it to \"sqlite_vec\" or \"lancedb\" to use vector search"
-            );
-        }
-        VectorDb::SqliteVec => {
-            let store = SqliteVecStore::open(journal, dim)?;
-            cache::sync_cache(journal, store.conn())?;
-            let embedder = embed::build_embedder(embed_cfg)?;
-            vector_store::embed_pending_chunks(store.conn(), &store, embedder.as_ref(), progress)?
-        }
-        #[cfg(feature = "lancedb-store")]
-        VectorDb::LanceDb => {
-            let conn = cache::open_cache(journal)?;
-            cache::sync_cache(journal, &conn)?;
-            let root = journal.cache_dir()?;
-            let store = LanceDbVectorStore::new(&lancedb_store::versioned_dir(&root), dim)?;
-            let embedder = embed::build_embedder(embed_cfg)?;
-            vector_store::embed_pending_chunks(&conn, &store, embedder.as_ref(), progress)?
-        }
-        #[cfg(not(feature = "lancedb-store"))]
-        VectorDb::LanceDb => {
-            anyhow::bail!("lancedb support is not compiled in (enable the `lancedb-store` feature)");
-        }
-    };
+    let total_embedded = state.embed_pending(&user_cfg, progress).map_err(anyhow::Error::msg)?;
 
     if total_embedded > 0 {
         eprintln!(); // newline after progress line
@@ -307,10 +275,13 @@ fn find_stale_sqlite(cache_dir: &Path) -> Vec<(std::path::PathBuf, u64)> {
         .collect()
 }
 
-/// Return `(path, size)` for every `vN` directory in `lancedb_root` where N ≠ LANCEDB_SCHEMA_VERSION.
+/// Return `(path, size)` for every `lancedb_vN` directory in `root` where N ≠ LANCEDB_SCHEMA_VERSION.
 #[cfg(feature = "lancedb-store")]
 fn find_stale_lancedb(root: &Path) -> Vec<(std::path::PathBuf, u64)> {
-    let current = format!("lancedb_v{}", lancedb_store::LANCEDB_SCHEMA_VERSION);
+    let current = format!(
+        "lancedb_v{}",
+        archelon_core::lancedb_store::LANCEDB_SCHEMA_VERSION
+    );
     let Ok(rd) = std::fs::read_dir(root) else { return Vec::new() };
     rd.filter_map(|e| e.ok())
         .filter(|e| {

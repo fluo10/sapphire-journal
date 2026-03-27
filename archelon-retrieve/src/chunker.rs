@@ -1,19 +1,19 @@
-//! Entry text chunker.
+//! Text chunker.
 //!
-//! Splits an entry's body into paragraph-level chunks for vector embedding.
+//! Splits a document's body into paragraph-level chunks for vector embedding.
 //! Paragraph-level granularity is appropriate for Markdown-based notes because:
 //!
 //! - Paragraphs are natural semantic units in prose / bullet-list notes.
 //! - Most embedding models have token-length limits (≈ 8 k tokens); a single
-//!   entry may exceed this, but individual paragraphs rarely will.
+//!   document may exceed this, but individual paragraphs rarely will.
 //! - Chunking improves recall: a query about a specific concept can match the
 //!   exact paragraph that discusses it rather than competing with the rest of
-//!   the entry for "share of attention" in the embedding.
+//!   the document for "share of attention" in the embedding.
 //!
-//! The entry title is prepended to every chunk so that each chunk can be
+//! The title is prepended to every chunk so that each chunk can be
 //! interpreted in isolation (a standard RAG practice).
 
-/// Split an entry into embeddable text chunks.
+/// Split a document into embeddable text chunks.
 ///
 /// Splitting rules:
 ///
@@ -21,19 +21,19 @@
 ///    becomes one chunk.
 /// 2. The title is prepended to every chunk so that it carries context when
 ///    retrieved in isolation.
-/// 3. If the body is empty (title-only entry), a single chunk containing just
-///    the title is returned.
+/// 3. If the body is empty (title-only document), a single chunk containing
+///    just the title is returned.
 ///
 /// # Example
 ///
 /// ```
-/// # use archelon_core::chunker::chunk_entry;
-/// let chunks = chunk_entry("Meeting notes", "First item.\n\nSecond item.");
+/// # use archelon_retrieve::chunker::chunk_document;
+/// let chunks = chunk_document("Meeting notes", "First item.\n\nSecond item.");
 /// assert_eq!(chunks.len(), 2);
 /// assert_eq!(chunks[0], "Meeting notes\n\nFirst item.");
 /// assert_eq!(chunks[1], "Meeting notes\n\nSecond item.");
 /// ```
-pub fn chunk_entry(title: &str, body: &str) -> Vec<String> {
+pub fn chunk_document(title: &str, body: &str) -> Vec<String> {
     let paragraphs: Vec<&str> = body
         .split("\n\n")
         .map(str::trim)
@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn two_paragraphs() {
-        let chunks = chunk_entry("Title", "First.\n\nSecond.");
+        let chunks = chunk_document("Title", "First.\n\nSecond.");
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0], "Title\n\nFirst.");
         assert_eq!(chunks[1], "Title\n\nSecond.");
@@ -70,25 +70,25 @@ mod tests {
 
     #[test]
     fn empty_body_returns_title() {
-        let chunks = chunk_entry("Title", "");
+        let chunks = chunk_document("Title", "");
         assert_eq!(chunks, vec!["Title"]);
     }
 
     #[test]
     fn blank_only_body_returns_title() {
-        let chunks = chunk_entry("Title", "   \n\n   ");
+        let chunks = chunk_document("Title", "   \n\n   ");
         assert_eq!(chunks, vec!["Title"]);
     }
 
     #[test]
     fn filters_empty_paragraphs() {
-        let chunks = chunk_entry("T", "Para 1.\n\n\n\nPara 2.");
+        let chunks = chunk_document("T", "Para 1.\n\n\n\nPara 2.");
         assert_eq!(chunks.len(), 2);
     }
 
     #[test]
     fn empty_title() {
-        let chunks = chunk_entry("", "Only body.");
+        let chunks = chunk_document("", "Only body.");
         assert_eq!(chunks, vec!["Only body."]);
     }
 }

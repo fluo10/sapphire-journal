@@ -3,6 +3,8 @@ members = [
     "archelon",
     "archelon-core",
     "archelon-dioxus",
+    "archelon-retrieve",
+    "archelon-recall",
 ]
 resolver = "3"
 
