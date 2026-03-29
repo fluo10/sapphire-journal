@@ -38,17 +38,17 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            binary: archelon
-            asset_name: archelon-linux-x86_64
+            binary: sapphire-journal
+            asset_name: sapphire-journal-linux-x86_64
           - os: macos-latest
-            binary: archelon
-            asset_name: archelon-macos-aarch64
+            binary: sapphire-journal
+            asset_name: sapphire-journal-macos-aarch64
           - os: windows-latest
-            binary: archelon.exe
-            asset_name: archelon-windows-x86_64.exe
+            binary: sapphire-journal.exe
+            asset_name: sapphire-journal-windows-x86_64.exe
           - os: ubuntu-24.04-arm
-            binary: archelon
-            asset_name: archelon-linux-aarch64
+            binary: sapphire-journal
+            asset_name: sapphire-journal-linux-aarch64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -65,7 +65,7 @@ jobs:
       - name: Install protoc (Windows)
         if: runner.os == 'Windows'
         run: choco install protoc
-      - run: cargo build --release -p archelon
+      - run: cargo build --release -p sapphire-journal
 
       - name: Rename binary (Unix)
         if: runner.os != 'Windows'

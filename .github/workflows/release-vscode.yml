@@ -29,7 +29,7 @@ jobs:
       - name: Extract CLI version from package.json
         id: cli_version
         run: |
-          CLI_VERSION=$(node -p "require('./archelon-vscode/package.json').archelonVersion")
+          CLI_VERSION=$(node -p "require('./sapphire-journal-vscode/package.json').sapphireJournalVersion")
           echo "cli_version=$CLI_VERSION" >> $GITHUB_OUTPUT
 
       - name: Create tag
@@ -46,16 +46,16 @@ jobs:
         include:
           - os: ubuntu-latest
             vsce_target: linux-x64
-            artifact: archelon-linux-x86_64
+            artifact: sapphire-journal-linux-x86_64
           - os: ubuntu-24.04-arm
             vsce_target: linux-arm64
-            artifact: archelon-linux-aarch64
+            artifact: sapphire-journal-linux-aarch64
           - os: macos-latest
             vsce_target: darwin-arm64
-            artifact: archelon-macos-aarch64
+            artifact: sapphire-journal-macos-aarch64
           - os: windows-latest
             vsce_target: win32-x64
-            artifact: archelon-windows-x86_64.exe
+            artifact: sapphire-journal-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -68,40 +68,40 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          package_json_file: archelon-vscode/package.json
+          package_json_file: sapphire-journal-vscode/package.json
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-        working-directory: archelon-vscode
+        working-directory: sapphire-journal-vscode
 
       - name: Download CLI binary from GitHub Releases
         shell: bash
         run: |
           gh release download "cli-v${{ needs.prepare.outputs.cli_version }}" \
             --pattern "${{ matrix.artifact }}" \
-            --dir archelon-vscode/bin/
+            --dir sapphire-journal-vscode/bin/
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Rename binary to archelon (Unix)
+      - name: Rename binary to sapphire-journal (Unix)
         if: runner.os != 'Windows'
         run: |
-          mv archelon-vscode/bin/${{ matrix.artifact }} archelon-vscode/bin/archelon
-          chmod +x archelon-vscode/bin/archelon
+          mv sapphire-journal-vscode/bin/${{ matrix.artifact }} sapphire-journal-vscode/bin/sapphire-journal
+          chmod +x sapphire-journal-vscode/bin/sapphire-journal
 
-      - name: Rename binary to archelon.exe (Windows)
+      - name: Rename binary to sapphire-journal.exe (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Rename-Item archelon-vscode/bin/${{ matrix.artifact }} archelon.exe
+        run: Rename-Item sapphire-journal-vscode/bin/${{ matrix.artifact }} sapphire-journal.exe
 
       - name: Package VSIX
         run: npx vsce package --target ${{ matrix.vsce_target }} --no-dependencies
-        working-directory: archelon-vscode
+        working-directory: sapphire-journal-vscode
 
       - uses: actions/upload-artifact@v4
         with:
-          name: archelon-vscode-${{ matrix.vsce_target }}.vsix
-          path: archelon-vscode/*.vsix
+          name: sapphire-journal-vscode-${{ matrix.vsce_target }}.vsix
+          path: sapphire-journal-vscode/*.vsix
 
   release:
     needs: [prepare, vsix]
@@ -132,7 +132,7 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-          pattern: archelon-vscode-*.vsix
+          pattern: sapphire-journal-vscode-*.vsix
 
       - name: Publish to VS Code Marketplace
         run: |

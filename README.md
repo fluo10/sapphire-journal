@@ -1,4 +1,4 @@
-# archelon
+# sapphire-journal
 
 Markdown-based task and note manager for humans and AI agents — your data lives in plain text, timeless like fossils.
 
@@ -6,7 +6,7 @@ Markdown-based task and note manager for humans and AI agents — your data live
 
 - **Markdown as source of truth** — all data lives in plain `.md` files you can read and edit with any tool
 - **SQLite as cache** — fast querying and indexing on top of the Markdown files (planned)
-- **Bullet-journal inspired** — tasks, events, and notes are equal peers, each living as its own entry; just as a bullet journal treats every bullet (task, event, or note) uniformly, archelon treats every entry the same way regardless of type
+- **Bullet-journal inspired** — tasks, events, and notes are equal peers, each living as its own entry; just as a bullet journal treats every bullet (task, event, or note) uniformly, sapphire-journal treats every entry the same way regardless of type
 - **Text-editor / IDE compatible** — plain `.md` files with YAML frontmatter; readable and editable in any editor without special tooling
 - **Human–AI collaborative editing** — designed to work alongside AI agents (Claude, etc.) that can read, create, and edit entries in the same journal via git or Syncthing sync
 
@@ -22,7 +22,7 @@ caretta-id uses the current Unix time in deciseconds as its value, so two entrie
 ### File layout: `{year}/{id}_{slug}.md`
 
 Entries are grouped into year directories (e.g. `2026/`) to prevent the journal root from filling up over time, while keeping the hierarchy shallow enough to stay navigable.
-The slug derived from the entry title keeps filenames readable even without opening archelon.
+The slug derived from the entry title keeps filenames readable even without opening sapphire-journal.
 
 ## Data model
 
@@ -75,38 +75,38 @@ event:
 ### Linux / macOS
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/fluo10/archelon/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/fluo10/sapphire-journal/main/install.sh | sh
 ```
 
 ### Windows
 
 ```powershell
-irm https://raw.githubusercontent.com/fluo10/archelon/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/fluo10/sapphire-journal/main/install.ps1 | iex
 ```
 
 ### cargo-binstall
 
 ```sh
-cargo binstall archelon
+cargo binstall sapphire-journal
 ```
 
 ### From source
 
 ```sh
-cargo install archelon
+cargo install sapphire-journal
 ```
 
 ## CLI usage
 
-See [archelon/README.md](archelon/README.md) for the full command reference.
+See [sapphire-journal/README.md](sapphire-journal/README.md) for the full command reference.
 
-A **journal** is any directory tree that contains a `.archelon/` directory.
-`archelon` locates it by walking up from the current directory, the same way `git` finds `.git/`.
-Use `archelon init` to create one.
+A **journal** is any directory tree that contains a `.sapphire-journal/` directory.
+`sapphire-journal` locates it by walking up from the current directory, the same way `git` finds `.git/`.
+Use `sapphire-journal init` to create one.
 
 ## VS Code extension
 
-The `archelon-vscode` extension integrates with the editor:
+The `sapphire-journal-vscode` extension integrates with the editor:
 
 - **Auto-fix on save** — runs `entry fix` automatically, keeping filenames and year directories in sync
 - **Hierarchical tree view** — entries displayed as a parent-child tree with type icons, ThemeIcon status decorations, period filter, and tree/list toggle
@@ -114,17 +114,17 @@ The `archelon-vscode` extension integrates with the editor:
 - **New Entry**, **New Child Entry**, **Open Entry by ID**, **Remove Entry**, **List Entries** commands available from the Command Palette and context menu
 - **Rich tooltips** — hover over tree items to see full entry details
 
-Available on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=fluo10.archelon-vscode) and [Open VSX Registry](https://open-vsx.org/extension/fluo10/archelon-vscode).
-Platform-specific VSIX files (with the CLI binary bundled) are also on the [Releases](https://github.com/fluo10/archelon/releases) page.
+Available on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=fluo10.sapphire-journal-vscode) and [Open VSX Registry](https://open-vsx.org/extension/fluo10/sapphire-journal-vscode).
+Platform-specific VSIX files (with the CLI binary bundled) are also on the [Releases](https://github.com/fluo10/sapphire-journal/releases) page.
 
 ## Project structure
 
 ```
-archelon/
-├── archelon-core/    # Data model, Markdown parser/serializer, SQLite cache
-├── archelon/         # Unified binary: CLI + MCP server (archelon mcp)
-├── archelon-dioxus/  # GUI app (desktop / mobile)
-└── archelon-vscode/  # VS Code extension
+sapphire-journal/
+├── sapphire-journal-core/    # Data model, Markdown parser/serializer, SQLite cache
+├── sapphire-journal/         # Unified binary: CLI + MCP server (sapphire-journal mcp)
+├── sapphire-journal-dioxus/  # GUI app (desktop / mobile)
+└── sapphire-journal-vscode/  # VS Code extension
 ```
 
 ## Status
@@ -137,9 +137,9 @@ This repository contains components under different licenses:
 
 | Component | License |
 |-----------|---------|
-| `archelon-core` | MIT OR Apache-2.0 |
-| `archelon` | MIT OR Apache-2.0 |
-| `archelon-dioxus` | GPL-3.0-or-later |
-| `archelon-vscode` | MIT |
+| `sapphire-journal-core` | MIT OR Apache-2.0 |
+| `sapphire-journal` | MIT OR Apache-2.0 |
+| `sapphire-journal-dioxus` | GPL-3.0-or-later |
+| `sapphire-journal-vscode` | MIT |
 
 See the `LICENSE` (or `LICENSE-MIT` / `LICENSE-APACHE`) file in each component's directory for the full license text.

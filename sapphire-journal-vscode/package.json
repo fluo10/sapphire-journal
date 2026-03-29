@@ -1,0 +1,272 @@
+{
+  "name": "sapphire-journal-vscode",
+  "packageManager": "pnpm@10.30.3",
+  "displayName": "Sapphire Journal",
+  "publisher": "fluo10",
+  "description": "VS Code extension for the Sapphire Journal",
+  "version": "0.7.0",
+  "sapphireJournalVersion": "0.7.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fluo10/sapphire-journal"
+  },
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:markdown"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sapphire-journal",
+          "title": "Sapphire Journal",
+          "icon": "media/sapphire-journal.svg"
+        }
+      ]
+    },
+    "views": {
+      "sapphire-journal": [
+        {
+          "id": "sapphire-journal.entries",
+          "name": "Entries"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "sapphire-journal.searchEntries",
+          "when": "view == sapphire-journal.entries",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sapphire-journal.newEntry",
+          "when": "view == sapphire-journal.entries",
+          "group": "navigation@2"
+        },
+        {
+          "command": "sapphire-journal.filterTree",
+          "when": "view == sapphire-journal.entries",
+          "group": "navigation@3"
+        },
+        {
+          "command": "sapphire-journal.setPeriod",
+          "when": "view == sapphire-journal.entries",
+          "group": "navigation@4"
+        },
+        {
+          "command": "sapphire-journal.sortTree",
+          "when": "view == sapphire-journal.entries",
+          "group": "navigation@5"
+        },
+        {
+          "command": "sapphire-journal.refreshTree",
+          "when": "view == sapphire-journal.entries",
+          "group": "navigation@6"
+        },
+        {
+          "command": "sapphire-journal.showTreeView",
+          "when": "view == sapphire-journal.entries && sapphire-journal.viewMode == list",
+          "group": "navigation@7"
+        },
+        {
+          "command": "sapphire-journal.showListView",
+          "when": "view == sapphire-journal.entries && sapphire-journal.viewMode == tree",
+          "group": "navigation@7"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "sapphire-journal.newChildEntry",
+          "when": "view == sapphire-journal.entries && viewItem == entry",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "sapphire-journal.removeEntry",
+          "when": "view == sapphire-journal.entries && viewItem == entry",
+          "group": "1_modification@2"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "sapphire-journal.newEntry",
+        "title": "Sapphire Journal: New Entry",
+        "icon": "$(add)"
+      },
+      {
+        "command": "sapphire-journal.openEntry",
+        "title": "Sapphire Journal: Open Entry by ID"
+      },
+      {
+        "command": "sapphire-journal.removeEntry",
+        "title": "Sapphire Journal: Remove Entry",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "sapphire-journal.newChildEntry",
+        "title": "Sapphire Journal: New Child Entry",
+        "icon": "$(type-hierarchy-sub)"
+      },
+      {
+        "command": "sapphire-journal.listEntries",
+        "title": "Sapphire Journal: List Entries"
+      },
+      {
+        "command": "sapphire-journal.refreshTree",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sapphire-journal.filterTree",
+        "title": "Filter Entries",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "sapphire-journal.sortTree",
+        "title": "Sort Entries",
+        "icon": "$(list-ordered)"
+      },
+      {
+        "command": "sapphire-journal.setPeriod",
+        "title": "Filter by Period",
+        "icon": "$(calendar)"
+      },
+      {
+        "command": "sapphire-journal.showListView",
+        "title": "Sapphire Journal: Switch to List View",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "sapphire-journal.showTreeView",
+        "title": "Sapphire Journal: Switch to Tree View",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "sapphire-journal.init",
+        "title": "Sapphire Journal: Initialize Journal"
+      },
+      {
+        "command": "sapphire-journal.cacheRebuild",
+        "title": "Sapphire Journal: Rebuild Cache"
+      },
+      {
+        "command": "sapphire-journal.searchEntries",
+        "title": "Sapphire Journal: Search Entries",
+        "icon": "$(search)"
+      }
+    ],
+    "configuration": {
+      "title": "Sapphire Journal",
+      "properties": {
+        "sapphire-journal.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the sapphire-journal binary. Leave empty to use the bundled binary or 'sapphire-journal' on $PATH."
+        },
+        "sapphire-journal.autoFixOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically run 'entry fix --touch' when saving a managed entry file."
+        },
+        "sapphire-journal.defaultPeriod": {
+          "type": "string",
+          "default": "today",
+          "description": "Default period filter for the entry tree view. Accepted values: today | this_week | this_month | none | YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD. Set to empty string to disable period filtering by default."
+        },
+        "sapphire-journal.defaultSortField": {
+          "type": "string",
+          "default": "updated_at",
+          "enum": [
+            "id",
+            "title",
+            "task_status",
+            "created_at",
+            "updated_at",
+            "task_due",
+            "event_start"
+          ],
+          "description": "Default field to sort entries by in the tree view."
+        },
+        "sapphire-journal.defaultSortOrder": {
+          "type": "string",
+          "default": "desc",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "description": "Default sort direction in the tree view."
+        },
+        "sapphire-journal.cache.vectorDb": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "none",
+            "sqlite_vec",
+            "lancedb"
+          ],
+          "enumDescriptions": [
+            "Use the value from config.toml",
+            "Vector search disabled",
+            "sqlite-vec extension (lightweight, integrated with SQLite cache)",
+            "LanceDB (suitable for larger-scale use)"
+          ],
+          "description": "Vector database backend for semantic search. Overrides config.toml when set."
+        },
+        "sapphire-journal.cache.embedding.provider": {
+          "type": "string",
+          "default": "",
+          "description": "Embedding provider (openai, ollama, fastembed). Overrides config.toml when set."
+        },
+        "sapphire-journal.cache.embedding.model": {
+          "type": "string",
+          "default": "",
+          "description": "Embedding model name (e.g. text-embedding-3-small, nomic-embed-text). Overrides config.toml when set."
+        },
+        "sapphire-journal.cache.embedding.apiKeyEnv": {
+          "type": "string",
+          "default": "",
+          "description": "Name of the environment variable that holds the API key (e.g. OPENAI_API_KEY). Overrides config.toml when set."
+        },
+        "sapphire-journal.cache.embedding.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL for local embedding providers (e.g. http://localhost:11434 for Ollama). Overrides config.toml when set."
+        },
+        "sapphire-journal.cache.embedding.dimension": {
+          "type": "string",
+          "default": "",
+          "description": "Output vector dimension of the embedding model (e.g. 1536, 768). Overrides config.toml when set."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/vscode": "^1.109.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.39.3",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
+  }
+}

@@ -1,0 +1,27 @@
+[package]
+name = "sapphire-journal"
+edition.workspace = true
+version.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+categories = ["command-line-utilities", "text-processing"]
+keywords = ["markdown", "task-management", "notes", "cli", "mcp"]
+
+[features]
+default = ["lancedb-store", "fastembed-embed"]
+lancedb-store = ["sapphire-journal-core/lancedb-store"]
+fastembed-embed = ["sapphire-journal-core/fastembed-embed"]
+
+[dependencies]
+clap.workspace = true
+sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.7.0", default-features = false }
+rmcp.workspace = true
+tokio = { workspace = true, features = ["full"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+toml.workspace = true
+tracing-subscriber.workspace = true
