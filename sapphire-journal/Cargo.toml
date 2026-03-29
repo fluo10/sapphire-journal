@@ -8,6 +8,10 @@ repository.workspace = true
 categories = ["command-line-utilities", "text-processing"]
 keywords = ["markdown", "task-management", "notes", "cli", "mcp"]
 
+[[bin]]
+name = "sajo"
+path = "src/main.rs"
+
 [features]
 default = ["lancedb-store", "fastembed-embed"]
 lancedb-store = ["sapphire-journal-core/lancedb-store"]

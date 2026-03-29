@@ -1,5 +1,5 @@
 {
-  "name": "sapphire-journal-vscode",
+  "name": "sapphire-journal",
   "packageManager": "pnpm@10.30.3",
   "displayName": "Sapphire Journal",
   "publisher": "fluo10",

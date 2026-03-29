@@ -38,17 +38,17 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            binary: sapphire-journal
-            asset_name: sapphire-journal-linux-x86_64
+            binary: sajo
+            asset_name: sajo-linux-x86_64
           - os: macos-latest
-            binary: sapphire-journal
-            asset_name: sapphire-journal-macos-aarch64
+            binary: sajo
+            asset_name: sajo-macos-aarch64
           - os: windows-latest
-            binary: sapphire-journal.exe
-            asset_name: sapphire-journal-windows-x86_64.exe
+            binary: sajo.exe
+            asset_name: sajo-windows-x86_64.exe
           - os: ubuntu-24.04-arm
-            binary: sapphire-journal
-            asset_name: sapphire-journal-linux-aarch64
+            binary: sajo
+            asset_name: sajo-linux-aarch64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

@@ -46,11 +46,11 @@ export function bin(): string {
 
     if (_extensionPath) {
         const ext = process.platform === 'win32' ? '.exe' : '';
-        const bundled = path.join(_extensionPath, 'bin', `sapphire-journal${ext}`);
+        const bundled = path.join(_extensionPath, 'bin', `sajo${ext}`);
         if (fs.existsSync(bundled)) { return bundled; }
     }
 
-    return 'sapphire-journal';
+    return 'sajo';
 }
 
 export interface EntryRecord {
