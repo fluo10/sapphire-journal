@@ -7760,7 +7760,7 @@ dependencies = [
 
 [[package]]
 name = "sapphire-journal"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7777,7 +7777,7 @@ dependencies = [
 
 [[package]]
 name = "sapphire-journal-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "grain-id",
@@ -7796,7 +7796,7 @@ dependencies = [
 
 [[package]]
 name = "sapphire-journal-dioxus"
-version = "0.7.0"
+version = "0.0.0"
 dependencies = [
  "dioxus",
  "sapphire-journal-core",
@@ -7804,7 +7804,7 @@ dependencies = [
 
 [[package]]
 name = "sapphire-retrieve"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -7822,7 +7822,7 @@ dependencies = [
 
 [[package]]
 name = "sapphire-retrieve-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",

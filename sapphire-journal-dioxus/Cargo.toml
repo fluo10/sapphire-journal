@@ -1,6 +1,6 @@
 [package]
 name = "sapphire-journal-dioxus"
-version.workspace = true
+version = "0.0.0"
 authors = ["fluo10 <fluo10.dev@fireturtle.net>"]
 edition.workspace = true
 description.workspace = true
@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 repository.workspace = true
 
 [dependencies]
-sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.7.0" }
+sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.8.0" }
 dioxus = { version = "0.7.1", features = [] }
 
 [features]
