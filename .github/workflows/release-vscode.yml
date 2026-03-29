@@ -137,7 +137,13 @@ jobs:
       - name: Publish to VS Code Marketplace
         run: |
           for vsix in artifacts/*.vsix; do
-            npx @vscode/vsce publish --packagePath "$vsix"
+            echo "Publishing $vsix to VS Code Marketplace..."
+            output=$(npx @vscode/vsce publish --packagePath "$vsix" 2>&1)
+            rc=$?
+            echo "$output"
+            if [ $rc -ne 0 ] && ! echo "$output" | grep -qi "already"; then
+              exit $rc
+            fi
           done
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
@@ -145,5 +151,11 @@ jobs:
       - name: Publish to Open VSX Registry
         run: |
           for vsix in artifacts/*.vsix; do
-            npx ovsx publish "$vsix" -p ${{ secrets.OVSX_PAT }}
+            echo "Publishing $vsix to Open VSX Registry..."
+            output=$(npx ovsx publish "$vsix" -p ${{ secrets.OVSX_PAT }} 2>&1)
+            rc=$?
+            echo "$output"
+            if [ $rc -ne 0 ] && ! echo "$output" | grep -qi "already"; then
+              exit $rc
+            fi
           done
