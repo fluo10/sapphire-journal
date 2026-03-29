@@ -46,16 +46,16 @@ jobs:
         include:
           - os: ubuntu-latest
             vsce_target: linux-x64
-            artifact: sapphire-journal-linux-x86_64
+            artifact: sajo-linux-x86_64
           - os: ubuntu-24.04-arm
             vsce_target: linux-arm64
-            artifact: sapphire-journal-linux-aarch64
+            artifact: sajo-linux-aarch64
           - os: macos-latest
             vsce_target: darwin-arm64
-            artifact: sapphire-journal-macos-aarch64
+            artifact: sajo-macos-aarch64
           - os: windows-latest
             vsce_target: win32-x64
-            artifact: sapphire-journal-windows-x86_64.exe
+            artifact: sajo-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -83,16 +83,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Rename binary to sapphire-journal (Unix)
+      - name: Rename binary to sajo (Unix)
         if: runner.os != 'Windows'
         run: |
-          mv sapphire-journal-vscode/bin/${{ matrix.artifact }} sapphire-journal-vscode/bin/sapphire-journal
-          chmod +x sapphire-journal-vscode/bin/sapphire-journal
+          mv sapphire-journal-vscode/bin/${{ matrix.artifact }} sapphire-journal-vscode/bin/sajo
+          chmod +x sapphire-journal-vscode/bin/sajo
 
-      - name: Rename binary to sapphire-journal.exe (Windows)
+      - name: Rename binary to sajo.exe (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Rename-Item sapphire-journal-vscode/bin/${{ matrix.artifact }} sapphire-journal.exe
+        run: Rename-Item sapphire-journal-vscode/bin/${{ matrix.artifact }} sajo.exe
 
       - name: Package VSIX
         run: npx vsce package --target ${{ matrix.vsce_target }} --no-dependencies
