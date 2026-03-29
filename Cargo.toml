@@ -15,5 +15,20 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/fluo10/archelon"
 edition = "2024"
 
+[workspace.dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+indexmap = { version = "2", features = ["serde"] }
+rmcp = { version = "1.2", features = ["server", "transport-io"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+schemars = "1.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1" }
+toml = "1.0"
+tracing-subscriber = "0.3"
+
 [profile.dev.package."*"]
 opt-level = 1
