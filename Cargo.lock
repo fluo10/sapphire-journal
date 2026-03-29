@@ -7793,7 +7793,7 @@ dependencies = [
 
 [[package]]
 name = "sapphire-retrieve"
-version = "0.7.0"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -7811,7 +7811,7 @@ dependencies = [
 
 [[package]]
 name = "sapphire-retrieve-cli"
-version = "0.7.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
