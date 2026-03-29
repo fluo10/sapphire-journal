@@ -2,9 +2,9 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Build Rust (archelon)",
+      "label": "Build Rust (sapphire-journal)",
       "type": "shell",
-      "command": "cargo build -p archelon",
+      "command": "cargo build -p sapphire-journal",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -12,21 +12,21 @@
       "problemMatcher": "$rustc"
     },
     {
-      "label": "Copy binary to archelon-vscode/bin",
+      "label": "Copy binary to sapphire-journal-vscode/bin",
       "type": "shell",
-      "command": "mkdir -p archelon-vscode/bin && cp target/debug/archelon archelon-vscode/bin/archelon",
+      "command": "mkdir -p sapphire-journal-vscode/bin && cp target/debug/sajo sapphire-journal-vscode/bin/sajo",
       "options": {
         "cwd": "${workspaceFolder}"
       },
-      "dependsOn": "Build Rust (archelon)",
+      "dependsOn": "Build Rust (sapphire-journal)",
       "problemMatcher": []
     },
     {
-      "label": "Compile TypeScript (archelon-vscode)",
+      "label": "Compile TypeScript (sapphire-journal-vscode)",
       "type": "shell",
       "command": "pnpm compile",
       "options": {
-        "cwd": "${workspaceFolder}/archelon-vscode"
+        "cwd": "${workspaceFolder}/sapphire-journal-vscode"
       },
       "group": "build",
       "problemMatcher": "$tsc"
@@ -35,8 +35,8 @@
       "label": "Build All (Rust + TypeScript)",
       "dependsOrder": "sequence",
       "dependsOn": [
-        "Copy binary to archelon-vscode/bin",
-        "Compile TypeScript (archelon-vscode)"
+        "Copy binary to sapphire-journal-vscode/bin",
+        "Compile TypeScript (sapphire-journal-vscode)"
       ],
       "group": {
         "kind": "build",
@@ -45,11 +45,11 @@
       "problemMatcher": []
     },
     {
-      "label": "Watch TypeScript (archelon-vscode)",
+      "label": "Watch TypeScript (sapphire-journal-vscode)",
       "type": "shell",
       "command": "pnpm watch",
       "options": {
-        "cwd": "${workspaceFolder}/archelon-vscode"
+        "cwd": "${workspaceFolder}/sapphire-journal-vscode"
       },
       "isBackground": true,
       "problemMatcher": {
