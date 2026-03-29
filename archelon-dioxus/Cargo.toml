@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 repository.workspace = true
 
 [dependencies]
-archelon-core = { version = "0.7.0", path = "../archelon-core" }
+archelon-core = { path = "../archelon-core", version = "0.7.0" }
 dioxus = { version = "0.7.1", features = [] }
 
 [features]

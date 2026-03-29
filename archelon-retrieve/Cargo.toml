@@ -12,15 +12,15 @@ lancedb-store = ["dep:lancedb", "dep:arrow-array", "dep:arrow-schema", "dep:futu
 fastembed-embed = ["dep:fastembed"]
 
 [dependencies]
-thiserror = "2"
-rusqlite = { version = "0.37", features = ["bundled"] }
+thiserror.workspace = true
+rusqlite.workspace = true
 sqlite-vec = "0.1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-ureq = { version = "2", features = ["json"] }
-tokio = { version = "1", features = ["rt-multi-thread"] }
-lancedb = { version = "0.14", optional = true }
+serde.workspace = true
+serde_json.workspace = true
+ureq = { version = "3.3", features = ["json"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+lancedb = { version = "0.15", optional = true }
 arrow-array = { version = "53", optional = true }
 arrow-schema = { version = "53", optional = true }
 futures = { version = "0.3", optional = true }
-fastembed = { version = "4", optional = true }
+fastembed = { version = "5.13", optional = true }

@@ -15,15 +15,15 @@ fastembed-embed = ["archelon-retrieve/fastembed-embed"]
 
 [dependencies]
 caretta-id = { version = "0.12", features = ["serde", "rusqlite", "schemars"] }
-serde = { version = "1", features = ["derive"] }
+serde.workspace = true
 serde_yaml = "0.9"
-toml = "1.0"
-chrono = { version = "0.4", features = ["serde"] }
-indexmap = { version = "2", features = ["serde"] }
-thiserror = "2"
-rusqlite = { version = "0.37", features = ["bundled"] }
-serde_json = "1"
-schemars = "1.0"
+toml.workspace = true
+chrono.workspace = true
+indexmap.workspace = true
+thiserror.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
 uuid = { version = "1", features = ["v4", "serde"] }
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 archelon-retrieve = { path = "../archelon-retrieve", default-features = false }
