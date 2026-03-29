@@ -2,14 +2,14 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run Extension (archelon-vscode)",
+      "name": "Run Extension (sapphire-journal-vscode)",
       "type": "extensionHost",
       "request": "launch",
       "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}/archelon-vscode"
+        "--extensionDevelopmentPath=${workspaceFolder}/sapphire-journal-vscode"
       ],
       "outFiles": [
-        "${workspaceFolder}/archelon-vscode/out/**/*.js"
+        "${workspaceFolder}/sapphire-journal-vscode/out/**/*.js"
       ],
       "preLaunchTask": "Build All (Rust + TypeScript)"
     }

@@ -2,6 +2,17 @@
 
 All notable changes to `sapphire-journal-vscode` are documented here.
 
+## [0.8.0] - 2026-03-30
+
+### Added
+
+- VSCode settings (`sapphire-journal.cache.vectorDb`, `sapphire-journal.cache.embedding.*`) can now override `config.toml` values, allowing per-workspace embedding and vector DB configuration from the Settings UI
+
+### Changed
+
+- Extension renamed from `archelon-vscode` to `sapphire-journal-vscode`; extension ID changed to `fluo10.sapphire-journal`
+- CLI binary renamed from `archelon` to `sajo`
+
 ## [0.7.0] - 2026-03-22
 
 ### Added
