@@ -85,7 +85,7 @@ impl Embedder for RestEmbedder {
 
 #[cfg(feature = "fastembed-embed")]
 struct FastEmbedEmbedder {
-    model: fastembed::TextEmbedding,
+    model: std::sync::Mutex<fastembed::TextEmbedding>,
 }
 
 #[cfg(feature = "fastembed-embed")]
@@ -121,7 +121,7 @@ impl FastEmbedEmbedder {
         )
         .map_err(|e| Error::Embed(format!("failed to load fastembed model: {e}")))?;
 
-        Ok(Self { model })
+        Ok(Self { model: std::sync::Mutex::new(model) })
     }
 }
 
@@ -133,6 +133,8 @@ impl Embedder for FastEmbedEmbedder {
         }
         let texts_owned: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
         self.model
+            .lock()
+            .unwrap()
             .embed(texts_owned, None)
             .map_err(|e| Error::Embed(format!("fastembed embedding failed: {e}")))
     }
@@ -155,11 +157,12 @@ fn embed_openai(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f32>
     });
 
     let response: serde_json::Value = ureq::post(&url)
-        .set("Authorization", &format!("Bearer {api_key}"))
-        .set("Content-Type", "application/json")
+        .header("Authorization", &format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
         .send_json(body)
         .map_err(|e| Error::Embed(e.to_string()))?
-        .into_json()
+        .into_body()
+        .read_json()
         .map_err(|e| Error::Embed(e.to_string()))?;
 
     parse_openai_response(&response, texts.len())
@@ -199,10 +202,11 @@ fn embed_ollama(config: &EmbeddingConfig, texts: &[&str]) -> Result<Vec<Vec<f32>
     });
 
     let response: serde_json::Value = ureq::post(&url)
-        .set("Content-Type", "application/json")
+        .header("Content-Type", "application/json")
         .send_json(body)
         .map_err(|e| Error::Embed(e.to_string()))?
-        .into_json()
+        .into_body()
+        .read_json()
         .map_err(|e| Error::Embed(e.to_string()))?;
 
     response["embeddings"]
