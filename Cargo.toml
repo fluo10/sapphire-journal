@@ -9,7 +9,6 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.7.0"
 description = "Markdown-based task and note manager that keeps your data alive as plain text - timeless like fossils"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/fluo10/sapphire-journal"

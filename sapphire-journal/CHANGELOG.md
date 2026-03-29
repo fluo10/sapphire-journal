@@ -2,6 +2,15 @@
 
 All notable changes to `sapphire-journal` and `sapphire-journal-core` are documented here.
 
+## [0.8.0] - 2026-03-29
+
+### Changed
+
+- Project renamed from `archelon` to `sapphire-journal`; all crate names, config/cache directories (`~/.config/sapphire-journal/`, `~/.cache/sapphire-journal/`), and environment variables (`SAPPHIRE_JOURNAL_*`) updated accordingly
+- CLI binary renamed from `sapphire-journal` to `sajo`
+- ID type renamed from `CarettaId` to `GrainId` (`caretta-id` dependency replaced with `grain-id` v0.14)
+- `rusqlite` bumped from 0.37 to 0.39 (required by `grain-id` v0.14)
+
 ## [0.7.0] - 2026-03-22
 
 ### Added
