@@ -10,34 +10,21 @@
 //! timestamp: syncing tools such as Syncthing preserve the original mtime, so a
 //! global watermark would miss files changed or deleted on another machine.
 //!
-//! The sync:
-//! - **New / modified files** (mtime changed or path not in DB): re-parsed and upserted.
-//! - **Deleted files** (path in DB but gone from disk): removed from cache.
-//!   Handles Syncthing/Nextcloud propagated deletions transparently.
-//!
-//! Explicit deletion after `archelon entry remove` is handled by
-//! [`remove_from_cache`], which avoids a full sync round-trip in that hot path.
-//!
 //! # Schema
 //!
-//! - `files`: tracks every `.md` file ever scanned (path + mtime).  Covers both
-//!   managed entries and non-managed files (e.g. `README.md`).  A file whose mtime
-//!   is unchanged is skipped entirely on subsequent syncs — preventing repeated
-//!   parse-failure warnings for unmanaged files.
-//! - `entries`: managed-entry metadata.  `id INTEGER PRIMARY KEY` uses CarettaId as
-//!   i64.  `path` has an FK to `files(path) ON DELETE CASCADE` so removing a row
-//!   from `files` automatically removes the corresponding entry.
+//! - `files`: tracks every `.md` file ever scanned (path + mtime).
+//! - `entries`: managed-entry metadata (no body — body lives in the retrieve DB).
 //! - `tags`: many-to-many tag index for efficient tag filtering.
-//! - `entries_fts`: FTS5 virtual table (trigram tokenizer) over `title` + `body`
-//!   for full-text search. Trigram enables substring search and CJK text with no spaces.
+//!
+//! Full-text search and vector search are delegated to
+//! [`archelon_retrieve::RetrieveDb`].
 //!
 //! # Schema versioning
 //!
 //! [`SCHEMA_VERSION`] is stored in SQLite's `PRAGMA user_version`.
 //! - **DB version = 0** (fresh file): schema is applied and version is set.
-//! - **DB version < app version**: schema changed; cache is wiped and rebuilt automatically.
-//! - **DB version > app version**: the cache was created by a newer archelon; an error is
-//!   returned instructing the user to update archelon or run `archelon cache rebuild`.
+//! - **DB version = app version**: opened as-is.
+//! - **DB version ≠ app version**: returns [`Error::CacheSchemaTooNew`].
 
 use std::{
     collections::{HashMap, HashSet},
@@ -46,6 +33,7 @@ use std::{
 
 use caretta_id::CarettaId;
 use rusqlite::{params, Connection, OptionalExtension as _};
+use archelon_retrieve::RetrieveDb;
 
 use crate::{
     error::{Error, Result},
@@ -56,7 +44,7 @@ use crate::{
 // ── schema version ────────────────────────────────────────────────────────────
 
 /// Stored in `PRAGMA user_version`.  Increment whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 // ── schema ────────────────────────────────────────────────────────────────────
 
@@ -79,15 +67,14 @@ CREATE TABLE IF NOT EXISTS entries (
     task_started_at TEXT,
     task_closed_at  TEXT,
     event_start     TEXT,
-    event_end       TEXT,
-    body            TEXT    NOT NULL DEFAULT ''
+    event_end       TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_entries_parent     ON entries(parent_id);
-CREATE INDEX IF NOT EXISTS idx_entries_title      ON entries(title);
-CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at);
-CREATE INDEX IF NOT EXISTS idx_entries_updated_at ON entries(updated_at);
+CREATE INDEX IF NOT EXISTS idx_entries_parent      ON entries(parent_id);
+CREATE INDEX IF NOT EXISTS idx_entries_title       ON entries(title);
+CREATE INDEX IF NOT EXISTS idx_entries_created_at  ON entries(created_at);
+CREATE INDEX IF NOT EXISTS idx_entries_updated_at  ON entries(updated_at);
 CREATE INDEX IF NOT EXISTS idx_entries_task_status ON entries(task_status);
-CREATE INDEX IF NOT EXISTS idx_entries_task_due   ON entries(task_due);
+CREATE INDEX IF NOT EXISTS idx_entries_task_due    ON entries(task_due);
 CREATE INDEX IF NOT EXISTS idx_entries_event_start ON entries(event_start);
 
 CREATE TABLE IF NOT EXISTS tags (
@@ -96,42 +83,16 @@ CREATE TABLE IF NOT EXISTS tags (
     PRIMARY KEY (entry_id, tag)
 );
 CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
-    title,
-    body,
-    content    = 'entries',
-    content_rowid = 'id',
-    tokenize   = 'trigram'
-);
-
-CREATE TABLE IF NOT EXISTS chunks (
-    id          INTEGER PRIMARY KEY,
-    entry_id    INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
-    chunk_index INTEGER NOT NULL,
-    text        TEXT    NOT NULL,
-    UNIQUE (entry_id, chunk_index)
-);
-CREATE INDEX IF NOT EXISTS idx_chunks_entry_id ON chunks(entry_id);
 ";
 
 // ── public API ────────────────────────────────────────────────────────────────
 
 /// Compute the path to the current-version SQLite cache file within `cache_dir`.
-///
-/// Returns `{cache_dir}/cache.v{SCHEMA_VERSION}.db`.
 pub fn db_path(cache_dir: &Path) -> PathBuf {
     cache_dir.join(format!("cache_v{SCHEMA_VERSION}.db"))
 }
 
 /// Open (or create) the SQLite cache for `journal`.
-///
-/// - **Fresh DB** (user_version = 0): schema is applied and version is set.
-/// - **DB version = [`SCHEMA_VERSION`]**: opened as-is.
-/// - **DB version ≠ [`SCHEMA_VERSION`]**: returns [`Error::CacheSchemaTooNew`].
-///   This should not normally occur because the DB filename already encodes the
-///   version; it indicates manual tampering.  Run `archelon cache rebuild` to
-///   recreate the current-version DB.
 pub fn open_cache(journal: &Journal) -> Result<Connection> {
     let cache_dir = journal.cache_dir()?;
     std::fs::create_dir_all(&cache_dir)?;
@@ -139,11 +100,6 @@ pub fn open_cache(journal: &Journal) -> Result<Connection> {
 }
 
 /// Delete the current-version cache file and create a fresh one.
-///
-/// Only the current-version file (`cache.v{N}.db` + WAL/SHM) is removed.
-/// Older versions are left untouched; use `archelon cache clean` to remove them.
-/// After this call the returned connection has an empty, schema-correct DB;
-/// call [`sync_cache`] to populate it.
 pub fn rebuild_cache(journal: &Journal) -> Result<Connection> {
     let cache_dir = journal.cache_dir()?;
     std::fs::create_dir_all(&cache_dir)?;
@@ -180,14 +136,11 @@ pub fn cache_info(journal: &Journal, conn: &Connection) -> Result<CacheInfo> {
 
 fn open_or_init(db_path: &Path) -> Result<Connection> {
     let conn = Connection::open(db_path)?;
-    // WAL for better concurrency; foreign keys required for ON DELETE CASCADE.
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
 
-    let db_version: i32 =
-        conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let db_version: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
     if db_version == 0 {
-        // Fresh DB: apply schema and stamp the version.
         conn.execute_batch(SCHEMA)?;
         conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))?;
         return Ok(conn);
@@ -197,16 +150,12 @@ fn open_or_init(db_path: &Path) -> Result<Connection> {
         return Ok(conn);
     }
 
-    // Version mismatch inside a versioned file is unexpected (indicates manual
-    // tampering or a bug).  Return an error; the user should run `cache rebuild`.
     Err(Error::CacheSchemaTooNew {
         db_version,
         app_version: SCHEMA_VERSION,
     })
 }
 
-/// Remove the main DB file plus any WAL/SHM sidecar files.  Errors are ignored
-/// (files may not exist or may already be gone).
 fn wipe_db_files(db_path: &Path) {
     let base = db_path.to_string_lossy();
     for suffix in ["", "-wal", "-shm"] {
@@ -217,48 +166,43 @@ fn wipe_db_files(db_path: &Path) {
 /// Incrementally sync the cache against the journal's `.md` files.
 ///
 /// Files whose mtime changed or whose path is new are re-parsed and upserted.
-/// Files present in the DB but gone from disk are removed (handles Syncthing/
-/// Nextcloud deletions propagated with the original mtime).
+/// Files present in the DB but gone from disk are removed.
 ///
-/// FTS5 index is rebuilt in full only when at least one entry changed, avoiding
-/// unnecessary work on invocations where nothing has changed.
-pub fn sync_cache(journal: &Journal, conn: &Connection) -> Result<()> {
+/// When `retrieve` is provided, document upserts and removals are mirrored to
+/// the retrieve database (FTS + vector index) in the same pass.
+pub fn sync_cache(
+    journal: &Journal,
+    conn: &Connection,
+    retrieve: &RetrieveDb,
+) -> Result<()> {
     let disk_files = collect_with_mtime(journal)?;
     let disk_paths: HashSet<String> = disk_files
         .iter()
         .map(|(p, _)| p.to_string_lossy().into_owned())
         .collect();
 
-    // `files` table tracks ALL scanned .md files (managed + unmanaged).
-    // Using it as the mtime store means non-managed files (e.g. README.md) whose
-    // mtime hasn't changed are skipped entirely — no repeated parse-failure warn.
     let db_files = query_all_mtimes(conn)?;
 
     let mut entry_changed = false;
 
-    // Defer FK checks to commit time so children can be inserted before their
-    // parents (e.g. when syncing a journal from scratch or after a Syncthing
-    // propagation that delivers files out of topological order).
     conn.execute_batch("PRAGMA defer_foreign_keys=ON; BEGIN")?;
 
     // ── delete files removed from disk ───────────────────────────────────────
-    // Process deletions first so that renamed files (old path gone, new path
-    // present) are cleaned up before the upsert loop runs.  Without this
-    // ordering the duplicate-ID check below would fire on the stale cache row
-    // that still holds the same ID as the renamed file's new path.
     for db_path in db_files.keys() {
         if !disk_paths.contains(db_path.as_str()) {
-            let was_entry = conn
+            // Fetch entry ID before cascade-deleting so we can remove it from
+            // the retrieve DB as well.
+            let entry_id: Option<i64> = conn
                 .query_row(
-                    "SELECT 1 FROM entries WHERE path = ?1",
+                    "SELECT id FROM entries WHERE path = ?1",
                     [db_path.as_str()],
-                    |_| Ok(()),
+                    |row| row.get(0),
                 )
-                .is_ok();
-            // Deleting from `files` cascades to `entries` and then `tags`.
+                .ok();
             conn.execute("DELETE FROM files WHERE path = ?1", [db_path])?;
-            if was_entry {
+            if let Some(id) = entry_id {
                 entry_changed = true;
+                let _ = retrieve.remove_document(id);
             }
         }
     }
@@ -273,28 +217,23 @@ pub fn sync_cache(journal: &Journal, conn: &Connection) -> Result<()> {
         if needs_update {
             match read_entry(path) {
                 Ok(entry) => {
-                    // ── duplicate ID check ────────────────────────────────
-                    // On collision, increment the ID until a free slot is
-                    // found, rename the file, and rewrite the frontmatter.
                     let entry = increment_until_free(conn, entry)?;
                     let final_mtime = file_mtime(&entry.path)?;
                     let final_str = entry.path.to_string_lossy();
-                    // Record in `files`; `entries.path` has an FK to `files.path`.
                     conn.execute(
                         "INSERT OR REPLACE INTO files (path, file_mtime) VALUES (?1, ?2)",
                         params![final_str.as_ref(), final_mtime],
                     )?;
                     upsert_entry(conn, &entry)?;
+                    let doc = entry_to_document(&entry);
+                    let _ = retrieve.upsert_document(&doc);
                     entry_changed = true;
                 }
                 Err(e) => {
-                    // File changed but is not a valid entry — still track it
-                    // so mtime comparison skips it on future syncs.
                     conn.execute(
                         "INSERT OR REPLACE INTO files (path, file_mtime) VALUES (?1, ?2)",
                         params![path_str.as_ref(), mtime],
                     )?;
-                    // Remove any stale entry row.
                     conn.execute(
                         "DELETE FROM entries WHERE path = ?1",
                         [path_str.as_ref()],
@@ -306,7 +245,6 @@ pub fn sync_cache(journal: &Journal, conn: &Connection) -> Result<()> {
     }
 
     // ── duplicate title check ─────────────────────────────────────────────────
-    // Runs inside the transaction so it reflects all changes made above.
     let dup_policy = journal.config().unwrap_or_default().journal.duplicate_title;
     if dup_policy != DuplicateTitlePolicy::Allow {
         let mut stmt = conn.prepare(
@@ -334,18 +272,14 @@ pub fn sync_cache(journal: &Journal, conn: &Connection) -> Result<()> {
 
     conn.execute_batch("COMMIT")?;
 
-    // Rebuild FTS5 only when the entries table actually changed.
     if entry_changed {
-        conn.execute_batch("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")?;
+        let _ = retrieve.rebuild_fts();
     }
 
     Ok(())
 }
 
 /// Look up an entry by its [`CarettaId`].
-///
-/// If the stored path no longer exists on disk, the stale row is removed and
-/// [`Error::EntryNotFound`] is returned.
 pub fn find_entry_by_id(conn: &Connection, id: CarettaId) -> Result<crate::entry::Entry> {
     match fetch_full_entry(conn, id) {
         Ok(entry) => {
@@ -363,12 +297,6 @@ pub fn find_entry_by_id(conn: &Connection, id: CarettaId) -> Result<crate::entry
 }
 
 /// Look up an entry by its exact title.
-///
-/// Returns [`Error::AmbiguousTitle`] if more than one entry matches,
-/// and [`Error::EntryNotFoundByTitle`] if none do.
-///
-/// If the matched path no longer exists on disk the stale row is removed and
-/// [`Error::EntryNotFoundByTitle`] is returned.
 pub fn find_entry_by_title(
     conn: &Connection,
     title: &str,
@@ -393,15 +321,10 @@ pub fn find_entry_by_title(
 }
 
 /// Read all entries from the cache as [`EntryHeader`] structs (no body).
-///
-/// Both a sync and a cache-open are expected to have been done by the caller.
-/// `slug` and unknown frontmatter fields are not stored in the cache; they
-/// default to `None`/empty in the returned structs.
 pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::EntryHeader>> {
     use chrono::NaiveDateTime;
     use crate::entry::{EntryHeader, EventMetaView, FrontmatterView, TaskMetaView};
 
-    // Fetch all tags in one query to avoid N+1 queries.
     let mut tag_map: HashMap<CarettaId, Vec<String>> = HashMap::new();
     {
         let mut stmt = conn.prepare("SELECT entry_id, tag FROM tags ORDER BY entry_id, tag")?;
@@ -496,36 +419,26 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
 /// Remove an entry row from the cache by file path.
 ///
 /// Tags are removed automatically via `ON DELETE CASCADE`.
-/// The FTS5 index is updated incrementally (no full rebuild needed).
-/// Call this after `archelon entry remove` to keep the cache consistent.
-pub fn remove_from_cache(conn: &Connection, path: &Path) -> Result<()> {
+/// Also removes the document from the retrieve database (FTS + chunks).
+pub fn remove_from_cache(
+    conn: &Connection,
+    path: &Path,
+    retrieve: &RetrieveDb,
+) -> Result<()> {
     let path_str = path.to_string_lossy();
 
-    // Fetch content before deletion so we can update the FTS5 index.
-    let fts_data = conn
+    let entry_id: Option<i64> = conn
         .query_row(
-            "SELECT id, title, body FROM entries WHERE path = ?1",
+            "SELECT id FROM entries WHERE path = ?1",
             [path_str.as_ref()],
-            |row| {
-                Ok((
-                    row.get::<_, CarettaId>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            },
+            |row| row.get(0),
         )
         .ok();
 
-    // Deleting from `files` cascades to `entries` (and then to `tags`).
     conn.execute("DELETE FROM files WHERE path = ?1", [path_str.as_ref()])?;
 
-    if let Some((id, title, body)) = fts_data {
-        // Remove the entry's tokens from the FTS5 index.
-        let _ = conn.execute(
-            "INSERT INTO entries_fts(entries_fts, rowid, title, body) \
-             VALUES('delete', ?1, ?2, ?3)",
-            params![id, title, body],
-        );
+    if let Some(id) = entry_id {
+        let _ = retrieve.remove_document(id);
     }
 
     Ok(())
@@ -535,31 +448,28 @@ pub fn remove_from_cache(conn: &Connection, path: &Path) -> Result<()> {
 ///
 /// Use this after `create_entry` or `update_entry` to keep the cache warm
 /// without a full sync round-trip.
-///
-/// If the entry's ID collides with an existing cache entry, the ID is
-/// incremented until a free slot is found, the file is renamed on disk, and
-/// the frontmatter is rewritten — all silently.
-pub fn upsert_entry_from_path(conn: &Connection, path: &Path) -> Result<()> {
+pub fn upsert_entry_from_path(
+    conn: &Connection,
+    path: &Path,
+    retrieve: &RetrieveDb,
+) -> Result<()> {
     let entry = read_entry(path)?;
-    // Resolve ID collision by incrementing until a free slot is found.
     let entry = increment_until_free(conn, entry)?;
     let mtime = file_mtime(&entry.path)?;
     let path_str = entry.path.to_string_lossy();
-    // Insert into `files` first; `entries.path` has an FK to `files.path`.
     conn.execute(
         "INSERT OR REPLACE INTO files (path, file_mtime) VALUES (?1, ?2)",
         params![path_str.as_ref(), mtime],
     )?;
     upsert_entry(conn, &entry)?;
-    conn.execute_batch("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")?;
+    let doc = entry_to_document(&entry);
+    let _ = retrieve.upsert_document(&doc);
+    let _ = retrieve.rebuild_fts();
     Ok(())
 }
 
 // ── internals ─────────────────────────────────────────────────────────────────
 
-/// Fetch a single entry (all columns + tags) from the cache by its numeric ID.
-///
-/// Returns `Error::Cache(QueryReturnedNoRows)` if no row exists.
 fn fetch_full_entry(
     conn: &Connection,
     id: CarettaId,
@@ -570,10 +480,10 @@ fn fetch_full_entry(
 
     let (parent_id, path_str, title, slug, created_at, updated_at,
          task_status, task_due, task_started_at, task_closed_at,
-         event_start, event_end, body) = conn.query_row(
+         event_start, event_end) = conn.query_row(
         "SELECT parent_id, path, title, slug, created_at, updated_at,
                 task_status, task_due, task_started_at, task_closed_at,
-                event_start, event_end, body
+                event_start, event_end
          FROM entries WHERE id = ?1",
         [id],
         |row| {
@@ -590,7 +500,6 @@ fn fetch_full_entry(
                 row.get::<_, Option<String>>(9)?,
                 row.get::<_, Option<String>>(10)?,
                 row.get::<_, Option<String>>(11)?,
-                row.get::<_, String>(12)?,
             ))
         },
     )?;
@@ -633,12 +542,10 @@ fn fetch_full_entry(
         extra: IndexMap::new(),
     };
 
-    Ok(Entry { path: PathBuf::from(path_str), frontmatter, body })
+    // Body is not stored in the cache; callers that need it should read from disk.
+    Ok(Entry { path: PathBuf::from(path_str), frontmatter, body: String::new() })
 }
 
-/// Resolves an ID collision by calling `increment()` until a free slot is
-/// found, then renames the file on disk and rewrites its frontmatter.
-/// Returns the entry with its final (non-colliding) ID and path.
 fn increment_until_free(
     conn: &Connection,
     mut entry: crate::entry::Entry,
@@ -660,10 +567,11 @@ fn increment_until_free(
             entry.frontmatter.id,
             &entry.frontmatter,
         );
-        let new_path = entry.path.parent().unwrap_or_else(|| Path::new(".")).join(&new_name);
+        let new_path = entry.path.with_file_name(new_name);
         std::fs::rename(&entry.path, &new_path)?;
-        std::fs::write(&new_path, render_entry(&entry))?;
+        render_entry(&entry);
         entry.path = new_path;
+        std::fs::write(&entry.path, render_entry(&entry))?;
     }
     Ok(entry)
 }
@@ -694,172 +602,6 @@ fn query_all_mtimes(conn: &Connection) -> Result<HashMap<String, i64>> {
     Ok(result)
 }
 
-// ── sqlite-vec / vector search ────────────────────────────────────────────────
-
-static SQLITE_VEC_INIT: std::sync::Once = std::sync::Once::new();
-
-fn init_sqlite_vec() {
-    SQLITE_VEC_INIT.call_once(|| {
-        unsafe {
-            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
-                sqlite_vec::sqlite3_vec_init as *const (),
-            )));
-        }
-    });
-}
-
-/// Open (or create) the cache with the sqlite-vec extension loaded.
-///
-/// Behaves identically to [`open_cache`] for the base schema, then additionally
-/// ensures that the `entry_vectors` vec0 virtual table exists with the requested
-/// `embedding_dim`.
-///
-/// If a vector table with a *different* dimension is already present it is
-/// dropped and recreated — all previously stored embeddings are lost.
-pub fn open_cache_vec(journal: &Journal, embedding_dim: u32) -> Result<Connection> {
-    let cache_dir = journal.cache_dir()?;
-    std::fs::create_dir_all(&cache_dir)?;
-    init_sqlite_vec();
-    let conn = open_or_init(&db_path(&cache_dir))?;
-    ensure_vec_tables(&conn, embedding_dim)?;
-    Ok(conn)
-}
-
-fn ensure_vec_tables(conn: &Connection, dim: u32) -> Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS vec_meta (
-            key   TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )",
-    )?;
-
-    let stored_dim: Option<u32> = conn
-        .query_row(
-            "SELECT value FROM vec_meta WHERE key = 'embedding_dim'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .ok()
-        .and_then(|s| s.parse().ok());
-
-    match stored_dim {
-        None => {
-            // First initialisation: create the vector table and record the dimension.
-            conn.execute_batch(&format!(
-                "CREATE VIRTUAL TABLE chunk_vectors USING vec0(\
-                 chunk_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])",
-            ))?;
-            conn.execute(
-                "INSERT OR REPLACE INTO vec_meta (key, value) VALUES ('embedding_dim', ?1)",
-                [dim.to_string()],
-            )?;
-        }
-        Some(d) if d == dim => {
-            // Dimension unchanged — ensure the table exists in case it was manually dropped.
-            conn.execute_batch(&format!(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vectors USING vec0(\
-                 chunk_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])",
-            ))?;
-        }
-        Some(old) => {
-            // Dimension changed: rebuild the vector table (embeddings are model-specific).
-            eprintln!(
-                "info: embedding dimension changed ({old} → {dim}), \
-                 recreating vector table (all stored embeddings will be lost)..."
-            );
-            conn.execute_batch("DROP TABLE IF EXISTS chunk_vectors")?;
-            conn.execute_batch(&format!(
-                "CREATE VIRTUAL TABLE chunk_vectors USING vec0(\
-                 chunk_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])",
-            ))?;
-            conn.execute(
-                "INSERT OR REPLACE INTO vec_meta (key, value) VALUES ('embedding_dim', ?1)",
-                [dim.to_string()],
-            )?;
-        }
-    }
-    Ok(())
-}
-
-/// A result returned by [`search_fts_entries`].
-#[derive(serde::Serialize)]
-pub struct SearchResult {
-    /// The entry's numeric ID (CarettaId stored as i64).
-    pub id: i64,
-    pub title: String,
-    pub path: String,
-    /// For FTS5: BM25 rank (negative; more negative = higher relevance).
-    /// For vector search: L2 distance (lower = more similar).
-    pub score: f64,
-}
-
-/// Full-text search using the FTS5 trigram index.
-///
-/// Returns up to `limit` entries matching `query`, ordered by relevance.
-/// The trigram tokenizer supports substring and CJK queries with no
-/// special configuration.
-pub fn search_fts_entries(
-    conn: &Connection,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<SearchResult>> {
-    let mut stmt = conn.prepare(
-        "SELECT e.id, e.title, e.path, fts.rank
-         FROM entries_fts fts
-         JOIN entries e ON e.id = fts.rowid
-         WHERE entries_fts MATCH ?1
-         ORDER BY fts.rank
-         LIMIT ?2",
-    )?;
-    let results = stmt
-        .query_map(params![query, limit as i64], |row| {
-            Ok(SearchResult {
-                id: row.get::<_, i64>(0)?,
-                title: row.get::<_, String>(1)?,
-                path: row.get::<_, String>(2)?,
-                score: row.get::<_, f64>(3).unwrap_or(0.0),
-            })
-        })?
-        .collect::<rusqlite::Result<_>>()?;
-    Ok(results)
-}
-
-/// Convert vector search results to [`SearchResult`], deduplicated per entry.
-///
-/// When multiple chunks from the same entry match, only the best-scoring
-/// (lowest L2 distance) chunk is kept. Returns up to `limit` results ordered
-/// by ascending score (most similar first).
-pub fn search_vector_entries(
-    results: Vec<crate::vector_store::ChunkSearchResult>,
-    limit: usize,
-) -> Vec<SearchResult> {
-    use std::collections::HashMap;
-
-    let mut best: HashMap<i64, crate::vector_store::ChunkSearchResult> = HashMap::new();
-    for r in results {
-        best.entry(r.entry_id)
-            .and_modify(|e| {
-                if r.score < e.score {
-                    *e = r.clone();
-                }
-            })
-            .or_insert(r);
-    }
-
-    let mut deduped: Vec<_> = best.into_values().collect();
-    deduped.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
-    deduped.truncate(limit);
-    deduped
-        .into_iter()
-        .map(|r| SearchResult {
-            id: r.entry_id,
-            title: r.entry_title,
-            path: r.entry_path,
-            score: r.score,
-        })
-        .collect()
-}
-
 fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
     let fm = &entry.frontmatter;
     let path_str = entry.path.to_string_lossy();
@@ -869,9 +611,8 @@ fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
             id, parent_id, path,
             title, slug, created_at, updated_at,
             task_status, task_due, task_started_at, task_closed_at,
-            event_start, event_end,
-            body
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            event_start, event_end
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             fm.id,
             fm.parent_id,
@@ -889,11 +630,9 @@ fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
                 .map(|d| d.format("%Y-%m-%dT%H:%M").to_string()),
             fm.event.as_ref().map(|e| e.start.format("%Y-%m-%dT%H:%M").to_string()),
             fm.event.as_ref().map(|e| e.end.format("%Y-%m-%dT%H:%M").to_string()),
-            entry.body,
         ],
     )?;
 
-    // Sync tags: delete all existing then re-insert.
     conn.execute("DELETE FROM tags WHERE entry_id = ?1", [fm.id])?;
     for tag in &fm.tags {
         conn.execute(
@@ -902,65 +641,15 @@ fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
         )?;
     }
 
-    upsert_chunks(conn, entry)?;
-
     Ok(())
 }
 
-/// Re-chunk the entry and upsert all chunks into the `chunks` table.
-///
-/// Old chunks that no longer exist (e.g. paragraphs deleted from the body) are
-/// removed; new paragraphs are inserted; existing paragraphs are updated.
-fn upsert_chunks(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
-    let fm = &entry.frontmatter;
-    let chunk_texts = crate::chunker::chunk_entry(&fm.title, &entry.body);
-    // Whether the sqlite-vec extension is loaded on this connection.
-    // chunk_vectors only exists when opened via open_cache_vec(); plain
-    // open_cache() (used by sync/rebuild) does not load the extension.
-    let has_vec = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunk_vectors'",
-            [],
-            |_| Ok(()),
-        )
-        .is_ok();
-
-    // Delete excess chunks (handles shrinking bodies).
-    if has_vec {
-        conn.execute(
-            "DELETE FROM chunk_vectors
-             WHERE chunk_id IN (
-                 SELECT id FROM chunks WHERE entry_id = ?1 AND chunk_index >= ?2
-             )",
-            params![fm.id, chunk_texts.len() as i64],
-        )?;
+/// Convert an in-memory [`Entry`] to a [`archelon_retrieve::Document`] for indexing.
+fn entry_to_document(entry: &crate::entry::Entry) -> archelon_retrieve::Document {
+    archelon_retrieve::Document {
+        id: u64::from(entry.frontmatter.id) as i64,
+        title: entry.frontmatter.title.clone(),
+        body: entry.body.clone(),
+        path: entry.path.to_string_lossy().into_owned(),
     }
-    conn.execute(
-        "DELETE FROM chunks WHERE entry_id = ?1 AND chunk_index >= ?2",
-        params![fm.id, chunk_texts.len() as i64],
-    )?;
-
-    for (idx, text) in chunk_texts.iter().enumerate() {
-        // Only apply the UPDATE when text actually changed; leaving text unchanged
-        // means changes() returns 0 and we keep the existing (still valid) embedding.
-        conn.execute(
-            "INSERT INTO chunks (entry_id, chunk_index, text) VALUES (?1, ?2, ?3)
-             ON CONFLICT(entry_id, chunk_index) DO UPDATE
-             SET text = excluded.text
-             WHERE text != excluded.text",
-            params![fm.id, idx as i64, text],
-        )?;
-        // Row was inserted (new chunk) or updated (text changed) → stale embedding gone.
-        if has_vec && conn.changes() > 0 {
-            conn.execute(
-                "DELETE FROM chunk_vectors
-                 WHERE chunk_id = (
-                     SELECT id FROM chunks WHERE entry_id = ?1 AND chunk_index = ?2
-                 )",
-                params![fm.id, idx as i64],
-            )?;
-        }
-    }
-
-    Ok(())
 }

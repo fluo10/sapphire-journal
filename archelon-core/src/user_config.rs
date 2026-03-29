@@ -239,6 +239,18 @@ pub struct EmbeddingConfig {
     pub extra: IndexMap<String, toml::Value>,
 }
 
+impl EmbeddingConfig {
+    /// Convert to the provider-only config expected by [`archelon_retrieve::build_embedder`].
+    pub fn to_embed_config(&self) -> archelon_retrieve::EmbeddingConfig {
+        archelon_retrieve::EmbeddingConfig {
+            provider: self.provider.clone(),
+            model: self.model.clone(),
+            api_key_env: self.api_key_env.clone(),
+            base_url: self.base_url.clone(),
+        }
+    }
+}
+
 fn xdg_config_home() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
         if !dir.is_empty() {

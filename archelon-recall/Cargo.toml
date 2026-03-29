@@ -1,0 +1,26 @@
+[package]
+name = "archelon-recall"
+edition.workspace = true
+version.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["lancedb-store", "fastembed-embed"]
+lancedb-store   = ["archelon-retrieve/lancedb-store"]
+fastembed-embed = ["archelon-retrieve/fastembed-embed"]
+
+[dependencies]
+archelon-retrieve  = { path = "../archelon-retrieve", default-features = false }
+clap               = { version = "4", features = ["derive", "env"] }
+anyhow             = "1"
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"
+toml               = "1.0"
+tokio              = { version = "1", features = ["full"] }
+rmcp               = { version = "1.2", features = ["server", "transport-io"] }
+schemars           = "1.0"
+tracing-subscriber = "0.3"
+walkdir            = "2"
+indexmap           = { version = "2", features = ["serde"] }

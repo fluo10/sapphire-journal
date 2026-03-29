@@ -542,7 +542,7 @@ fn new(state: &JournalState, fields: EntryFields) -> Result<()> {
     state.sync()?;
     let dest = ops::create_entry(state, fields.into())?;
     if let Ok(conn) = state.open_conn() {
-        let _ = cache::upsert_entry_from_path(&conn, &dest);
+        let _ = cache::upsert_entry_from_path(&conn, &dest, state.retrieve_db());
     }
     println!("created: {}", dest.display());
     Ok(())
@@ -567,7 +567,7 @@ fn edit(path: &Path, state: &JournalState) -> Result<()> {
         None           => { println!("updated: {}", path.display()); path.to_path_buf() }
     };
     if let Ok(conn) = state.open_conn() {
-        let _ = cache::upsert_entry_from_path(&conn, &final_path);
+        let _ = cache::upsert_entry_from_path(&conn, &final_path, state.retrieve_db());
     }
     Ok(())
 }
@@ -590,7 +590,7 @@ fn edit_new(state: &JournalState) -> Result<()> {
         None           => { println!("created: {}", path.display()); path }
     };
     if let Ok(conn) = state.open_conn() {
-        let _ = cache::upsert_entry_from_path(&conn, &final_path);
+        let _ = cache::upsert_entry_from_path(&conn, &final_path, state.retrieve_db());
     }
     Ok(())
 }
@@ -621,7 +621,7 @@ fn set(state: &JournalState, path: &Path, fields: EntryFields, no_parent: bool) 
     }
     let new_path_opt = ops::update_entry(path, &conn, core_fields)?;
     let final_path = new_path_opt.as_deref().unwrap_or(path);
-    let _ = cache::upsert_entry_from_path(&conn, final_path);
+    let _ = cache::upsert_entry_from_path(&conn, final_path, state.retrieve_db());
     if let Some(new_path) = new_path_opt {
         println!("updated and renamed: {}", new_path.display());
     } else {
@@ -688,7 +688,7 @@ fn remove(state: &JournalState, entry: &str) -> Result<()> {
     let path = resolve_entry(state, entry)?;
     ops::remove_entry(&path)?;
     if let Ok(conn) = state.open_conn() {
-        let _ = cache::remove_from_cache(&conn, &path);
+        let _ = cache::remove_from_cache(&conn, &path, state.retrieve_db());
     }
     println!("removed: {}", path.display());
     Ok(())
@@ -700,6 +700,7 @@ fn search(state: &JournalState, query: &str, semantic: bool, limit: usize) -> Re
     if semantic {
         // ── vector similarity search ──────────────────────────────────────────
         let user_cfg = UserConfig::load()?;
+        state.load_retrieve_backend(&user_cfg).map_err(anyhow::Error::msg)?;
         state.load_embedder(&user_cfg).map_err(anyhow::Error::msg)?;
         let embedder = state.embedder().ok_or_else(|| {
             anyhow::anyhow!(
@@ -713,29 +714,21 @@ fn search(state: &JournalState, query: &str, semantic: bool, limit: usize) -> Re
             .next()
             .ok_or_else(|| anyhow::anyhow!("embedding API returned empty result"))?;
 
-        state.load_vector_store(&user_cfg).map_err(anyhow::Error::msg)?;
-        let store_mutex = state.vector_store().ok_or_else(|| {
-            anyhow::anyhow!(
-                "semantic search requires vector_db = \"sqlite_vec\" or \"lancedb\" \
-                 in ~/.config/archelon/config.toml"
-            )
-        })?;
-        let store = store_mutex.lock().unwrap();
-
-        let results = store.search_similar(&query_vec, limit)?;
-
-        if results.is_empty() {
+        let raw = state.retrieve_db().search_similar(&query_vec, limit * 3)
+            .map_err(anyhow::Error::msg)?;
+        if raw.is_empty() {
             println!("no results");
             return Ok(());
         }
+        let results = archelon_core::RetrieveDb::dedup_chunk_results(raw, limit);
         for r in &results {
-            println!("{:.4}  {}  {}", r.score, r.entry_title, r.entry_path);
+            println!("{:.4}  {}  {}", r.score, r.title, r.path);
         }
     } else {
         // ── full-text search (FTS5 trigram) ───────────────────────────────────
         state.sync()?;
-        let conn = state.open_conn()?;
-        let results = cache::search_fts_entries(&conn, query, limit)?;
+        let results = state.retrieve_db().search_fts(query, limit)
+            .map_err(anyhow::Error::msg)?;
 
         if results.is_empty() {
             println!("no results");
