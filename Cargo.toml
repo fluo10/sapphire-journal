@@ -1,10 +1,10 @@
 [workspace]
 members = [
-    "archelon",
-    "archelon-core",
-    "archelon-dioxus",
-    "archelon-retrieve",
-    "archelon-recall",
+    "sapphire-journal",
+    "sapphire-journal-core",
+    "sapphire-journal-dioxus",
+    "sapphire-retrieve",
+    "sapphire-retrieve-cli",
 ]
 resolver = "3"
 
@@ -12,7 +12,7 @@ resolver = "3"
 version = "0.7.0"
 description = "Markdown-based task and note manager that keeps your data alive as plain text - timeless like fossils"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/fluo10/archelon"
+repository = "https://github.com/fluo10/sapphire-journal"
 edition = "2024"
 
 [workspace.dependencies]

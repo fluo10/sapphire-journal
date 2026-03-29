@@ -143,86 +143,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "archelon"
-version = "0.7.0"
-dependencies = [
- "anyhow",
- "archelon-core",
- "chrono",
- "clap",
- "rmcp",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "tokio",
- "toml 1.1.0+spec-1.1.0",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "archelon-core"
-version = "0.7.0"
-dependencies = [
- "archelon-retrieve",
- "caretta-id",
- "chrono",
- "indexmap 2.13.0",
- "rusqlite",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "serde_yaml",
- "thiserror 2.0.18",
- "tokio",
- "toml 1.1.0+spec-1.1.0",
- "uuid",
-]
-
-[[package]]
-name = "archelon-dioxus"
-version = "0.7.0"
-dependencies = [
- "archelon-core",
- "dioxus",
-]
-
-[[package]]
-name = "archelon-recall"
-version = "0.7.0"
-dependencies = [
- "anyhow",
- "archelon-retrieve",
- "clap",
- "indexmap 2.13.0",
- "rmcp",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "tokio",
- "toml 1.1.0+spec-1.1.0",
- "tracing-subscriber",
- "walkdir",
-]
-
-[[package]]
-name = "archelon-retrieve"
-version = "0.7.0"
-dependencies = [
- "arrow-array",
- "arrow-schema",
- "fastembed",
- "futures",
- "lancedb",
- "rusqlite",
- "serde",
- "serde_json",
- "sqlite-vec",
- "thiserror 2.0.18",
- "tokio",
- "ureq 3.3.0",
-]
-
-[[package]]
 name = "arg_enum_proc_macro"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7825,6 +7745,86 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "sapphire-journal"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "rmcp",
+ "sapphire-journal-core",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 1.1.0+spec-1.1.0",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "sapphire-journal-core"
+version = "0.7.0"
+dependencies = [
+ "caretta-id",
+ "chrono",
+ "indexmap 2.13.0",
+ "rusqlite",
+ "sapphire-retrieve",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 1.1.0+spec-1.1.0",
+ "uuid",
+]
+
+[[package]]
+name = "sapphire-journal-dioxus"
+version = "0.7.0"
+dependencies = [
+ "dioxus",
+ "sapphire-journal-core",
+]
+
+[[package]]
+name = "sapphire-retrieve"
+version = "0.7.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "fastembed",
+ "futures",
+ "lancedb",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sqlite-vec",
+ "thiserror 2.0.18",
+ "tokio",
+ "ureq 3.3.0",
+]
+
+[[package]]
+name = "sapphire-retrieve-cli"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "indexmap 2.13.0",
+ "rmcp",
+ "sapphire-retrieve",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 1.1.0+spec-1.1.0",
+ "tracing-subscriber",
+ "walkdir",
 ]
 
 [[package]]
