@@ -31,7 +31,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use caretta_id::CarettaId;
+use grain_id::GrainId;
 use rusqlite::{params, Connection, OptionalExtension as _};
 use sapphire_retrieve::RetrieveDb;
 
@@ -124,11 +124,11 @@ pub fn cache_info(journal: &Journal, conn: &Connection) -> Result<CacheInfo> {
     let schema_version =
         conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i32>(0))?;
     let file_count =
-        conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, u64>(0))?;
+        conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, i64>(0))? as u64;
     let entry_count =
-        conn.query_row("SELECT COUNT(*) FROM entries", [], |row| row.get::<_, u64>(0))?;
+        conn.query_row("SELECT COUNT(*) FROM entries", [], |row| row.get::<_, i64>(0))? as u64;
     let unique_tag_count =
-        conn.query_row("SELECT COUNT(DISTINCT tag) FROM tags", [], |row| row.get::<_, u64>(0))?;
+        conn.query_row("SELECT COUNT(DISTINCT tag) FROM tags", [], |row| row.get::<_, i64>(0))? as u64;
     Ok(CacheInfo { db_path, schema_version, file_count, entry_count, unique_tag_count })
 }
 
@@ -279,8 +279,8 @@ pub fn sync_cache(
     Ok(())
 }
 
-/// Look up an entry by its [`CarettaId`].
-pub fn find_entry_by_id(conn: &Connection, id: CarettaId) -> Result<crate::entry::Entry> {
+/// Look up an entry by its [`GrainId`].
+pub fn find_entry_by_id(conn: &Connection, id: GrainId) -> Result<crate::entry::Entry> {
     match fetch_full_entry(conn, id) {
         Ok(entry) => {
             if !entry.path.exists() {
@@ -302,8 +302,8 @@ pub fn find_entry_by_title(
     title: &str,
 ) -> Result<crate::entry::Entry> {
     let mut stmt = conn.prepare("SELECT id, path FROM entries WHERE title = ?1")?;
-    let rows: Vec<(CarettaId, String)> = stmt
-        .query_map([title], |row| Ok((row.get::<_, CarettaId>(0)?, row.get::<_, String>(1)?)))?
+    let rows: Vec<(GrainId, String)> = stmt
+        .query_map([title], |row| Ok((row.get::<_, GrainId>(0)?, row.get::<_, String>(1)?)))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
     match rows.len() {
@@ -325,12 +325,12 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
     use chrono::NaiveDateTime;
     use crate::entry::{EntryHeader, EventMetaView, FrontmatterView, TaskMetaView};
 
-    let mut tag_map: HashMap<CarettaId, Vec<String>> = HashMap::new();
+    let mut tag_map: HashMap<GrainId, Vec<String>> = HashMap::new();
     {
         let mut stmt = conn.prepare("SELECT entry_id, tag FROM tags ORDER BY entry_id, tag")?;
         let rows = stmt
             .query_map([], |row| {
-                Ok((row.get::<_, CarettaId>(0)?, row.get::<_, String>(1)?))
+                Ok((row.get::<_, GrainId>(0)?, row.get::<_, String>(1)?))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         for (id, tag) in rows {
@@ -356,8 +356,8 @@ pub fn list_entries_from_cache(conn: &Connection) -> Result<Vec<crate::entry::En
     let rows = stmt
         .query_map([], |row| {
             Ok((
-                row.get::<_, CarettaId>(0)?,
-                row.get::<_, Option<CarettaId>>(1)?,
+                row.get::<_, GrainId>(0)?,
+                row.get::<_, Option<GrainId>>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
@@ -472,7 +472,7 @@ pub fn upsert_entry_from_path(
 
 fn fetch_full_entry(
     conn: &Connection,
-    id: CarettaId,
+    id: GrainId,
 ) -> Result<crate::entry::Entry> {
     use chrono::NaiveDateTime;
     use indexmap::IndexMap;
@@ -488,7 +488,7 @@ fn fetch_full_entry(
         [id],
         |row| {
             Ok((
-                row.get::<_, Option<CarettaId>>(0)?,
+                row.get::<_, Option<GrainId>>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,

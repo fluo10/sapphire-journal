@@ -1,4 +1,4 @@
-use caretta_id::CarettaId;
+use grain_id::GrainId;
 use chrono::NaiveDateTime;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -9,11 +9,11 @@ use crate::labels::{EntryFlag, entry_flags};
 /// Frontmatter metadata stored at the top of each .md file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Frontmatter {
-    pub id: CarettaId,
+    pub id: GrainId,
 
     /// Parent entry ID for hierarchical (bullet-journal nested) relationships.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent_id: Option<CarettaId>,
+    pub parent_id: Option<GrainId>,
 
     #[serde(default)]
     pub title: String,
@@ -107,8 +107,8 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// Returns the CarettaId from the frontmatter.
-    pub fn id(&self) -> CarettaId {
+    /// Returns the GrainId from the frontmatter.
+    pub fn id(&self) -> GrainId {
         self.frontmatter.id
     }
 
@@ -161,9 +161,9 @@ impl From<EventMeta> for EventMetaView {
 /// `parent_id` is retained for internal use (e.g. tree building) but excluded from serialization.
 #[derive(Debug, Clone, Serialize)]
 pub struct FrontmatterView {
-    pub id: CarettaId,
+    pub id: GrainId,
     #[serde(skip)]
-    pub parent_id: Option<CarettaId>,
+    pub parent_id: Option<GrainId>,
     pub title: String,
     pub slug: String,
     #[serde(with = "naive_datetime_serde")]
@@ -207,7 +207,7 @@ pub struct EntryHeader {
 }
 
 impl EntryHeader {
-    pub fn id(&self) -> CarettaId {
+    pub fn id(&self) -> GrainId {
         self.frontmatter.id
     }
 

@@ -14,7 +14,6 @@ lancedb-store = ["sapphire-retrieve/lancedb-store"]
 fastembed-embed = ["sapphire-retrieve/fastembed-embed"]
 
 [dependencies]
-caretta-id = { version = "0.12", features = ["serde", "rusqlite", "schemars"] }
 serde.workspace = true
 serde_yaml = "0.9"
 toml.workspace = true
@@ -27,3 +26,4 @@ schemars.workspace = true
 uuid = { version = "1", features = ["v4", "serde"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 sapphire-retrieve = { path = "../sapphire-retrieve", default-features = false }
+grain-id = { version = "0.14", features = ["serde", "rusqlite", "schemars"] }
