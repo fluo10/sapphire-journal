@@ -2,6 +2,13 @@
 
 All notable changes to `sapphire-retrieve-cli` and `sapphire-retrieve` are documented here.
 
+## [0.1.1] - 2026-03-29
+
+### Changed
+
+- Renamed internal ID type from `CarettaId` to `GrainId` (`caretta-id` dependency replaced by `grain-id`)
+- Bumped `rusqlite` from 0.37 to 0.39
+
 ## [0.1.0] - 2026-03-29
 
 ### Added
