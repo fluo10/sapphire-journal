@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use caretta_id::CarettaId;
+use grain_id::GrainId;
 use chrono::Datelike as _;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -310,7 +310,7 @@ pub fn slugify(title: &str) -> String {
 /// Build the canonical entry filename: `{id}_{slug}.md`.
 ///
 /// If the slug is empty the filename is just `{id}.md`.
-pub fn entry_filename(id: CarettaId, title: &str) -> String {
+pub fn entry_filename(id: GrainId, title: &str) -> String {
     let slug = slugify(title);
     if slug.is_empty() {
         format!("{id}.md")
@@ -321,12 +321,12 @@ pub fn entry_filename(id: CarettaId, title: &str) -> String {
 
 /// Generate a relative path for a new entry: `{year}/{id}_{slug}.md`.
 ///
-/// The ID is based on the current Unix time (`CarettaId::now_unix()`), so
+/// The ID is based on the current Unix time (`GrainId::now_unix()`), so
 /// filenames sort chronologically within a year directory.
 ///
 /// Returns `(relative_path, id)` so the caller can embed the ID in frontmatter.
-pub fn new_entry_path(title: &str) -> (PathBuf, CarettaId) {
-    let id = CarettaId::now_unix();
+pub fn new_entry_path(title: &str) -> (PathBuf, GrainId) {
+    let id = GrainId::now_unix();
     let year = chrono::Local::now().year();
     let path = PathBuf::from(year.to_string()).join(entry_filename(id, title));
     (path, id)

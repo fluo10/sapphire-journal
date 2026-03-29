@@ -9,7 +9,7 @@
 //! - [`entry`] — Core data structures: [`entry::Entry`], [`entry::Frontmatter`],
 //!   [`entry::TaskMeta`], and [`entry::EventMeta`].
 //! - [`entry_ref`] — [`entry_ref::EntryRef`]: a canonical input type that
-//!   accepts either a filesystem path, an exact CarettaId, or a title.
+//!   accepts either a filesystem path, an exact GrainId, or a title.
 //! - [`error`] — Library-wide [`error::Error`] and [`error::Result`] types.
 //! - [`journal`] — Journal directory discovery, entry collection, and
 //!   configuration loading.

@@ -8,7 +8,7 @@ use std::{cmp::Ordering, path::{Path, PathBuf}, str::FromStr};
 
 use indexmap::IndexMap;
 
-use caretta_id::CarettaId;
+use grain_id::GrainId;
 use chrono::{Datelike as _, NaiveDateTime};
 use rusqlite::Connection;
 
@@ -397,8 +397,8 @@ pub struct EntryTreeNode {
 pub fn build_entry_tree(entries: Vec<(EntryHeader, Vec<MatchFlag>)>) -> Vec<EntryTreeNode> {
     use std::collections::HashMap;
 
-    // Build an index: CarettaId → position in the input slice.
-    let id_index: HashMap<caretta_id::CarettaId, usize> = entries
+    // Build an index: GrainId → position in the input slice.
+    let id_index: HashMap<grain_id::GrainId, usize> = entries
         .iter()
         .enumerate()
         .map(|(i, (e, _))| (e.frontmatter.id, i))
@@ -469,10 +469,10 @@ pub fn fill_ancestor_entries(
     }
 
     // IDs already present in the filtered set.
-    let present: HashSet<CarettaId> = filtered.iter().map(|(e, _)| e.frontmatter.id).collect();
+    let present: HashSet<GrainId> = filtered.iter().map(|(e, _)| e.frontmatter.id).collect();
 
     // Load the full entry index for parent lookups (cache already synced by caller).
-    let all_map: HashMap<CarettaId, EntryHeader> = {
+    let all_map: HashMap<GrainId, EntryHeader> = {
         let all = state.open_conn()
             .ok()
             .and_then(|c| cache::list_entries_from_cache(&c).ok())
@@ -490,7 +490,7 @@ pub fn fill_ancestor_entries(
     // Walk up from every filtered entry and collect missing ancestors.
     // Use an IndexMap to preserve insertion order (roughly child→parent) and
     // deduplicate automatically.
-    let mut to_add: IndexMap<CarettaId, EntryHeader> = IndexMap::new();
+    let mut to_add: IndexMap<GrainId, EntryHeader> = IndexMap::new();
     for (entry, _) in &filtered {
         let mut current_pid = entry.frontmatter.parent_id;
         while let Some(pid) = current_pid {
@@ -610,7 +610,7 @@ fn cmp_opt<T: Ord>(a: Option<T>, b: Option<T>) -> Ordering {
 pub struct EntryFields {
     pub title: Option<String>,
     pub body: Option<String>,
-    /// Parent entry reference.  Resolved to a `CarettaId` via the cache at
+    /// Parent entry reference.  Resolved to a `GrainId` via the cache at
     /// write time.  `Unchanged` means "leave parent unchanged" in update; "no
     /// parent" in create.  `Clear` sets `parent_id` to `None`.
     pub parent: UpdateOption<EntryRef>,
@@ -641,7 +641,7 @@ pub struct EntryFields {
 pub fn create_entry(state: &JournalState, fields: EntryFields) -> Result<PathBuf> {
     let journal = &state.journal;
     let conn = state.open_conn()?;
-    let id = CarettaId::now_unix();
+    let id = GrainId::now_unix();
     let year = chrono::Local::now().year();
 
     let title = fields.title.unwrap_or_default();
@@ -833,9 +833,9 @@ pub fn update_entry(path: &Path, conn: &Connection, fields: EntryFields) -> Resu
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/// Resolve an optional [`EntryRef`] to the corresponding `CarettaId` by looking
+/// Resolve an optional [`EntryRef`] to the corresponding `GrainId` by looking
 /// up the entry in the cache.  Returns `Ok(None)` when `parent` is `None`.
-pub fn resolve_parent_id(conn: &Connection, parent: Option<&EntryRef>) -> Result<Option<CarettaId>> {
+pub fn resolve_parent_id(conn: &Connection, parent: Option<&EntryRef>) -> Result<Option<GrainId>> {
     match parent {
         None => Ok(None),
         Some(EntryRef::Id(id)) => Ok(Some(*id)),
@@ -855,8 +855,8 @@ pub fn resolve_parent_id(conn: &Connection, parent: Option<&EntryRef>) -> Result
 /// and then call [`fix_entry`] to rename the file once the user has set a title.
 ///
 /// When `parent_id` is `Some`, the `parent_id` field is included in the frontmatter.
-pub fn prepare_new_entry(journal: &Journal, parent_id: Option<CarettaId>) -> Result<PathBuf> {
-    let id = CarettaId::now_unix();
+pub fn prepare_new_entry(journal: &Journal, parent_id: Option<GrainId>) -> Result<PathBuf> {
+    let id = GrainId::now_unix();
     let year = chrono::Local::now().year();
     let now = chrono::Local::now().naive_local();
     let now_fmt = now.format("%Y-%m-%dT%H:%M");
@@ -898,7 +898,7 @@ pub fn prepare_new_entry(journal: &Journal, parent_id: Option<CarettaId>) -> Res
 /// Resolve an [`EntryRef`] to a concrete path, opening the journal when needed.
 ///
 /// - `Path` variant: returned as-is.
-/// - `Id` variant: looks up by exact CarettaId via the cache.
+/// - `Id` variant: looks up by exact GrainId via the cache.
 /// - `Title` variant: looks up by exact title (case-sensitive) via the cache.
 /// Resolve an [`EntryRef`] to an absolute path using an already-open cache connection.
 pub fn resolve_entry(entry_ref: &EntryRef, conn: &Connection) -> Result<PathBuf> {
@@ -1033,7 +1033,7 @@ pub fn remove_entry(path: &Path) -> Result<()> {
 
 /// Build the canonical filename for an entry using the frontmatter slug (if set)
 /// or `slugify(title)` as a fallback.
-pub(crate) fn entry_filename_from_frontmatter(id: CarettaId, fm: &Frontmatter) -> String {
+pub(crate) fn entry_filename_from_frontmatter(id: GrainId, fm: &Frontmatter) -> String {
     let slug = if !fm.slug.is_empty() {
         fm.slug.clone()
     } else if fm.title.is_empty() {
