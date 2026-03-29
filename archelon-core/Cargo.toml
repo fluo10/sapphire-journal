@@ -17,7 +17,7 @@ fastembed-embed = ["archelon-retrieve/fastembed-embed"]
 caretta-id = { version = "0.12", features = ["serde", "rusqlite", "schemars"] }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
-toml = "1.0"
+toml = "1.1"
 chrono = { version = "0.4", features = ["serde"] }
 indexmap = { version = "2", features = ["serde"] }
 thiserror = "2"
