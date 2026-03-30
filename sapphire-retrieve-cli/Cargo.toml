@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "sapphire-retrieve"
+name = "sare"
 path = "src/main.rs"
 
 [features]

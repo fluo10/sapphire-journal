@@ -38,17 +38,17 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            binary: sapphire-retrieve
-            asset_name: sapphire-retrieve-linux-x86_64
+            binary: sare
+            asset_name: sare-linux-x86_64
           - os: macos-latest
-            binary: sapphire-retrieve
-            asset_name: sapphire-retrieve-macos-aarch64
+            binary: sare
+            asset_name: sare-macos-aarch64
           - os: windows-latest
-            binary: sapphire-retrieve.exe
-            asset_name: sapphire-retrieve-windows-x86_64.exe
+            binary: sare.exe
+            asset_name: sare-windows-x86_64.exe
           - os: ubuntu-24.04-arm
-            binary: sapphire-retrieve
-            asset_name: sapphire-retrieve-linux-aarch64
+            binary: sare
+            asset_name: sare-linux-aarch64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
