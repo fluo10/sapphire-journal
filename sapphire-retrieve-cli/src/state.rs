@@ -41,6 +41,11 @@ impl WorkspaceState {
     /// Delete and recreate the retrieve DB from scratch.
     pub fn rebuild(workspace: Workspace) -> Result<Self> {
         let retrieve_db = RetrieveDb::rebuild(&workspace.retrieve_db_path())?;
+        #[cfg(feature = "lancedb-store")]
+        {
+            use sapphire_retrieve::lancedb_store;
+            let _ = std::fs::remove_dir_all(lancedb_store::data_dir(&workspace.cache_dir()));
+        }
         Ok(Self {
             workspace,
             retrieve_db,
@@ -90,7 +95,7 @@ impl WorkspaceState {
         #[cfg(feature = "lancedb-store")]
         if vector_db == VectorDb::LanceDb {
             use sapphire_retrieve::lancedb_store;
-            let lancedb_dir = lancedb_store::versioned_dir(&self.workspace.cache_dir());
+            let lancedb_dir = lancedb_store::data_dir(&self.workspace.cache_dir());
             self.retrieve_db.init_lancedb(&lancedb_dir, dim)?;
             return Ok(());
         }
@@ -107,7 +112,7 @@ impl WorkspaceState {
             #[cfg(feature = "lancedb-store")]
             VectorDb::LanceDb => {
                 use sapphire_retrieve::lancedb_store;
-                let lancedb_dir = lancedb_store::versioned_dir(&self.workspace.cache_dir());
+                let lancedb_dir = lancedb_store::data_dir(&self.workspace.cache_dir());
                 self.retrieve_db.init_lancedb(&lancedb_dir, dim)?;
             }
             #[cfg(not(feature = "lancedb-store"))]
