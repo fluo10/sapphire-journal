@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "sare"
+name = "saret"
 path = "src/main.rs"
 
 [features]

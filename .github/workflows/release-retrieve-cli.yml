@@ -38,17 +38,17 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            binary: sare
-            asset_name: sare-linux-x86_64
+            binary: saret
+            asset_name: saret-linux-x86_64
           - os: macos-latest
-            binary: sare
-            asset_name: sare-macos-aarch64
+            binary: saret
+            asset_name: saret-macos-aarch64
           - os: windows-latest
-            binary: sare.exe
-            asset_name: sare-windows-x86_64.exe
+            binary: saret.exe
+            asset_name: saret-windows-x86_64.exe
           - os: ubuntu-24.04-arm
-            binary: sare
-            asset_name: sare-linux-aarch64
+            binary: saret
+            asset_name: saret-linux-aarch64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
