@@ -69,7 +69,7 @@ pub fn run(workspace_dir: Option<&Path>) -> Result<()> {
             VectorDb::LanceDb => {
                 if embed_cfg.dimension.is_some() {
                     use sapphire_retrieve::lancedb_store;
-                    let dir = lancedb_store::versioned_dir(&state.workspace.cache_dir());
+                    let dir = lancedb_store::data_dir(&state.workspace.cache_dir());
                     println!("vector backend: lancedb");
                     println!("lancedb path:   {}", dir.display());
                     state.load_retrieve_backend(&config).map_err(anyhow::Error::msg)?;
@@ -138,8 +138,8 @@ pub fn find_stale_retrieve(cache_dir: &std::path::Path) -> Vec<(std::path::PathB
 #[cfg(feature = "lancedb-store")]
 pub fn find_stale_lancedb(cache_dir: &std::path::Path) -> Vec<(std::path::PathBuf, u64)> {
     let current = format!(
-        "lancedb_v{}",
-        sapphire_retrieve::lancedb_store::LANCEDB_SCHEMA_VERSION
+        "lancedb_full_v{}",
+        sapphire_retrieve::lancedb_store::SCHEMA_VERSION
     );
     let Ok(rd) = std::fs::read_dir(cache_dir) else {
         return Vec::new();
@@ -148,7 +148,7 @@ pub fn find_stale_lancedb(cache_dir: &std::path::Path) -> Vec<(std::path::PathBu
         .filter(|e| {
             let name = e.file_name();
             let n = name.to_string_lossy();
-            let suffix = n.strip_prefix("lancedb_v").unwrap_or("");
+            let suffix = n.strip_prefix("lancedb_full_v").unwrap_or("");
             !suffix.is_empty() && suffix.parse::<i32>().is_ok() && n != current.as_str()
         })
         .map(|e| {

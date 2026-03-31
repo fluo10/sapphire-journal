@@ -111,7 +111,7 @@ fn info(journal: &Journal) -> Result<()> {
                 if embed_cfg.dimension.is_some() {
                     if let Ok(root) = journal.cache_dir() {
                         use sapphire_journal_core::lancedb_store;
-                        let dir = lancedb_store::versioned_dir(&root);
+                        let dir = lancedb_store::data_dir(&root);
                         println!("vector backend: lancedb");
                         println!("lancedb path:   {}", dir.display());
                         state.load_retrieve_backend(&user_cfg).map_err(anyhow::Error::msg)?;
@@ -275,19 +275,17 @@ fn find_stale_sqlite(cache_dir: &Path) -> Vec<(std::path::PathBuf, u64)> {
         .collect()
 }
 
-/// Return `(path, size)` for every `lancedb_vN` directory in `root` where N ≠ LANCEDB_SCHEMA_VERSION.
+/// Return `(path, size)` for every `lancedb_full_vN` directory in `root` where N ≠ SCHEMA_VERSION.
 #[cfg(feature = "lancedb-store")]
 fn find_stale_lancedb(root: &Path) -> Vec<(std::path::PathBuf, u64)> {
-    let current = format!(
-        "lancedb_v{}",
-        sapphire_journal_core::lancedb_store::LANCEDB_SCHEMA_VERSION
-    );
+    use sapphire_journal_core::lancedb_store;
+    let current = format!("lancedb_full_v{}", lancedb_store::SCHEMA_VERSION);
     let Ok(rd) = std::fs::read_dir(root) else { return Vec::new() };
     rd.filter_map(|e| e.ok())
         .filter(|e| {
             let name = e.file_name();
             let n = name.to_string_lossy();
-            let suffix = n.strip_prefix("lancedb_v").unwrap_or("");
+            let suffix = n.strip_prefix("lancedb_full_v").unwrap_or("");
             !suffix.is_empty() && suffix.parse::<i32>().is_ok() && n != current.as_str()
         })
         .map(|e| {

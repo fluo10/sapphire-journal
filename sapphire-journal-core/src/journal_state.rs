@@ -50,6 +50,11 @@ impl JournalState {
         let conn = cache::rebuild_cache(&journal)?;
         drop(conn);
         let retrieve_db = RetrieveDb::rebuild(&journal.retrieve_db_path()?)?;
+        #[cfg(feature = "lancedb-store")]
+        {
+            use sapphire_retrieve::lancedb_store;
+            let _ = std::fs::remove_dir_all(lancedb_store::data_dir(&journal.cache_dir()?));
+        }
         Ok(Self {
             journal,
             retrieve_db,
@@ -104,7 +109,7 @@ impl JournalState {
     /// Return cache statistics (path, schema version, entry count, etc.).
     pub fn cache_info(&self) -> Result<cache::CacheInfo> {
         let conn = self.open_conn()?;
-        cache::cache_info(&self.journal, &conn)
+        cache::cache_info(&self.journal, &conn, &self.retrieve_db)
     }
 
     // ── vector backend ────────────────────────────────────────────────────────
@@ -138,14 +143,13 @@ impl JournalState {
         };
         let vector_db = embed_cfg.vector_db;
 
-        // LanceDB creates its own Tokio runtime internally; spawn_blocking avoids
-        // "cannot start a runtime within a runtime" panics.
+        // LanceDB uses block_in_place internally when called from an async context,
+        // so it is safe to call directly here.
         #[cfg(feature = "lancedb-store")]
         if vector_db == VectorDb::LanceDb {
             use sapphire_retrieve::lancedb_store;
-            let lancedb_dir = lancedb_store::versioned_dir(&self.journal.cache_dir()?);
-            let retrieve = &self.retrieve_db;
-            retrieve.init_lancedb(&lancedb_dir, dim)?;
+            let lancedb_dir = lancedb_store::data_dir(&self.journal.cache_dir()?);
+            self.retrieve_db.init_lancedb(&lancedb_dir, dim)?;
             return Ok(());
         }
 
@@ -161,7 +165,7 @@ impl JournalState {
             #[cfg(feature = "lancedb-store")]
             VectorDb::LanceDb => {
                 use sapphire_retrieve::lancedb_store;
-                let lancedb_dir = lancedb_store::versioned_dir(&self.journal.cache_dir()?);
+                let lancedb_dir = lancedb_store::data_dir(&self.journal.cache_dir()?);
                 self.retrieve_db.init_lancedb(&lancedb_dir, dim)?;
             }
             #[cfg(not(feature = "lancedb-store"))]

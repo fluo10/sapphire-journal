@@ -67,6 +67,8 @@ impl From<sapphire_retrieve::Error> for Error {
                      delete the retrieve DB and re-sync"
                 ))
             }
+            #[cfg(feature = "lancedb-store")]
+            sapphire_retrieve::Error::LanceDb(e) => Error::Embed(e.to_string()),
         }
     }
 }

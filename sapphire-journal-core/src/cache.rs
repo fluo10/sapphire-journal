@@ -44,20 +44,15 @@ use crate::{
 // ── schema version ────────────────────────────────────────────────────────────
 
 /// Stored in `PRAGMA user_version`.  Increment whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
 
 // ── schema ────────────────────────────────────────────────────────────────────
 
 const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS files (
-    path       TEXT    PRIMARY KEY,
-    file_mtime INTEGER NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS entries (
     id              INTEGER PRIMARY KEY,
     parent_id       INTEGER REFERENCES entries(id),
-    path            TEXT    NOT NULL UNIQUE REFERENCES files(path) ON DELETE CASCADE,
+    path            TEXT    NOT NULL UNIQUE,
     title           TEXT    NOT NULL DEFAULT '',
     slug            TEXT    NOT NULL DEFAULT '',
     created_at      TEXT,
@@ -119,12 +114,11 @@ pub struct CacheInfo {
 }
 
 /// Collect cache statistics for display.
-pub fn cache_info(journal: &Journal, conn: &Connection) -> Result<CacheInfo> {
+pub fn cache_info(journal: &Journal, conn: &Connection, retrieve: &RetrieveDb) -> Result<CacheInfo> {
     let db_path = db_path(&journal.cache_dir()?);
     let schema_version =
         conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i32>(0))?;
-    let file_count =
-        conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, i64>(0))? as u64;
+    let file_count = retrieve.file_count()?;
     let entry_count =
         conn.query_row("SELECT COUNT(*) FROM entries", [], |row| row.get::<_, i64>(0))? as u64;
     let unique_tag_count =
@@ -181,7 +175,7 @@ pub fn sync_cache(
         .map(|(p, _)| p.to_string_lossy().into_owned())
         .collect();
 
-    let db_files = query_all_mtimes(conn)?;
+    let db_files = retrieve.file_mtimes()?;
 
     let mut entry_changed = false;
 
@@ -199,7 +193,8 @@ pub fn sync_cache(
                     |row| row.get(0),
                 )
                 .ok();
-            conn.execute("DELETE FROM files WHERE path = ?1", [db_path])?;
+            conn.execute("DELETE FROM entries WHERE path = ?1", [db_path])?;
+            let _ = retrieve.remove_file(db_path);
             if let Some(id) = entry_id {
                 entry_changed = true;
                 let _ = retrieve.remove_document(id);
@@ -220,20 +215,14 @@ pub fn sync_cache(
                     let entry = increment_until_free(conn, entry)?;
                     let final_mtime = file_mtime(&entry.path)?;
                     let final_str = entry.path.to_string_lossy();
-                    conn.execute(
-                        "INSERT OR REPLACE INTO files (path, file_mtime) VALUES (?1, ?2)",
-                        params![final_str.as_ref(), final_mtime],
-                    )?;
+                    let _ = retrieve.upsert_file(final_str.as_ref(), final_mtime);
                     upsert_entry(conn, &entry)?;
                     let doc = entry_to_document(&entry);
                     let _ = retrieve.upsert_document(&doc);
                     entry_changed = true;
                 }
                 Err(e) => {
-                    conn.execute(
-                        "INSERT OR REPLACE INTO files (path, file_mtime) VALUES (?1, ?2)",
-                        params![path_str.as_ref(), mtime],
-                    )?;
+                    let _ = retrieve.upsert_file(path_str.as_ref(), *mtime);
                     conn.execute(
                         "DELETE FROM entries WHERE path = ?1",
                         [path_str.as_ref()],
@@ -311,7 +300,8 @@ pub fn find_entry_by_title(
         1 => {
             let (id, path_str) = rows.into_iter().next().unwrap();
             if !PathBuf::from(&path_str).exists() {
-                conn.execute("DELETE FROM files WHERE path = ?1", [&path_str])?;
+                conn.execute("DELETE FROM entries WHERE path = ?1", [&path_str])?;
+                // retrieve DB (files + documents) is cleaned up on the next sync_cache call.
                 return Err(Error::EntryNotFoundByTitle(title.to_owned()));
             }
             fetch_full_entry(conn, id)
@@ -435,7 +425,8 @@ pub fn remove_from_cache(
         )
         .ok();
 
-    conn.execute("DELETE FROM files WHERE path = ?1", [path_str.as_ref()])?;
+    conn.execute("DELETE FROM entries WHERE path = ?1", [path_str.as_ref()])?;
+    let _ = retrieve.remove_file(path_str.as_ref());
 
     if let Some(id) = entry_id {
         let _ = retrieve.remove_document(id);
@@ -457,10 +448,7 @@ pub fn upsert_entry_from_path(
     let entry = increment_until_free(conn, entry)?;
     let mtime = file_mtime(&entry.path)?;
     let path_str = entry.path.to_string_lossy();
-    conn.execute(
-        "INSERT OR REPLACE INTO files (path, file_mtime) VALUES (?1, ?2)",
-        params![path_str.as_ref(), mtime],
-    )?;
+    retrieve.upsert_file(path_str.as_ref(), mtime)?;
     upsert_entry(conn, &entry)?;
     let doc = entry_to_document(&entry);
     let _ = retrieve.upsert_document(&doc);
@@ -592,14 +580,6 @@ fn file_mtime(path: &Path) -> Result<i64> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0))
-}
-
-fn query_all_mtimes(conn: &Connection) -> Result<HashMap<String, i64>> {
-    let mut stmt = conn.prepare("SELECT path, file_mtime FROM files")?;
-    let result = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?
-        .collect::<rusqlite::Result<HashMap<_, _>>>()?;
-    Ok(result)
 }
 
 fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
