@@ -90,8 +90,8 @@ impl WorkspaceState {
         };
         let vector_db = embed_cfg.vector_db;
 
-        // LanceDB has its own internal Tokio runtime; init it directly to avoid
-        // "cannot start a runtime within a runtime" panics.
+        // LanceDB uses block_in_place internally when called from an async context,
+        // so it is safe to call directly here.
         #[cfg(feature = "lancedb-store")]
         if vector_db == VectorDb::LanceDb {
             use sapphire_retrieve::lancedb_store;
