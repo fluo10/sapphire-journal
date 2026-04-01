@@ -1,8 +1,9 @@
 #!/bin/sh
 set -eu
 
-REPO="fluo10/archelon"
+REPO="fluo10/sapphire-journal"
 INSTALL_DIR="${HOME}/.local/bin"
+BINARY="saret"
 
 case "$(uname -s)" in
   Linux*)  OS="linux" ;;
@@ -17,7 +18,7 @@ case "$(uname -m)" in
 esac
 
 VERSION=$(curl -sf "https://api.github.com/repos/${REPO}/releases" \
-  | awk -F'"' '/tag_name.*cli-v/{print $4; exit}')
+  | awk -F'"' '/tag_name.*"retrieve-cli-v/{print $4; exit}')
 
 if [ -z "$VERSION" ]; then
   echo "error: failed to fetch latest version" >&2
@@ -26,28 +27,17 @@ fi
 
 mkdir -p "$INSTALL_DIR"
 
-install_binary() {
-  BINARY="$1"
-  ASSET="${BINARY}-${OS}-${ARCH}"
-  URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
+ASSET="${BINARY}-${OS}-${ARCH}"
+URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
 
-  printf "Installing %s %s (%s/%s) to %s...\n" "$BINARY" "$VERSION" "$OS" "$ARCH" "$INSTALL_DIR"
+printf "Installing %s %s (%s/%s) to %s...\n" "$BINARY" "$VERSION" "$OS" "$ARCH" "$INSTALL_DIR"
 
-  TMP=$(mktemp)
-  curl -fsSL "$URL" -o "$TMP"
-  chmod +x "$TMP"
-  mv "$TMP" "${INSTALL_DIR}/${BINARY}"
+TMP=$(mktemp)
+curl -fsSL "$URL" -o "$TMP"
+chmod +x "$TMP"
+mv "$TMP" "${INSTALL_DIR}/${BINARY}"
 
-  echo "Done! ${INSTALL_DIR}/${BINARY} installed."
-}
-
-if [ $# -eq 0 ]; then
-  install_binary "archelon"
-else
-  for BINARY in "$@"; do
-    install_binary "$BINARY"
-  done
-fi
+echo "Done! ${INSTALL_DIR}/${BINARY} installed."
 
 case ":${PATH}:" in
   *":${INSTALL_DIR}:"*) ;;
