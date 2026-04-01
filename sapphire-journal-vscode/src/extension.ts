@@ -12,6 +12,7 @@ function getJournalCwd(): string | null {
 
 export async function activate(context: vscode.ExtensionContext) {
     setExtensionPath(context.extensionPath);
+    vscode.commands.executeCommand('setContext', 'sapphire-journal.isJournalWorkspace', true);
     vscode.commands.executeCommand('setContext', 'sapphire-journal.viewMode', 'tree');
 
     // ── MCP client ────────────────────────────────────────────────────────────
