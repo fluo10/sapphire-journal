@@ -10,6 +10,11 @@ repository.workspace = true
 [dependencies]
 sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.8.0" }
 dioxus = { version = "0.7.1", features = [] }
+git2 = { version = "0.20", default-features = false }
+uuid = { version = "1", features = ["v4", "serde"] }
+serde = { workspace = true }
+toml = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }
 
 [features]
 default = ["desktop"]
