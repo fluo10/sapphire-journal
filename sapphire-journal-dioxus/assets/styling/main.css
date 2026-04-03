@@ -1,8 +1,246 @@
+* {
+    box-sizing: border-box;
+}
+
 body {
     background-color: #0f1116;
     color: #ffffff;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    margin: 20px;
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+}
+
+/* ── Buttons ── */
+.btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background-color 0.15s;
+}
+.btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.btn-primary {
+    background-color: #4f8ef7;
+    color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+    background-color: #3a7be0;
+}
+.btn-secondary {
+    background-color: #2a2d35;
+    color: #ccc;
+    border: 1px solid #3a3d45;
+}
+.btn-secondary:hover:not(:disabled) {
+    background-color: #353840;
+}
+.btn-danger {
+    background-color: #c0392b;
+    color: #fff;
+}
+.btn-danger:hover:not(:disabled) {
+    background-color: #a93226;
+}
+
+/* ── Journal list screen ── */
+.journal-list-screen {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 32px 24px;
+}
+.list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+}
+.list-title {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0;
+}
+.list-actions {
+    display: flex;
+    gap: 8px;
+}
+.error-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background-color: #4a1a1a;
+    border: 1px solid #c0392b;
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    font-size: 14px;
+}
+.error-dismiss {
+    background: none;
+    border: none;
+    color: #ccc;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+}
+.empty-state {
+    text-align: center;
+    padding: 60px 0;
+    color: #888;
+}
+.empty-state p {
+    margin: 6px 0;
+}
+
+/* ── Journal card ── */
+.journal-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.journal-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background-color: #1a1d24;
+    border: 1px solid #2a2d35;
+    border-radius: 8px;
+    padding: 14px 16px;
+    transition: border-color 0.15s;
+}
+.journal-card:hover {
+    border-color: #4f8ef7;
+}
+.journal-card-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 500;
+}
+.journal-card-actions {
+    display: flex;
+    gap: 8px;
+}
+.badge {
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+.badge-warning {
+    background-color: #7a5200;
+    color: #ffcc44;
+}
+
+/* ── Dialogs ── */
+.dialog-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+.dialog-box {
+    background-color: #1a1d24;
+    border: 1px solid #2a2d35;
+    border-radius: 10px;
+    padding: 28px 32px;
+    min-width: 400px;
+    max-width: 520px;
+    width: 100%;
+}
+.dialog-danger {
+    border-color: #c0392b;
+}
+.dialog-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 20px 0;
+}
+.dialog-warning {
+    background-color: #2d1212;
+    border: 1px solid #7a2020;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 14px;
+    margin-bottom: 16px;
+    line-height: 1.5;
+}
+.dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 24px;
+}
+
+/* ── Forms ── */
+.form-group {
+    margin-bottom: 16px;
+}
+.form-label {
+    display: block;
+    font-size: 13px;
+    color: #aaa;
+    margin-bottom: 6px;
+}
+.form-input {
+    width: 100%;
+    background-color: #0f1116;
+    border: 1px solid #3a3d45;
+    border-radius: 6px;
+    color: #fff;
+    padding: 8px 12px;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.15s;
+}
+.form-input:focus {
+    border-color: #4f8ef7;
+}
+
+/* ── Progress bar ── */
+.progress-bar-track {
+    width: 100%;
+    height: 6px;
+    background-color: #2a2d35;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+.progress-bar-fill {
+    height: 100%;
+    background-color: #4f8ef7;
+    border-radius: 3px;
+    transition: width 0.2s ease;
+}
+.progress-label {
+    font-size: 12px;
+    color: #888;
+    margin: 0 0 12px 0;
+}
+
+/* ── Journal home screen ── */
+.journal-home-screen {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 32px 24px;
+}
+.home-header {
+    margin-bottom: 24px;
+}
+.home-placeholder {
+    text-align: center;
+    padding: 60px 0;
+    color: #888;
 }
 
 #hero {
