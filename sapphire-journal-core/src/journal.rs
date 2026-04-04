@@ -174,8 +174,8 @@ impl Journal {
     ///
     /// Resolves to `{cache_dir}/retrieve_v1.db`.
     pub fn retrieve_db_path(&self) -> Result<PathBuf> {
-        use sapphire_retrieve::db::SCHEMA_VERSION as RETRIEVE_SCHEMA_VERSION;
-        Ok(self.cache_dir()?.join(format!("retrieve_v{RETRIEVE_SCHEMA_VERSION}.db")))
+        use sapphire_workspace::RETRIEVE_SCHEMA_VERSION;
+        Ok(self.cache_dir()?.join(format!("retrieve_v{}.db", RETRIEVE_SCHEMA_VERSION)))
     }
 
 }

@@ -1,9 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use sapphire_retrieve::db::SCHEMA_VERSION;
-
-use crate::{config::{UserConfig, VectorDb}, state::WorkspaceState, workspace::Workspace};
+use sapphire_workspace::{UserConfig, VectorDb, Workspace, WorkspaceState, RETRIEVE_SCHEMA_VERSION as SCHEMA_VERSION};
 
 pub fn run(workspace_dir: Option<&Path>) -> Result<()> {
     let workspace = Workspace::resolve(workspace_dir)?;
@@ -19,7 +17,6 @@ pub fn run(workspace_dir: Option<&Path>) -> Result<()> {
     );
     println!("documents:      {}", info.document_count);
 
-    // Stale retrieve DBs
     let stale_dbs = find_stale_retrieve(&state.workspace.cache_dir());
     if !stale_dbs.is_empty() {
         let names: Vec<String> = stale_dbs
@@ -33,7 +30,7 @@ pub fn run(workspace_dir: Option<&Path>) -> Result<()> {
             .collect();
         let total: u64 = stale_dbs.iter().map(|(_, sz)| sz).sum();
         println!(
-            "stale dbs:      {} ({}) — run `sapphire-retrieve clean` to remove",
+            "stale dbs:      {} ({}) — run `sapphire-workspace clean` to remove",
             names.join(", "),
             human_size(total)
         );
@@ -50,7 +47,9 @@ pub fn run(workspace_dir: Option<&Path>) -> Result<()> {
             VectorDb::None => {}
             VectorDb::SqliteVec => {
                 if embed_cfg.dimension.is_some() {
-                    state.load_retrieve_backend(&config).map_err(anyhow::Error::msg)?;
+                    state
+                        .load_retrieve_backend(&config)
+                        .map_err(anyhow::Error::msg)?;
                     match state.retrieve_db().vec_info() {
                         Ok(vi) => {
                             println!("vector backend: sqlite_vec (dim={})", vi.embedding_dim);
@@ -68,11 +67,13 @@ pub fn run(workspace_dir: Option<&Path>) -> Result<()> {
             #[cfg(feature = "lancedb-store")]
             VectorDb::LanceDb => {
                 if embed_cfg.dimension.is_some() {
-                    use sapphire_retrieve::lancedb_store;
+                    use sapphire_workspace::lancedb_store;
                     let dir = lancedb_store::data_dir(&state.workspace.cache_dir());
                     println!("vector backend: lancedb");
                     println!("lancedb path:   {}", dir.display());
-                    state.load_retrieve_backend(&config).map_err(anyhow::Error::msg)?;
+                    state
+                        .load_retrieve_backend(&config)
+                        .map_err(anyhow::Error::msg)?;
                     match state.retrieve_db().vec_info() {
                         Ok(vi) => {
                             println!(
@@ -95,7 +96,7 @@ pub fn run(workspace_dir: Option<&Path>) -> Result<()> {
                             .collect();
                         let total: u64 = stale.iter().map(|(_, sz)| sz).sum();
                         println!(
-                            "stale lancedb:  {} ({}) — run `sapphire-retrieve clean` to remove",
+                            "stale lancedb:  {} ({}) — run `sapphire-workspace clean` to remove",
                             names.join(", "),
                             human_size(total)
                         );
@@ -139,7 +140,7 @@ pub fn find_stale_retrieve(cache_dir: &std::path::Path) -> Vec<(std::path::PathB
 pub fn find_stale_lancedb(cache_dir: &std::path::Path) -> Vec<(std::path::PathBuf, u64)> {
     let current = format!(
         "lancedb_full_v{}",
-        sapphire_retrieve::lancedb_store::SCHEMA_VERSION
+        sapphire_workspace::lancedb_store::SCHEMA_VERSION
     );
     let Ok(rd) = std::fs::read_dir(cache_dir) else {
         return Vec::new();

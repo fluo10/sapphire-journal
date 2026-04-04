@@ -15,7 +15,7 @@
 //! in a [`tokio::sync::OnceCell`] field.
 
 use tokio::sync::OnceCell;
-use sapphire_retrieve::{Embedder, RetrieveDb};
+use sapphire_workspace::{Embedder, RetrieveDb};
 
 use crate::{
     cache,
@@ -52,7 +52,7 @@ impl JournalState {
         let retrieve_db = RetrieveDb::rebuild(&journal.retrieve_db_path()?)?;
         #[cfg(feature = "lancedb-store")]
         {
-            use sapphire_retrieve::lancedb_store;
+            use sapphire_workspace::lancedb_store;
             let _ = std::fs::remove_dir_all(lancedb_store::data_dir(&journal.cache_dir()?));
         }
         Ok(Self {
@@ -147,7 +147,7 @@ impl JournalState {
         // so it is safe to call directly here.
         #[cfg(feature = "lancedb-store")]
         if vector_db == VectorDb::LanceDb {
-            use sapphire_retrieve::lancedb_store;
+            use sapphire_workspace::lancedb_store;
             let lancedb_dir = lancedb_store::data_dir(&self.journal.cache_dir()?);
             self.retrieve_db.init_lancedb(&lancedb_dir, dim)?;
             return Ok(());
@@ -164,7 +164,7 @@ impl JournalState {
             }
             #[cfg(feature = "lancedb-store")]
             VectorDb::LanceDb => {
-                use sapphire_retrieve::lancedb_store;
+                use sapphire_workspace::lancedb_store;
                 let lancedb_dir = lancedb_store::data_dir(&self.journal.cache_dir()?);
                 self.retrieve_db.init_lancedb(&lancedb_dir, dim)?;
             }
@@ -190,7 +190,7 @@ impl JournalState {
             .embedding
             .as_ref()
             .filter(|c| c.enabled)
-            .map(|c| sapphire_retrieve::build_embedder(&c.to_embed_config()).map_err(crate::error::Error::from))
+            .map(|c| sapphire_workspace::build_embedder(&c.to_embed_config()).map_err(crate::error::Error::from))
             .transpose()?;
         let _ = self.embedder.set(embedder);
         Ok(())
@@ -206,7 +206,7 @@ impl JournalState {
                     .as_ref()
                     .filter(|c| c.enabled)
                     .map(|c| {
-                        sapphire_retrieve::build_embedder(&c.to_embed_config())
+                        sapphire_workspace::build_embedder(&c.to_embed_config())
                             .map_err(crate::error::Error::from)
                     })
                     .transpose()

@@ -1,9 +1,8 @@
 use std::{collections::HashSet, path::Path};
 
-use anyhow::Result;
 use sapphire_retrieve::{Document, RetrieveDb};
 
-use crate::workspace::Workspace;
+use crate::{error::Result, workspace::Workspace};
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "rst", "org"];
 

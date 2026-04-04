@@ -241,8 +241,8 @@ pub struct EmbeddingConfig {
 
 impl EmbeddingConfig {
     /// Convert to the provider-only config expected by [`sapphire_retrieve::build_embedder`].
-    pub fn to_embed_config(&self) -> sapphire_retrieve::EmbeddingConfig {
-        sapphire_retrieve::EmbeddingConfig {
+    pub fn to_embed_config(&self) -> sapphire_workspace::RetrieveEmbedConfig {
+        sapphire_workspace::RetrieveEmbedConfig {
             provider: self.provider.clone(),
             model: self.model.clone(),
             api_key_env: self.api_key_env.clone(),
