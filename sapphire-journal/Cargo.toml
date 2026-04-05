@@ -13,7 +13,8 @@ name = "sajo"
 path = "src/main.rs"
 
 [features]
-default = ["lancedb-store", "fastembed-embed"]
+default = ["sqlite-store", "lancedb-store", "fastembed-embed"]
+sqlite-store = ["sapphire-journal-core/sqlite-store"]
 lancedb-store = ["sapphire-journal-core/lancedb-store"]
 fastembed-embed = ["sapphire-journal-core/fastembed-embed"]
 
