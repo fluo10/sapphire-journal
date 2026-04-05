@@ -10,8 +10,8 @@ keywords = ["markdown", "task-management", "notes", "frontmatter", "plain-text"]
 
 [features]
 default = ["lancedb-store", "fastembed-embed"]
-lancedb-store = ["sapphire-retrieve/lancedb-store"]
-fastembed-embed = ["sapphire-retrieve/fastembed-embed"]
+lancedb-store   = ["sapphire-workspace/lancedb-store"]
+fastembed-embed = ["sapphire-workspace/fastembed-embed"]
 
 [dependencies]
 serde.workspace = true
@@ -25,5 +25,5 @@ serde_json.workspace = true
 schemars.workspace = true
 uuid = { version = "1", features = ["v4", "serde"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
-sapphire-retrieve = { version = "0.1.1", path = "../sapphire-retrieve", default-features = false }
+sapphire-workspace = { version = "0.1.0", path = "../sapphire-workspace", default-features = false }
 grain-id = { version = "0.14", features = ["serde", "rusqlite", "schemars"] }

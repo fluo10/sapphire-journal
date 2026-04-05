@@ -55,20 +55,20 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-impl From<sapphire_retrieve::Error> for Error {
-    fn from(e: sapphire_retrieve::Error) -> Self {
+impl From<sapphire_workspace::RetrieveError> for Error {
+    fn from(e: sapphire_workspace::RetrieveError) -> Self {
         match e {
-            sapphire_retrieve::Error::Sqlite(e) => Error::Cache(e),
-            sapphire_retrieve::Error::Embed(s) => Error::Embed(s),
-            sapphire_retrieve::Error::Io(e) => Error::Io(e),
-            sapphire_retrieve::Error::SchemaTooNew { db_version, app_version } => {
+            sapphire_workspace::RetrieveError::Sqlite(e) => Error::Cache(e),
+            sapphire_workspace::RetrieveError::Embed(s) => Error::Embed(s),
+            sapphire_workspace::RetrieveError::Io(e) => Error::Io(e),
+            sapphire_workspace::RetrieveError::SchemaTooNew { db_version, app_version } => {
                 Error::InvalidConfig(format!(
                     "retrieve DB schema v{db_version} is newer than supported (v{app_version}); \
                      delete the retrieve DB and re-sync"
                 ))
             }
             #[cfg(feature = "lancedb-store")]
-            sapphire_retrieve::Error::LanceDb(e) => Error::Embed(e.to_string()),
+            sapphire_workspace::RetrieveError::LanceDb(e) => Error::Embed(e.to_string()),
         }
     }
 }

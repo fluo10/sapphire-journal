@@ -1,12 +1,12 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::Result;
-use sapphire_retrieve::{Embedder, RetrieveDb, db::SCHEMA_VERSION};
+use sapphire_retrieve::{Document, Embedder, RetrieveDb, db::SCHEMA_VERSION};
 use tokio::sync::OnceCell;
 
 use crate::{
-    config::{UserConfig, VectorDb},
-    indexer::sync_workspace,
+    config::{UserConfig, VectorDb, WorkspaceConfig},
+    error::{Error, Result},
+    indexer::{path_to_doc_id, sync_workspace},
     workspace::Workspace,
 };
 
@@ -15,6 +15,7 @@ pub struct WorkspaceState {
     pub workspace: Workspace,
     retrieve_db: RetrieveDb,
     embedder: OnceCell<Option<Box<dyn Embedder + Send + Sync>>>,
+    sync_backend: Option<Box<dyn sapphire_sync::SyncBackend + Send + Sync>>,
 }
 
 /// Database statistics returned by [`WorkspaceState::db_info`].
@@ -29,13 +30,23 @@ pub struct DbInfo {
 
 impl WorkspaceState {
     /// Open (or create) the retrieve DB for `workspace`.
+    ///
+    /// When the `git-sync` feature is enabled, automatically attaches a
+    /// [`sapphire_sync::GitSync`] backend if the workspace root is inside a
+    /// git repository.  Silently falls back to no backend if git is not found.
     pub fn open(workspace: Workspace) -> Result<Self> {
         let retrieve_db = RetrieveDb::open(&workspace.retrieve_db_path())?;
-        Ok(Self {
+        let mut state = Self {
             workspace,
             retrieve_db,
             embedder: OnceCell::new(),
-        })
+            sync_backend: None,
+        };
+        #[cfg(feature = "git-sync")]
+        if let Ok(git) = sapphire_sync::GitSync::open(&state.workspace.root) {
+            state.set_sync_backend(Box::new(git));
+        }
+        Ok(state)
     }
 
     /// Delete and recreate the retrieve DB from scratch.
@@ -50,7 +61,60 @@ impl WorkspaceState {
             workspace,
             retrieve_db,
             embedder: OnceCell::new(),
+            sync_backend: None,
         })
+    }
+
+    /// Open workspace and configure the sync backend from [`WorkspaceConfig`].
+    ///
+    /// - `SyncBackendKind::Auto` (default) — same as [`open`](Self::open):
+    ///   attach git if a repository is found, silently no-op otherwise.
+    /// - `SyncBackendKind::Git` — attach git with the configured remote;
+    ///   returns an error if no repository is found.
+    /// - `SyncBackendKind::None` — disable sync even inside a git repository.
+    #[cfg(feature = "git-sync")]
+    pub fn open_configured(workspace: Workspace, config: &WorkspaceConfig) -> Result<Self> {
+        use crate::config::SyncBackendKind;
+        let mut state = Self::open(workspace)?;
+        match config.sync.backend {
+            SyncBackendKind::Auto => {
+                // Already handled by `open`; nothing more to do.
+            }
+            SyncBackendKind::Git => {
+                // Explicit git: use the configured remote and fail hard if
+                // no repository is found.
+                let git = sapphire_sync::GitSync::with_remote(
+                    &state.workspace.root,
+                    config.sync.remote(),
+                )?;
+                state.set_sync_backend(Box::new(git));
+            }
+            SyncBackendKind::None => {
+                // Explicitly disabled: remove whatever `open` may have set.
+                state.sync_backend = None;
+            }
+        }
+        Ok(state)
+    }
+
+    /// Open workspace and configure the sync backend from [`WorkspaceConfig`].
+    /// (no-op version when the `git-sync` feature is not compiled in)
+    #[cfg(not(feature = "git-sync"))]
+    pub fn open_configured(workspace: Workspace, _config: &WorkspaceConfig) -> Result<Self> {
+        Self::open(workspace)
+    }
+
+    /// Borrow the sync backend, if one is configured.
+    pub fn sync_backend(&self) -> Option<&dyn sapphire_sync::SyncBackend> {
+        self.sync_backend.as_ref().map(|b| b.as_ref() as &dyn sapphire_sync::SyncBackend)
+    }
+
+    /// Attach a sync backend (e.g. `GitSync`).  Called once after construction.
+    pub fn set_sync_backend(
+        &mut self,
+        backend: Box<dyn sapphire_sync::SyncBackend + Send + Sync>,
+    ) {
+        self.sync_backend = Some(backend);
     }
 
     pub fn retrieve_db(&self) -> &RetrieveDb {
@@ -59,6 +123,66 @@ impl WorkspaceState {
 
     pub fn embedder(&self) -> Option<&dyn Embedder> {
         Some(self.embedder.get()?.as_ref()?.as_ref())
+    }
+
+    // ── single-file update API ────────────────────────────────────────────────
+
+    /// Update the retrieve index for a single file and stage it via the sync
+    /// backend (if configured).
+    ///
+    /// Reads the file from disk, upserts it into the retrieve DB, and calls
+    /// `sync_backend.add_file` when a backend is attached.
+    pub fn on_file_updated(&self, path: &Path) -> Result<()> {
+        let path_str = path.to_string_lossy().into_owned();
+
+        let mtime = path
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64
+            })
+            .unwrap_or(0);
+
+        let body = std::fs::read_to_string(path)?;
+        let title = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let doc_id = path_to_doc_id(path);
+
+        self.retrieve_db.upsert_file(&path_str, mtime)?;
+        self.retrieve_db.upsert_document(&Document {
+            id: doc_id,
+            title,
+            body,
+            path: path_str,
+        })?;
+        self.retrieve_db.rebuild_fts()?;
+
+        if let Some(sync) = &self.sync_backend {
+            sync.add_file(path)?;
+        }
+
+        Ok(())
+    }
+
+    /// Remove a file from the retrieve index and unstage it via the sync
+    /// backend (if configured).
+    pub fn on_file_deleted(&self, path: &Path) -> Result<()> {
+        let path_str = path.to_string_lossy().into_owned();
+        let doc_id = path_to_doc_id(path);
+
+        self.retrieve_db.remove_document(doc_id)?;
+        self.retrieve_db.remove_file(&path_str)?;
+        self.retrieve_db.rebuild_fts()?;
+
+        if let Some(sync) = &self.sync_backend {
+            sync.remove_file(path)?;
+        }
+
+        Ok(())
     }
 
     // ── vector backend ────────────────────────────────────────────────────────
@@ -90,8 +214,6 @@ impl WorkspaceState {
         };
         let vector_db = embed_cfg.vector_db;
 
-        // LanceDB uses block_in_place internally when called from an async context,
-        // so it is safe to call directly here.
         #[cfg(feature = "lancedb-store")]
         if vector_db == VectorDb::LanceDb {
             use sapphire_retrieve::lancedb_store;
@@ -117,9 +239,7 @@ impl WorkspaceState {
             }
             #[cfg(not(feature = "lancedb-store"))]
             VectorDb::LanceDb => {
-                anyhow::bail!(
-                    "lancedb support is not compiled in (enable the `lancedb-store` feature)"
-                );
+                return Err(Error::LanceDbNotEnabled);
             }
         }
         Ok(())
@@ -136,10 +256,7 @@ impl WorkspaceState {
             .embedding
             .as_ref()
             .filter(|c| c.enabled)
-            .map(|c| {
-                sapphire_retrieve::build_embedder(&c.to_retrieve_embed_config())
-                    .map_err(anyhow::Error::msg)
-            })
+            .map(|c| sapphire_retrieve::build_embedder(&c.to_retrieve_embed_config()))
             .transpose()?;
         let _ = self.embedder.set(embedder);
         Ok(())
@@ -153,19 +270,16 @@ impl WorkspaceState {
                     .embedding
                     .as_ref()
                     .filter(|c| c.enabled)
-                    .map(|c| {
-                        sapphire_retrieve::build_embedder(&c.to_retrieve_embed_config())
-                            .map_err(anyhow::Error::msg)
-                    })
+                    .map(|c| sapphire_retrieve::build_embedder(&c.to_retrieve_embed_config()))
                     .transpose()
             })
             .await?;
         Ok(())
     }
 
-    // ── sync ──────────────────────────────────────────────────────────────────
+    // ── bulk sync ─────────────────────────────────────────────────────────────
 
-    /// Sync the workspace into the retrieve DB (FTS only).
+    /// Scan the workspace and incrementally sync all files into the retrieve DB.
     pub fn sync(&self) -> Result<(usize, usize)> {
         sync_workspace(&self.workspace, &self.retrieve_db)
     }
@@ -219,11 +333,14 @@ impl WorkspaceState {
     pub fn db_info(&self) -> Result<DbInfo> {
         let db_path = self.workspace.retrieve_db_path();
         let document_count = self.retrieve_db.document_count().unwrap_or(0);
-        let vec_info = self.retrieve_db.vec_info().unwrap_or(sapphire_retrieve::VecInfo {
-            embedding_dim: 0,
-            vector_count: 0,
-            pending_count: 0,
-        });
+        let vec_info = self
+            .retrieve_db
+            .vec_info()
+            .unwrap_or(sapphire_retrieve::VecInfo {
+                embedding_dim: 0,
+                vector_count: 0,
+                pending_count: 0,
+            });
         Ok(DbInfo {
             db_path,
             schema_version: SCHEMA_VERSION,

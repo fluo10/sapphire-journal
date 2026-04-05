@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-
-use crate::{state::WorkspaceState, workspace::Workspace};
+use sapphire_workspace::{Workspace, WorkspaceState};
 
 pub fn run(workspace_dir: Option<&Path>) -> Result<()> {
     let workspace = Workspace::resolve(workspace_dir)?;

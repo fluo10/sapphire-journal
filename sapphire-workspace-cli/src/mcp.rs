@@ -10,14 +10,8 @@ use rmcp::{
     schemars, tool, tool_handler, tool_router,
     transport::stdio,
 };
-use sapphire_retrieve::RetrieveDb;
+use sapphire_workspace::{RetrieveDb, UserConfig, Workspace, WorkspaceState};
 use serde::Deserialize;
-
-use crate::{
-    config::UserConfig,
-    state::WorkspaceState,
-    workspace::Workspace,
-};
 
 // ── server struct ─────────────────────────────────────────────────────────────
 
@@ -45,7 +39,6 @@ impl RecallServer {
         }
     }
 
-    /// Provide access to the cached state, auto-opening on first use.
     fn with_state<F, T>(&self, f: F) -> anyhow::Result<T>
     where
         F: FnOnce(&WorkspaceState) -> anyhow::Result<T>,
@@ -123,7 +116,7 @@ impl RecallServer {
                 Some(s) => s.workspace.root.clone(),
                 None => Workspace::resolve(self.default_dir.as_deref())?.root,
             };
-            let state = WorkspaceState::rebuild(Workspace { root: workspace_root })?;
+            let state = WorkspaceState::rebuild(Workspace::from_root(&workspace_root)?)?;
             let (upserted, _removed) = state.sync()?;
             *guard = Some(state);
             Ok(format!("rebuilt: {upserted} files indexed"))
@@ -144,8 +137,6 @@ impl RecallServer {
                 let limit = p.limit.unwrap_or(10);
 
                 if let Some(embedder) = s.embedder() {
-                    // Auto-embed a small number of pending chunks so recently-synced
-                    // documents appear in vector search results.
                     let pending = s
                         .retrieve_db()
                         .vec_info()
@@ -168,7 +159,6 @@ impl RecallServer {
                     return Ok(serde_json::to_string_pretty(&results)?);
                 }
 
-                // Fallback: full-text search.
                 let results = s
                     .retrieve_db()
                     .search_fts(&p.query, limit)
@@ -185,7 +175,7 @@ impl ServerHandler for RecallServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(
-                "sapphire-retrieve indexes text files for full-text and semantic search. \
+                "sapphire-workspace indexes text files for full-text and semantic search. \
                  Use workspace_sync to keep the index up to date, workspace_info to \
                  inspect the index, workspace_rebuild to recreate it from scratch, \
                  and search to find relevant documents."

@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-
-use crate::workspace::Workspace;
+use sapphire_workspace::Workspace;
 
 use super::info::{find_stale_retrieve, human_size};
 

@@ -4,7 +4,9 @@ members = [
     "sapphire-journal-core",
     "sapphire-journal-dioxus",
     "sapphire-retrieve",
-    "sapphire-retrieve-cli",
+    "sapphire-sync",
+    "sapphire-workspace",
+    "sapphire-workspace-cli",
 ]
 resolver = "3"
 

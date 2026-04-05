@@ -32,7 +32,7 @@ pub mod period;
 pub mod user_config;
 
 pub use journal_state::JournalState;
-pub use sapphire_retrieve::RetrieveDb;
+pub use sapphire_workspace::RetrieveDb;
 
 #[cfg(feature = "lancedb-store")]
-pub use sapphire_retrieve::lancedb_store;
+pub use sapphire_workspace::lancedb_store;

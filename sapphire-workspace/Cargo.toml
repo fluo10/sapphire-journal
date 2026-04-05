@@ -1,30 +1,23 @@
 [package]
-name = "sapphire-retrieve-cli"
+name = "sapphire-workspace"
 edition.workspace = true
-version = "0.1.1"
+version = "0.1.0"
 description.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[[bin]]
-name = "saret"
-path = "src/main.rs"
-
 [features]
-default = ["lancedb-store", "fastembed-embed"]
+default = ["lancedb-store", "fastembed-embed", "git-sync"]
 lancedb-store   = ["sapphire-retrieve/lancedb-store"]
 fastembed-embed = ["sapphire-retrieve/fastembed-embed"]
+git-sync        = ["sapphire-sync/git"]
 
 [dependencies]
 sapphire-retrieve = { version = "0.1.1", path = "../sapphire-retrieve", default-features = false }
-clap.workspace = true
-anyhow.workspace = true
+sapphire-sync     = { version = "0.1.0", path = "../sapphire-sync", default-features = false }
+thiserror.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 toml.workspace = true
 tokio = { workspace = true, features = ["full"] }
-rmcp.workspace = true
-schemars.workspace = true
-tracing-subscriber.workspace = true
-walkdir = "2"
 indexmap.workspace = true
+walkdir = "2"

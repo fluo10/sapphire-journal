@@ -33,7 +33,7 @@ use std::{
 
 use grain_id::GrainId;
 use rusqlite::{params, Connection, OptionalExtension as _};
-use sapphire_retrieve::RetrieveDb;
+use sapphire_workspace::RetrieveDb;
 
 use crate::{
     error::{Error, Result},
@@ -624,9 +624,9 @@ fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
     Ok(())
 }
 
-/// Convert an in-memory [`Entry`] to a [`sapphire_retrieve::Document`] for indexing.
-fn entry_to_document(entry: &crate::entry::Entry) -> sapphire_retrieve::Document {
-    sapphire_retrieve::Document {
+/// Convert an in-memory [`Entry`] to a [`sapphire_workspace::Document`] for indexing.
+fn entry_to_document(entry: &crate::entry::Entry) -> sapphire_workspace::Document {
+    sapphire_workspace::Document {
         id: u64::from(entry.frontmatter.id) as i64,
         title: entry.frontmatter.title.clone(),
         body: entry.body.clone(),
