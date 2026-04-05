@@ -9,7 +9,8 @@ categories = ["text-processing", "filesystem", "data-structures"]
 keywords = ["markdown", "task-management", "notes", "frontmatter", "plain-text"]
 
 [features]
-default = ["lancedb-store", "fastembed-embed"]
+default = ["sqlite-store", "lancedb-store", "fastembed-embed"]
+sqlite-store    = ["sapphire-workspace/sqlite-store"]
 lancedb-store   = ["sapphire-workspace/lancedb-store"]
 fastembed-embed = ["sapphire-workspace/fastembed-embed"]
 

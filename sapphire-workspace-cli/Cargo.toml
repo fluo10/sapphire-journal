@@ -11,7 +11,8 @@ name = "sapphire-workspace"
 path = "src/main.rs"
 
 [features]
-default = ["lancedb-store", "fastembed-embed", "git-sync"]
+default = ["sqlite-store", "lancedb-store", "fastembed-embed", "git-sync"]
+sqlite-store    = ["sapphire-workspace/sqlite-store"]
 lancedb-store   = ["sapphire-workspace/lancedb-store"]
 fastembed-embed = ["sapphire-workspace/fastembed-embed"]
 git-sync        = ["sapphire-workspace/git-sync"]
