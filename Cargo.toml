@@ -6,7 +6,7 @@ members = [
     "sapphire-retrieve",
     "sapphire-sync",
     "sapphire-workspace",
-    "sapphire-workspace-cli",
+    "sapphire-workspace/examples/cli",
 ]
 resolver = "3"
 
