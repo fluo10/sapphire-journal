@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 repository.workspace = true
 
 [dependencies]
-sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.8.0" }
+sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.9.0" }
 dioxus = { version = "0.7.1", features = [] }
 git2 = { version = "0.20", default-features = false }
 uuid = { version = "1", features = ["v4", "serde"] }

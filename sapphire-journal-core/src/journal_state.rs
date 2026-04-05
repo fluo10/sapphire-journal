@@ -160,7 +160,12 @@ impl JournalState {
         match vector_db {
             VectorDb::None => {}
             VectorDb::SqliteVec => {
+                #[cfg(feature = "sqlite-store")]
                 self.retrieve_db.init_sqlite_vec(dim)?;
+                #[cfg(not(feature = "sqlite-store"))]
+                return Err(crate::error::Error::InvalidConfig(
+                    "sqlite-vec support is not compiled in (enable the `sqlite-store` feature)".into(),
+                ));
             }
             #[cfg(feature = "lancedb-store")]
             VectorDb::LanceDb => {

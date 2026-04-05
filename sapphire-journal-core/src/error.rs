@@ -58,6 +58,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 impl From<sapphire_workspace::RetrieveError> for Error {
     fn from(e: sapphire_workspace::RetrieveError) -> Self {
         match e {
+            #[cfg(feature = "sqlite-store")]
             sapphire_workspace::RetrieveError::Sqlite(e) => Error::Cache(e),
             sapphire_workspace::RetrieveError::Embed(s) => Error::Embed(s),
             sapphire_workspace::RetrieveError::Io(e) => Error::Io(e),

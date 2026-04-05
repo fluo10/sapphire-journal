@@ -192,8 +192,13 @@ impl Journal {
     ///
     /// Resolves to `{cache_dir}/retrieve_v1.db`.
     pub fn retrieve_db_path(&self) -> Result<PathBuf> {
-        use sapphire_workspace::RETRIEVE_SCHEMA_VERSION;
-        Ok(self.cache_dir()?.join(format!("retrieve_v{}.db", RETRIEVE_SCHEMA_VERSION)))
+        #[cfg(feature = "sqlite-store")]
+        {
+            use sapphire_workspace::RETRIEVE_SCHEMA_VERSION;
+            return Ok(self.cache_dir()?.join(format!("retrieve_v{}.db", RETRIEVE_SCHEMA_VERSION)));
+        }
+        #[cfg(not(feature = "sqlite-store"))]
+        Ok(self.cache_dir()?.join("retrieve.db"))
     }
 
 }
