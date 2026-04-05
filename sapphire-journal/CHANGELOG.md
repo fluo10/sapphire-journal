@@ -15,7 +15,8 @@ All notable changes to `sapphire-journal` and `sapphire-journal-core` are docume
 
 ### Fixed
 
-- `sqlite-store` feature flag was not propagated from `sapphire-workspace` into `sapphire-journal-core`, causing unresolved import errors in non-default feature configurations.
+- `sapphire-journal` now explicitly declares and enables the `sqlite-store` feature, propagating it to `sapphire-journal-core`. Previously the feature was missing from `sapphire-journal`'s feature set, so `sapphire-journal-core` was compiled without `sqlite-store` during `cargo publish` verification, causing build failures.
+- `sapphire-journal-core`: sqlite-store-gated items (`RETRIEVE_SCHEMA_VERSION`, `RetrieveError::Sqlite`, `RetrieveDb::init_sqlite_vec`) are now properly guarded with `#[cfg(feature = "sqlite-store")]`, so the crate also compiles correctly with `--no-default-features`.
 
 ## [0.8.0] - 2026-03-29
 
