@@ -36,7 +36,7 @@ cargo install --path .
 ### Initialize a journal
 
 ```bash
-sapphire-journal init [PATH]
+sajo init [PATH]
 ```
 
 Creates `.sapphire-journal/config.toml` with the detected local timezone and `.sapphire-journal/.gitignore`.
@@ -44,8 +44,8 @@ Creates `.sapphire-journal/config.toml` with the detected local timezone and `.s
 ### Global options
 
 ```bash
-# Override journal root (also settable via ARCHELON_JOURNAL_DIR env var)
-sapphire-journal --journal-dir /path/to/journal <command>
+# Override journal root (also settable via SAPPHIRE_JOURNAL_DIR env var)
+sajo --journal-dir /path/to/journal <command>
 ```
 
 ### Entry commands
@@ -53,7 +53,7 @@ sapphire-journal --journal-dir /path/to/journal <command>
 #### Create a new entry
 
 ```bash
-sapphire-journal entry new --title <TITLE> [--body "body text"] [OPTIONS]
+sajo entry new --title <TITLE> [--body "body text"] [OPTIONS]
 ```
 
 Options:
@@ -63,12 +63,12 @@ Options:
 - `--task-status STATUS` — set task status (`open` | `in_progress` | `done` | `cancelled` | `archived`)
 - `--event-start DATETIME`, `--event-end DATETIME`
 
-The filename is auto-generated as `{year}/{caretta-id}_{slug}.md`.
+The filename is auto-generated as `{year}/{grain-id}_{slug}.md`.
 
 #### Create and edit in $EDITOR
 
 ```bash
-sapphire-journal entry edit --new
+sajo entry edit --new
 ```
 
 Opens `$EDITOR` (`$VISUAL` → `$EDITOR` → `vi`) with a pre-filled frontmatter template. On save, the filename is adjusted to match the title.
@@ -76,13 +76,13 @@ Opens `$EDITOR` (`$VISUAL` → `$EDITOR` → `vi`) with a pre-filled frontmatter
 #### List entries
 
 ```bash
-sapphire-journal entry list [PATH] [OPTIONS]
+sajo entry list [PATH] [OPTIONS]
 ```
 
 Timestamp filters (OR'd across fields):
 
 ```bash
-sapphire-journal entry list [PERIOD]      # positional PERIOD applies to all timestamp fields
+sajo entry list [PERIOD]      # positional PERIOD applies to all timestamp fields
 --task-due PERIOD             # filter by task due date
 --event-span PERIOD           # filter by event span overlap (in-progress events included)
 --created-at PERIOD           # filter by created_at
@@ -124,7 +124,7 @@ Output:
 #### Display entries as a tree
 
 ```bash
-sapphire-journal entry tree [PATH] [OPTIONS]
+sajo entry tree [PATH] [OPTIONS]
 ```
 
 Displays entries in a parent-child hierarchy based on `parent_id` in frontmatter.
@@ -137,13 +137,13 @@ Supports the same filter and sort options as `entry list`.
 #### Show an entry
 
 ```bash
-sapphire-journal entry show <file-or-id>
+sajo entry show <file-or-id>
 ```
 
 #### Edit an entry
 
 ```bash
-sapphire-journal entry edit <file-or-id>
+sajo entry edit <file-or-id>
 ```
 
 Opens the entry in `$EDITOR`.
@@ -151,10 +151,10 @@ Opens the entry in `$EDITOR`.
 #### Update frontmatter fields
 
 ```bash
-sapphire-journal entry modify <file-or-id> --title "New title"
-sapphire-journal entry modify <file-or-id> --tags work,backend
-sapphire-journal entry modify <file-or-id> --tags          # clear all tags
-sapphire-journal entry modify <file-or-id> --task-status done
+sajo entry modify <file-or-id> --title "New title"
+sajo entry modify <file-or-id> --tags work,backend
+sajo entry modify <file-or-id> --tags          # clear all tags
+sajo entry modify <file-or-id> --task-status done
 ```
 
 When `--task-status` is set to `done`, `cancelled`, or `archived`, `closed_at` is set automatically.
@@ -162,22 +162,22 @@ When `--task-status` is set to `done`, `cancelled`, or `archived`, `closed_at` i
 #### Check and fix filename
 
 ```bash
-sapphire-journal entry check <file-or-id>   # report any filename/frontmatter mismatches
-sapphire-journal entry fix <file-or-id>     # rename file to match frontmatter
+sajo entry check <file-or-id>   # report any filename/frontmatter mismatches
+sajo entry fix <file-or-id>     # rename file to match frontmatter
 ```
 
 #### Remove an entry
 
 ```bash
-sapphire-journal entry remove <file-or-id>
+sajo entry remove <file-or-id>
 ```
 
 ### Cache commands
 
 ```bash
-sapphire-journal cache info       # show cache status and statistics
-sapphire-journal cache sync       # incrementally update the cache
-sapphire-journal cache rebuild    # drop and rebuild the cache from scratch
+sajo cache info       # show cache status and statistics
+sajo cache sync       # incrementally update the cache
+sajo cache rebuild    # drop and rebuild the cache from scratch
 ```
 
 ### DATETIME format
@@ -201,19 +201,19 @@ week_start = "monday"     # or "sunday" — used by this_week period
 
 ## MCP server
 
-`sapphire-journal mcp` launches an MCP (Model Context Protocol) server over stdio, letting AI agents (Claude, etc.) read and write journal entries.
+`sajo mcp` launches an MCP (Model Context Protocol) server over stdio, letting AI agents (Claude, etc.) read and write journal entries.
 
 ### Start the server
 
 ```bash
-sapphire-journal mcp
+sajo mcp
 ```
 
 ### Environment variables
 
 | Variable | Description |
 |---|---|
-| `ARCHELON_JOURNAL_DIR` | Path to the journal root. If not set, the server walks up from the current directory to find `.sapphire-journal/`. |
+| `SAPPHIRE_JOURNAL_DIR` | Path to the journal root. If not set, the server walks up from the current directory to find `.sapphire-journal/`. |
 
 ### Example: Claude Desktop
 
@@ -221,10 +221,10 @@ sapphire-journal mcp
 {
   "mcpServers": {
     "sapphire-journal": {
-      "command": "sapphire-journal",
+      "command": "sajo",
       "args": ["mcp"],
       "env": {
-        "ARCHELON_JOURNAL_DIR": "/path/to/your/journal"
+        "SAPPHIRE_JOURNAL_DIR": "/path/to/your/journal"
       }
     }
   }

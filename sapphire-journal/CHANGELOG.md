@@ -2,6 +2,21 @@
 
 All notable changes to `sapphire-journal` and `sapphire-journal-core` are documented here.
 
+## [0.9.0] - 2026-04-06
+
+### Added
+
+- Cache directory is now derived from the journal's canonical absolute path via UUIDv3, replacing the v4 UUID stored in `config.toml`. Two clones or mounts of the same journal at different paths now get independent cache directories, eliminating conflicts when working in parallel.
+
+### Changed
+
+- `sapphire-journal-core` now sources `RetrieveError` and `RETRIEVE_SCHEMA_VERSION` through `sapphire-workspace` re-exports (internal: aligns with new workspace crate structure).
+- LanceDB mode (`lancedb-store` feature): the `files` table is now managed by the retrieve DB (previously in the journal cache DB); SQLite cache file is no longer created when LanceDB is selected (lazy init).
+
+### Fixed
+
+- `sqlite-store` feature flag was not propagated from `sapphire-workspace` into `sapphire-journal-core`, causing unresolved import errors in non-default feature configurations.
+
 ## [0.8.0] - 2026-03-29
 
 ### Changed
