@@ -157,35 +157,23 @@ impl Journal {
 
     /// Machine-local cache directory for this journal.
     ///
-    /// Resolves to `$XDG_CACHE_HOME/sapphire-journal/{cache_id}/`
+    /// Resolves to `$XDG_CACHE_HOME/sapphire-journal/{uuid}/`
     /// (or `~/.cache/sapphire-journal/...` when `XDG_CACHE_HOME` is not set).
     /// This directory is intentionally outside the journal directory so it is
     /// never synced by git, Syncthing, or Nextcloud.
     ///
-    /// The directory name is a UUIDv3 derived from the journal's canonical
-    /// absolute path.  This ensures that two clones or mounts of the same
-    /// journal at different paths on the same machine each get independent
-    /// cache directories, avoiding conflicts.
+    /// The directory name is a UUIDv8 derived from the MD5 hash of the
+    /// journal's canonical absolute path (via
+    /// [`sapphire_workspace::path_uuid`]).  This ensures that two clones or
+    /// mounts of the same journal at different paths on the same machine each
+    /// get independent cache directories, avoiding conflicts.
     ///
     /// Individual cache files within this directory are named with their schema
     /// version (e.g. `cache_v2.db`) so that old data survives schema upgrades
     /// until explicitly removed with `sapphire-journal cache clean`.
     pub fn cache_dir(&self) -> Result<PathBuf> {
-        let id = self.cache_id();
-        Ok(xdg_cache_home().join("sapphire-journal").join(id.to_string()))
-    }
-
-    /// UUIDv3 derived from the journal's canonical absolute path.
-    ///
-    /// Used exclusively for naming the machine-local cache directory.
-    /// Unlike [`journal_id`](Self::journal_id), this value is never persisted —
-    /// it is recomputed from the filesystem path on every call.
-    fn cache_id(&self) -> Uuid {
-        // Fixed namespace for sapphire-journal cache paths.
-        // Must not change across versions to keep cache locations stable.
-        const NAMESPACE: Uuid = uuid::uuid!("4d9e2a8b-1c3f-4e7a-9b5d-2f6e1a8c4b7e");
-        let path = std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
-        Uuid::new_v3(&NAMESPACE, path.as_os_str().as_encoded_bytes())
+        let uuid = sapphire_workspace::path_uuid(&self.root);
+        Ok(xdg_cache_home().join("sapphire-journal").join(uuid.to_string()))
     }
 
     /// Path to the retrieve database (FTS + vector index) for this journal.
