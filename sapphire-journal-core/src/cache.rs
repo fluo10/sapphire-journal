@@ -631,5 +631,6 @@ fn entry_to_document(entry: &crate::entry::Entry) -> sapphire_workspace::Documen
         title: entry.frontmatter.title.clone(),
         body: entry.body.clone(),
         path: entry.path.to_string_lossy().into_owned(),
+        chunks: None,
     }
 }
