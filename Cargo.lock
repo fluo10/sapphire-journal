@@ -7638,12 +7638,14 @@ name = "sapphire-workspace"
 version = "0.2.0"
 dependencies = [
  "indexmap 2.13.1",
+ "md-5",
  "sapphire-retrieve",
  "sapphire-sync",
  "serde",
  "thiserror 2.0.18",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
+ "uuid",
  "walkdir",
 ]
 
@@ -9357,7 +9359,6 @@ checksum = "5ac8b6f42ead25368cf5b098aeb3dc8a1a2c05a3eee8a9a1a68c640edbfc79d9"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
- "md-5",
  "serde_core",
  "wasm-bindgen",
 ]

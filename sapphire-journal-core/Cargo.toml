@@ -24,7 +24,7 @@ thiserror.workspace = true
 rusqlite.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
-uuid = { version = "1", features = ["v3", "v4", "serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 sapphire-workspace = { version = "0.2.0", path = "../sapphire-workspace", default-features = false }
 grain-id = { version = "0.14", features = ["serde", "rusqlite", "schemars"] }
