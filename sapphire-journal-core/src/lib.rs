@@ -34,5 +34,16 @@ pub mod user_config;
 pub use journal_state::JournalState;
 pub use sapphire_workspace::RetrieveDb;
 
+/// Shared application context for sapphire-journal.
+///
+/// Provides the app name (`"sapphire-journal"`) and the platform cache base
+/// directory used by all [`Journal`](journal::Journal) instances.
+///
+/// On Android, call [`AppContext::set_cache_base`](sapphire_workspace::AppContext::set_cache_base)
+/// on this value at app startup (before opening any journal) with the path
+/// obtained from `Context.getCacheDir()`.
+pub static JOURNAL_CTX: sapphire_workspace::AppContext =
+    sapphire_workspace::AppContext::new("sapphire-journal");
+
 #[cfg(feature = "lancedb-store")]
 pub use sapphire_workspace::lancedb_store;

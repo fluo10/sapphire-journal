@@ -157,8 +157,9 @@ impl Journal {
 
     /// Machine-local cache directory for this journal.
     ///
-    /// Resolves to `$XDG_CACHE_HOME/sapphire-journal/{uuid}/`
-    /// (or `~/.cache/sapphire-journal/...` when `XDG_CACHE_HOME` is not set).
+    /// Resolves to `{cache_base}/sapphire-journal/{uuid}/` where `cache_base`
+    /// is the platform cache directory (e.g. `~/.cache` on Linux,
+    /// `~/Library/Caches` on macOS, `%LOCALAPPDATA%` on Windows).
     /// This directory is intentionally outside the journal directory so it is
     /// never synced by git, Syncthing, or Nextcloud.
     ///
@@ -172,8 +173,7 @@ impl Journal {
     /// version (e.g. `cache_v2.db`) so that old data survives schema upgrades
     /// until explicitly removed with `sapphire-journal cache clean`.
     pub fn cache_dir(&self) -> Result<PathBuf> {
-        let uuid = sapphire_workspace::path_uuid(&self.root);
-        Ok(xdg_cache_home().join("sapphire-journal").join(uuid.to_string()))
+        Ok(crate::JOURNAL_CTX.cache_dir_for(&self.root))
     }
 
     /// Path to the retrieve database (FTS + vector index) for this journal.
@@ -189,18 +189,6 @@ impl Journal {
         Ok(self.cache_dir()?.join("retrieve.db"))
     }
 
-}
-
-fn xdg_cache_home() -> PathBuf {
-    if let Ok(dir) = std::env::var("XDG_CACHE_HOME") {
-        if !dir.is_empty() {
-            return PathBuf::from(dir);
-        }
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".cache");
-    }
-    std::env::temp_dir()
 }
 
 fn collect_md_in(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
