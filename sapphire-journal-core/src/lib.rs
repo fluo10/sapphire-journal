@@ -39,9 +39,10 @@ pub use sapphire_workspace::RetrieveDb;
 /// Provides the app name (`"sapphire-journal"`) and the platform cache base
 /// directory used by all [`Journal`](journal::Journal) instances.
 ///
-/// On Android, call [`AppContext::set_cache_base`](sapphire_workspace::AppContext::set_cache_base)
-/// on this value at app startup (before opening any journal) with the path
-/// obtained from `Context.getCacheDir()`.
+/// On mobile, call [`AppContext::set_cache_dir`](sapphire_workspace::AppContext::set_cache_dir)
+/// on this value at app startup (before opening any journal) with the
+/// platform-provided app cache directory (e.g. Android's `Context.getCacheDir()`,
+/// or iOS's `$HOME/Library/Caches`).
 pub static JOURNAL_CTX: sapphire_workspace::AppContext =
     sapphire_workspace::AppContext::new("sapphire-journal");
 

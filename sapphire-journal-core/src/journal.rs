@@ -157,9 +157,10 @@ impl Journal {
 
     /// Machine-local cache directory for this journal.
     ///
-    /// Resolves to `{cache_base}/sapphire-journal/{uuid}/` where `cache_base`
-    /// is the platform cache directory (e.g. `~/.cache` on Linux,
-    /// `~/Library/Caches` on macOS, `%LOCALAPPDATA%` on Windows).
+    /// Resolves to `{cache_dir}/{uuid}/` where `cache_dir` is
+    /// `~/.cache/sapphire-journal` on Linux, `~/Library/Caches/sapphire-journal`
+    /// on macOS, `%LOCALAPPDATA%/sapphire-journal` on Windows, or the
+    /// platform-provided app cache directory on mobile.
     /// This directory is intentionally outside the journal directory so it is
     /// never synced by git, Syncthing, or Nextcloud.
     ///
