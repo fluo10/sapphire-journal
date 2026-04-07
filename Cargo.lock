@@ -7641,7 +7641,7 @@ dependencies = [
 
 [[package]]
 name = "sapphire-retrieve"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -7659,7 +7659,7 @@ dependencies = [
 
 [[package]]
 name = "sapphire-sync"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "git2",
  "serde",
@@ -7668,7 +7668,7 @@ dependencies = [
 
 [[package]]
 name = "sapphire-workspace"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "dirs 5.0.1",
  "indexmap 2.13.1",
