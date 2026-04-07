@@ -7662,6 +7662,7 @@ name = "sapphire-sync"
 version = "0.3.0"
 dependencies = [
  "git2",
+ "serde",
  "thiserror 2.0.18",
 ]
 
