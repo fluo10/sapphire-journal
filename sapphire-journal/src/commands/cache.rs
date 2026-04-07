@@ -86,11 +86,11 @@ fn info(journal: &Journal) -> Result<()> {
         }
     }
 
-    if let Some(embed_cfg) = &user_cfg.cache.embedding {
+    if let Some(embed_cfg) = &user_cfg.cache.retrieve.embedding {
         let enabled_str = if embed_cfg.enabled { "enabled" } else { "disabled" };
         println!("embedding:      {} (provider={}, model={})", enabled_str, embed_cfg.provider, embed_cfg.model);
 
-        match embed_cfg.vector_db {
+        match user_cfg.cache.retrieve.db {
             VectorDb::None => {}
             VectorDb::SqliteVec => {
                 if embed_cfg.dimension.is_some() {
@@ -181,25 +181,25 @@ fn rebuild(journal: &Journal) -> Result<()> {
 
 fn embed(journal: &Journal) -> Result<()> {
     let user_cfg = UserConfig::load()?;
-    let embed_cfg = user_cfg.cache.embedding.as_ref().ok_or_else(|| {
+    let embed_cfg = user_cfg.cache.retrieve.embedding.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
-            "[cache.embedding] section is required in ~/.config/sapphire-journal/config.toml"
+            "[cache.retrieve.embedding] section is required in ~/.config/sapphire-journal/config.toml"
         )
     })?;
     if !embed_cfg.enabled {
         anyhow::bail!(
-            "cache.embedding.enabled is false in ~/.config/sapphire-journal/config.toml"
+            "cache.retrieve.embedding.enabled is false in ~/.config/sapphire-journal/config.toml"
         );
     }
-    if embed_cfg.vector_db == VectorDb::None {
+    if user_cfg.cache.retrieve.db == VectorDb::None {
         anyhow::bail!(
-            "cache.embedding.vector_db is \"none\" in ~/.config/sapphire-journal/config.toml — \
+            "cache.retrieve.db is \"none\" in ~/.config/sapphire-journal/config.toml — \
              set it to \"sqlite_vec\" or \"lancedb\" to use vector search"
         );
     }
     if embed_cfg.dimension.is_none() {
         anyhow::bail!(
-            "`dimension` is required in [cache.embedding] \
+            "`dimension` is required in [cache.retrieve.embedding] \
              (e.g. dimension = 1536 for text-embedding-3-small)"
         );
     }

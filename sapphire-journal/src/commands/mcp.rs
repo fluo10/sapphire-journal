@@ -63,7 +63,7 @@ impl ArchelonServer {
             let journal = self.open_default_journal()?;
             let state = JournalState::open(journal)?;
             let config = UserConfig::load()?;
-            if config.cache.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
+            if config.cache.retrieve.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
                 // block_in_place suspends the current tokio worker and lets us
                 // call block_on without nesting runtimes.  Requires the
                 // multi-thread runtime (the default for #[tokio::main]).
@@ -90,7 +90,7 @@ impl ArchelonServer {
         let state = JournalState::open(journal)?;
         state.sync()?;
         let config = UserConfig::load()?;
-        if config.cache.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
+        if config.cache.retrieve.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
             tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
                     state.load_retrieve_backend_async(&config).await?;

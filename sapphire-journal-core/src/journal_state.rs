@@ -21,8 +21,10 @@ use crate::{
     cache,
     error::Result,
     journal::Journal,
-    user_config::{UserConfig, VectorDb},
+    user_config::{EmbeddingConfig, UserConfig, VectorDb},
 };
+
+use sapphire_workspace::build_embedder;
 
 /// An open journal paired with its lazily-initialised search infrastructure.
 pub struct JournalState {
@@ -89,12 +91,9 @@ impl JournalState {
         cache::sync_cache(&self.journal, &conn, &self.retrieve_db)?;
         drop(conn);
 
-        let Some(embed_cfg) = &config.cache.embedding else {
-            return Ok(0);
-        };
-        if !embed_cfg.enabled {
-            return Ok(0);
-        }
+        let embed_cfg = config.cache.retrieve.embedding.as_ref();
+        let Some(embed_cfg) = embed_cfg else { return Ok(0); };
+        if !embed_cfg.enabled { return Ok(0); }
 
         self.load_retrieve_backend_async(config).await?;
         self.load_embedder_async(config).await?;
@@ -118,30 +117,20 @@ impl JournalState {
     ///
     /// Idempotent — if the backend is already loaded this is a no-op.
     pub fn load_retrieve_backend(&self, config: &UserConfig) -> Result<()> {
-        let Some(embed_cfg) = &config.cache.embedding else {
-            return Ok(());
-        };
-        if !embed_cfg.enabled {
-            return Ok(());
-        }
-        let Some(dim) = embed_cfg.dimension else {
-            return Ok(());
-        };
-        self.init_vector_backend(embed_cfg.vector_db, dim)
+        let retrieve = &config.cache.retrieve;
+        let Some(embed_cfg) = &retrieve.embedding else { return Ok(()); };
+        if !embed_cfg.enabled { return Ok(()); }
+        let Some(dim) = embed_cfg.dimension else { return Ok(()); };
+        self.init_vector_backend(retrieve.db, dim)
     }
 
     /// Async version of [`load_retrieve_backend`](Self::load_retrieve_backend).
     pub async fn load_retrieve_backend_async(&self, config: &UserConfig) -> Result<()> {
-        let Some(embed_cfg) = &config.cache.embedding else {
-            return Ok(());
-        };
-        if !embed_cfg.enabled {
-            return Ok(());
-        }
-        let Some(dim) = embed_cfg.dimension else {
-            return Ok(());
-        };
-        let vector_db = embed_cfg.vector_db;
+        let retrieve = &config.cache.retrieve;
+        let Some(embed_cfg) = &retrieve.embedding else { return Ok(()); };
+        if !embed_cfg.enabled { return Ok(()); }
+        let Some(dim) = embed_cfg.dimension else { return Ok(()); };
+        let vector_db = retrieve.db;
 
         // LanceDB uses block_in_place internally when called from an async context,
         // so it is safe to call directly here.
@@ -192,10 +181,15 @@ impl JournalState {
         }
         let embedder = config
             .cache
+            .retrieve
             .embedding
             .as_ref()
             .filter(|c| c.enabled)
-            .map(|c| sapphire_workspace::build_embedder(&c.to_embed_config()).map_err(crate::error::Error::from))
+            .map(|c: &EmbeddingConfig| {
+                let mut cfg = c.to_embedder_config();
+                cfg.cache_dir = Some(crate::JOURNAL_CTX.model_cache_dir());
+                build_embedder(&cfg).map_err(crate::error::Error::from)
+            })
             .transpose()?;
         let _ = self.embedder.set(embedder);
         Ok(())
@@ -203,16 +197,19 @@ impl JournalState {
 
     /// Async version of [`load_embedder`](Self::load_embedder).
     pub async fn load_embedder_async(&self, config: &UserConfig) -> Result<()> {
+        let model_cache_dir = crate::JOURNAL_CTX.model_cache_dir();
         self.embedder
             .get_or_try_init(|| async {
                 config
                     .cache
+                    .retrieve
                     .embedding
                     .as_ref()
                     .filter(|c| c.enabled)
-                    .map(|c| {
-                        sapphire_workspace::build_embedder(&c.to_embed_config())
-                            .map_err(crate::error::Error::from)
+                    .map(|c: &EmbeddingConfig| {
+                        let mut cfg = c.to_embedder_config();
+                        cfg.cache_dir = Some(model_cache_dir.clone());
+                        build_embedder(&cfg).map_err(crate::error::Error::from)
                     })
                     .transpose()
             })
@@ -236,7 +233,7 @@ impl JournalState {
         config: &UserConfig,
         on_progress: impl Fn(usize, usize),
     ) -> Result<usize> {
-        let Some(embed_cfg) = &config.cache.embedding else { return Ok(0) };
+        let Some(embed_cfg) = config.cache.retrieve.embedding.as_ref() else { return Ok(0) };
         if !embed_cfg.enabled { return Ok(0) }
 
         self.load_retrieve_backend(config)?;
