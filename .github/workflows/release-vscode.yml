@@ -13,7 +13,6 @@ jobs:
       contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
-      cli_version: ${{ steps.cli_version.outputs.cli_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,12 +24,6 @@ jobs:
           BRANCH="${{ github.event.pull_request.head.ref }}"
           VERSION="${BRANCH#release/vscode/}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Extract CLI version from package.json
-        id: cli_version
-        run: |
-          CLI_VERSION=$(node -p "require('./sapphire-journal-vscode/package.json').sapphireJournalVersion")
-          echo "cli_version=$CLI_VERSION" >> $GITHUB_OUTPUT
 
       - name: Create tag
         run: |
@@ -46,16 +39,16 @@ jobs:
         include:
           - os: ubuntu-latest
             vsce_target: linux-x64
-            artifact: sajo-linux-x86_64
+            binary: sajo
           - os: ubuntu-24.04-arm
             vsce_target: linux-arm64
-            artifact: sajo-linux-aarch64
+            binary: sajo
           - os: macos-latest
             vsce_target: darwin-arm64
-            artifact: sajo-macos-aarch64
+            binary: sajo
           - os: windows-latest
             vsce_target: win32-x64
-            artifact: sajo-windows-x86_64.exe
+            binary: sajo.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -70,29 +63,39 @@ jobs:
         with:
           package_json_file: sapphire-journal-vscode/package.json
 
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install protoc (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        run: choco install protoc
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
         working-directory: sapphire-journal-vscode
 
-      - name: Download CLI binary from GitHub Releases
-        shell: bash
-        run: |
-          gh release download "cli-v${{ needs.prepare.outputs.cli_version }}" \
-            --pattern "${{ matrix.artifact }}" \
-            --dir sapphire-journal-vscode/bin/
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build CLI binary
+        run: cargo build --release -p sapphire-journal
 
-      - name: Rename binary to sajo (Unix)
+      - name: Stage CLI binary (Unix)
         if: runner.os != 'Windows'
         run: |
-          mv sapphire-journal-vscode/bin/${{ matrix.artifact }} sapphire-journal-vscode/bin/sajo
+          mkdir -p sapphire-journal-vscode/bin
+          cp target/release/${{ matrix.binary }} sapphire-journal-vscode/bin/sajo
           chmod +x sapphire-journal-vscode/bin/sajo
 
-      - name: Rename binary to sajo.exe (Windows)
+      - name: Stage CLI binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Rename-Item sapphire-journal-vscode/bin/${{ matrix.artifact }} sajo.exe
+        run: |
+          New-Item -ItemType Directory -Force -Path sapphire-journal-vscode/bin | Out-Null
+          Copy-Item target/release/${{ matrix.binary }} sapphire-journal-vscode/bin/sajo.exe
 
       - name: Package VSIX
         run: npx vsce package --target ${{ matrix.vsce_target }} --no-dependencies
