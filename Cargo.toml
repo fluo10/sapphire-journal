@@ -3,10 +3,6 @@ members = [
     "sapphire-journal",
     "sapphire-journal-core",
     "sapphire-journal-dioxus",
-    "sapphire-retrieve",
-    "sapphire-sync",
-    "sapphire-workspace",
-    "sapphire-workspace/examples/cli",
 ]
 resolver = "3"
 
