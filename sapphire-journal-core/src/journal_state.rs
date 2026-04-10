@@ -14,8 +14,10 @@
 //! The embedder is expensive to initialise (ONNX model load), so it is cached
 //! in a [`tokio::sync::OnceCell`] field.
 
+use std::path::Path;
+
 use tokio::sync::OnceCell;
-use sapphire_workspace::{Embedder, RetrieveDb};
+use sapphire_workspace::{Embedder, RetrieveDb, SyncBackend};
 
 use crate::{
     cache,
@@ -32,19 +34,32 @@ pub struct JournalState {
     /// Always-present retrieve database (FTS + optional vector backend).
     retrieve_db: RetrieveDb,
     embedder: OnceCell<Option<Box<dyn Embedder + Send + Sync>>>,
+    /// Optional sync backend (e.g. git) for staging file changes and running
+    /// periodic sync cycles.
+    sync_backend: Option<Box<dyn SyncBackend + Send + Sync>>,
 }
 
 impl JournalState {
     /// Open the cache for `journal`, creating it if it does not yet exist.
+    ///
+    /// When the `git-sync` feature is enabled, automatically attaches a
+    /// [`sapphire_workspace::GitSync`] backend if the journal root is inside
+    /// a git repository.
     pub fn open(journal: Journal) -> Result<Self> {
         let conn = cache::open_cache(&journal)?;
         drop(conn);
         let retrieve_db = RetrieveDb::open(&journal.retrieve_db_path()?)?;
-        Ok(Self {
+        let mut state = Self {
             journal,
             retrieve_db,
             embedder: OnceCell::new(),
-        })
+            sync_backend: None,
+        };
+        #[cfg(feature = "git-sync")]
+        if let Ok(git) = sapphire_workspace::GitSync::open(&state.journal.root) {
+            state.sync_backend = Some(Box::new(git));
+        }
+        Ok(state)
     }
 
     /// Drop and recreate both the cache and the retrieve database from scratch.
@@ -57,11 +72,17 @@ impl JournalState {
             use sapphire_workspace::lancedb_store;
             let _ = std::fs::remove_dir_all(lancedb_store::data_dir(&journal.cache_dir()?));
         }
-        Ok(Self {
+        let mut state = Self {
             journal,
             retrieve_db,
             embedder: OnceCell::new(),
-        })
+            sync_backend: None,
+        };
+        #[cfg(feature = "git-sync")]
+        if let Ok(git) = sapphire_workspace::GitSync::open(&state.journal.root) {
+            state.sync_backend = Some(Box::new(git));
+        }
+        Ok(state)
     }
 
     /// Open a fresh SQLite connection to the cache database.
@@ -241,5 +262,45 @@ impl JournalState {
 
         let Some(embedder) = self.embedder() else { return Ok(0) };
         Ok(self.retrieve_db.embed_pending(embedder, on_progress)?)
+    }
+
+    // ── sync backend ─────────────────────────────────────────────────────────
+
+    /// Returns `true` if a sync backend (e.g. git) is attached.
+    pub fn has_sync_backend(&self) -> bool {
+        self.sync_backend.is_some()
+    }
+
+    /// Notify the sync backend that `path` was created or modified so it can
+    /// be staged for the next sync cycle (e.g. `git add`).
+    ///
+    /// No-op when no sync backend is configured.
+    pub fn on_file_updated(&self, path: &Path) -> Result<()> {
+        if let Some(sync) = &self.sync_backend {
+            sync.add_file(path).map_err(|e| crate::error::Error::Sync(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Notify the sync backend that `path` was deleted so it can be unstaged
+    /// (e.g. `git rm --cached`).
+    ///
+    /// No-op when no sync backend is configured.
+    pub fn on_file_deleted(&self, path: &Path) -> Result<()> {
+        if let Some(sync) = &self.sync_backend {
+            sync.remove_file(path).map_err(|e| crate::error::Error::Sync(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Run a full sync cycle: commit staged changes, fetch+merge from remote,
+    /// then push.
+    ///
+    /// No-op when no sync backend is configured.
+    pub fn git_sync(&self) -> Result<()> {
+        if let Some(sync) = &self.sync_backend {
+            sync.sync().map_err(|e| crate::error::Error::Sync(e.to_string()))?;
+        }
+        Ok(())
     }
 }

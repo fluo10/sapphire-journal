@@ -12,6 +12,7 @@ use sapphire_journal_core::{
     user_config::UserConfig,
     JournalState, RetrieveDb,
 };
+use tokio::time;
 use rmcp::{
     ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -495,6 +496,7 @@ impl ArchelonServer {
                 if let Ok(conn) = s.open_conn() {
                     let _ = cache::upsert_entry_from_path(&conn, &dest, s.retrieve_db());
                 }
+                let _ = s.on_file_updated(&dest);
                 Ok(format!("created: {}", dest.display()))
             })
         })()
@@ -541,9 +543,13 @@ impl ArchelonServer {
                 let path = ops::resolve_entry(&p.entry, &conn)?;
                 let msg = if let Some(new_path) = ops::update_entry(&path, &conn, fields)? {
                     let _ = cache::upsert_entry_from_path(&conn, &new_path, s.retrieve_db());
+                    // File was renamed: remove old path and stage new path
+                    let _ = s.on_file_deleted(&path);
+                    let _ = s.on_file_updated(&new_path);
                     format!("updated and renamed: {}", new_path.display())
                 } else {
                     let _ = cache::upsert_entry_from_path(&conn, &path, s.retrieve_db());
+                    let _ = s.on_file_updated(&path);
                     format!("updated: {}", path.display())
                 };
                 Ok(msg)
@@ -584,12 +590,25 @@ impl ArchelonServer {
                 ops::resolve_entry(&p.entry, &conn).map_err(Into::into)
             })?;
             match ops::fix_entry(&path)? {
-                Some(new_path) => Ok(format!(
-                    "renamed: {} → {}",
-                    path.file_name().unwrap_or_default().to_string_lossy(),
-                    new_path.file_name().unwrap_or_default().to_string_lossy(),
-                )),
-                None => Ok(format!("ok: {} (already correct)", path.display())),
+                Some(new_path) => {
+                    self.with_state(|s| {
+                        let _ = s.on_file_deleted(&path);
+                        let _ = s.on_file_updated(&new_path);
+                        Ok(())
+                    })?;
+                    Ok(format!(
+                        "renamed: {} → {}",
+                        path.file_name().unwrap_or_default().to_string_lossy(),
+                        new_path.file_name().unwrap_or_default().to_string_lossy(),
+                    ))
+                }
+                None => {
+                    self.with_state(|s| {
+                        let _ = s.on_file_updated(&path);
+                        Ok(())
+                    })?;
+                    Ok(format!("ok: {} (already correct)", path.display()))
+                }
             }
         })()
         .map_err(|e| e.to_string())
@@ -604,7 +623,23 @@ impl ArchelonServer {
                 let path = ops::resolve_entry(&p.entry, &conn)?;
                 ops::remove_entry(&path)?;
                 let _ = cache::remove_from_cache(&conn, &path, s.retrieve_db());
+                let _ = s.on_file_deleted(&path);
                 Ok(format!("removed: {}", path.display()))
+            })
+        })()
+        .map_err(|e| e.to_string())
+    }
+
+    #[tool(description = "Run a full git sync cycle: commit staged changes, fetch and merge from \
+        remote, then push. No-op when no git repository is found or sync is disabled.")]
+    fn git_sync(&self, _: Parameters<serde_json::Value>) -> Result<String, String> {
+        (|| -> anyhow::Result<String> {
+            self.with_state(|s| {
+                if !s.has_sync_backend() {
+                    return Ok("skipped: no sync backend configured".to_owned());
+                }
+                s.git_sync()?;
+                Ok("sync complete".to_owned())
             })
         })()
         .map_err(|e| e.to_string())
@@ -730,6 +765,31 @@ pub async fn run(journal_dir: Option<&Path>) -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_writer(std::io::stderr).init();
 
     let server = ArchelonServer::new(journal_dir.map(|x| x.to_path_buf()));
+
+    // Spawn periodic git sync task if configured.
+    let state_for_sync = Arc::clone(&server.state);
+    let _sync_handle = {
+        let interval = UserConfig::load()
+            .ok()
+            .and_then(|c| c.sync.sync_interval());
+        interval.map(|dur| {
+            tokio::spawn(async move {
+                let mut ticker = time::interval(dur);
+                ticker.tick().await; // skip the first immediate tick
+                loop {
+                    ticker.tick().await;
+                    let guard = state_for_sync.lock().unwrap();
+                    if let Some(state) = guard.as_ref() {
+                        if let Err(e) = state.git_sync() {
+                            eprintln!("[sapphire-journal] periodic git sync failed: {e}");
+                        }
+                    }
+                    drop(guard);
+                }
+            })
+        })
+    };
+
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
     Ok(())

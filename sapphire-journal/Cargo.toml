@@ -13,10 +13,11 @@ name = "sajo"
 path = "src/main.rs"
 
 [features]
-default = ["sqlite-store", "lancedb-store", "fastembed-embed"]
+default = ["sqlite-store", "lancedb-store", "fastembed-embed", "git-sync"]
 sqlite-store = ["sapphire-journal-core/sqlite-store"]
 lancedb-store = ["sapphire-journal-core/lancedb-store"]
 fastembed-embed = ["sapphire-journal-core/fastembed-embed"]
+git-sync = ["sapphire-journal-core/git-sync"]
 
 [dependencies]
 clap.workspace = true
