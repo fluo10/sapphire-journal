@@ -2,7 +2,18 @@
 
 All notable changes to `sapphire-journal` and `sapphire-journal-core` are documented here.
 
-## [0.9.0] - 2026-04-06
+## [0.10.0] - 2026-04-10
+
+### Changed
+
+- Bumped `sapphire-workspace`, `sapphire-sync`, and `sapphire-retrieve` to 0.5.0 (now developed in a standalone repository).
+- Cache directory layout reorganized via the new `AppContext`: cross-platform cache base resolution and `app_name` folded into the cache path.
+- Embedding model cache directory is now injectable through config.
+
+### Fixed
+
+- `sajo mcp`: corrected config path lookup from `cache.embedding` to `cache.retrieve.embedding`.
+
 
 ### Added
 

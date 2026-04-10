@@ -1,7 +1,7 @@
 [package]
 name = "sapphire-journal"
 edition.workspace = true
-version = "0.9.0"
+version.workspace = true
 description.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -20,7 +20,7 @@ fastembed-embed = ["sapphire-journal-core/fastembed-embed"]
 
 [dependencies]
 clap.workspace = true
-sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.9.0", default-features = false }
+sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.10.0", default-features = false }
 rmcp.workspace = true
 tokio = { workspace = true, features = ["full"] }
 serde.workspace = true
