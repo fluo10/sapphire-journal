@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
-pub use sapphire_workspace::{EmbeddingConfig, RetrieveConfig, VectorDb};
+pub use sapphire_workspace::{EmbeddingConfig, RetrieveConfig, SyncConfig, VectorDb};
 
 /// Contents of `$XDG_CONFIG_HOME/sapphire-journal/config.toml`.
 ///
@@ -17,6 +17,10 @@ pub use sapphire_workspace::{EmbeddingConfig, RetrieveConfig, VectorDb};
 pub struct UserConfig {
     #[serde(default)]
     pub cache: CacheConfig,
+
+    /// Sync backend configuration (`[sync]` section).
+    #[serde(default)]
+    pub sync: SyncConfig,
 }
 
 impl UserConfig {

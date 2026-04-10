@@ -44,6 +44,9 @@ pub enum Error {
     #[error("embedding error: {0}")]
     Embed(String),
 
+    #[error("sync error: {0}")]
+    Sync(String),
+
     /// The cache DB was created by a newer version of sapphire-journal.
     /// The user must either update sapphire-journal or recreate the cache.
     #[error(
