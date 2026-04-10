@@ -2,6 +2,21 @@
 
 All notable changes to `sapphire-journal-vscode` are documented here.
 
+## [0.10.0] - 2026-04-10
+
+### Added
+
+- Hide the activity bar icon when the current workspace is not a Sapphire Journal
+
+### Changed
+
+- Bundled `sapphire-journal` CLI updated to 0.10.0
+- Consolidated VSCode configuration from subdirectory to workspace root
+
+### Fixed
+
+- Bundle runtime dependencies and build the CLI inline in the release workflow so the packaged VSIX runs without missing modules
+
 ## [0.8.0] - 2026-03-30
 
 ### Added
