@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use sapphire_journal_core::{
     cache,
     entry_ref::EntryRef,
-    journal::{Journal, WeekStart},
+    journal::Journal,
     labels::EntryFlag,
     ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryListItem, EntryTreeNode, FieldSelector, MatchFlag, SortField, SortOrder, UpdateOption},
     period::{parse_datetime, parse_datetime_end, parse_period},
@@ -26,7 +26,8 @@ pub struct EntryFilterArgs {
     /// PERIOD: today | yesterday | tomorrow |
     ///   this_week | last_week | next_week |
     ///   this_month | last_month | next_month | none |
-    ///   YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
+    ///   YYYY | YYYY-MM | YYYY-Www |
+    ///   YYYY-MM-DD | YYYY-MM-DD/YYYY-MM-DD | YYYY-MM-DDTHH:MM/YYYY-MM-DDTHH:MM
     #[arg(value_name = "PERIOD")]
     pub period: Option<String>,
 
@@ -88,14 +89,14 @@ pub struct EntryFilterArgs {
     pub sort_order: String,
 }
 
-fn build_filter(args: &EntryFilterArgs, week_start: WeekStart) -> Result<EntryFilter> {
+fn build_filter(args: &EntryFilterArgs) -> Result<EntryFilter> {
     if args.period.is_none() && !args.all_periods {
         bail!(
             "PERIOD is required (e.g. `today`, `this_week`, `2026-03-15`), \
              or pass `--all-periods` to show all entries"
         );
     }
-    let parse = |s: &str| parse_period(s, week_start).map_err(anyhow::Error::msg);
+    let parse = |s: &str| parse_period(s).map_err(anyhow::Error::msg);
     Ok(EntryFilter {
         period: args.period.as_deref().map(parse).transpose()?,
         fields: {
@@ -314,15 +315,13 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
 
     match cmd {
         EntryCommand::List { filter: filter_args, json, emoji, nerd } => {
-            let week_start = state.journal.config().map(|c| c.journal.week_start).unwrap_or_default();
-            let filter = build_filter(&filter_args, week_start)?;
+            let filter = build_filter(&filter_args)?;
             let entries = ops::list_entries(&state, &filter)?;
             let mode = DisplayMode::from_flags(emoji, nerd);
             print_entries(&entries, filter.has_any_filter(), json, mode)
         }
         EntryCommand::Tree { filter: filter_args, json, emoji, nerd } => {
-            let week_start = state.journal.config().map(|c| c.journal.week_start).unwrap_or_default();
-            let filter = build_filter(&filter_args, week_start)?;
+            let filter = build_filter(&filter_args)?;
             let entries = ops::list_entries(&state, &filter)?;
             let has_filter = filter.has_any_filter();
             let entries = if has_filter {
