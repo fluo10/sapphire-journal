@@ -5,7 +5,7 @@ use anyhow::Context as _;
 use sapphire_journal_core::{
     cache,
     entry_ref::EntryRef,
-    journal::{Journal, WeekStart},
+    journal::Journal,
     ops::{self, EntryFields, EntryFilter, EntryListItem, FieldSelector, SortField, SortOrder, UpdateOption},
     parser::read_entry,
     period::{parse_datetime, parse_datetime_end, parse_period},
@@ -115,10 +115,6 @@ impl ArchelonServer {
         }
     }
 
-    fn week_start(&self) -> WeekStart {
-        self.with_state(|s| s.journal.config().map(|c| c.journal.week_start).map_err(Into::into))
-            .unwrap_or_default()
-    }
 }
 
 // ── parameter structs ─────────────────────────────────────────────────────────
@@ -142,8 +138,11 @@ struct EntryListParams {
     /// Period to match against timestamp fields.
     /// When no field selectors are set, the period applies to all fields (OR).
     ///
-    /// Accepted formats: today | this_week | this_month | none |
-    /// YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM
+    /// Accepted formats: today | yesterday | tomorrow |
+    /// this_week | last_week | next_week |
+    /// this_month | last_month | next_month | none |
+    /// YYYY | YYYY-MM | YYYY-Www |
+    /// YYYY-MM-DD | YYYY-MM-DD/YYYY-MM-DD | YYYY-MM-DDTHH:MM/YYYY-MM-DDTHH:MM
     period: Option<String>,
 
     /// Enable all selectors at once: task_overdue, task_in_progress, event_span,
@@ -316,8 +315,8 @@ fn parse_entry_fields(
     })
 }
 
-fn build_filter(p: &EntryListParams, week_start: WeekStart) -> anyhow::Result<EntryFilter> {
-    let parse = |s: &str| parse_period(s, week_start).map_err(anyhow::Error::msg);
+fn build_filter(p: &EntryListParams) -> anyhow::Result<EntryFilter> {
+    let parse = |s: &str| parse_period(s).map_err(anyhow::Error::msg);
     let base = if p.active.unwrap_or(false) { FieldSelector::active() } else { FieldSelector::default() };
     Ok(EntryFilter {
         period: p.period.as_deref().map(parse).transpose()?,
@@ -404,7 +403,7 @@ impl ArchelonServer {
         included. task_status and tags are independent AND filters.")]
     fn entry_list(&self, Parameters(p): Parameters<EntryListParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let filter = build_filter(&p, self.week_start())?;
+            let filter = build_filter(&p)?;
             let has_filter = filter.has_any_filter();
             let entries = self.with_state(|s| ops::list_entries(s, &filter).map_err(Into::into))?;
             let records: Vec<EntryListItem> = entries
@@ -424,7 +423,7 @@ impl ArchelonServer {
         Each node contains an `id`, `title`, `task`, `tags`, and a `children` array of nested nodes.")]
     fn entry_tree(&self, Parameters(p): Parameters<EntryTreeParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let filter = build_filter(&p, self.week_start())?;
+            let filter = build_filter(&p)?;
             let entries = self.with_state(|s| ops::list_entries(s, &filter).map_err(Into::into))?;
             let roots = ops::build_entry_tree(entries);
             Ok(serde_json::to_string_pretty(&roots)?)

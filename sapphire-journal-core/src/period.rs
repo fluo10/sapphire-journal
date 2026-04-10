@@ -1,7 +1,5 @@
 use chrono::{Datelike as _, Duration, NaiveDate, NaiveDateTime};
 
-use crate::journal::WeekStart;
-
 /// A time period used for filtering entries.
 #[derive(Debug, Clone)]
 pub enum Period {
@@ -73,17 +71,58 @@ pub fn parse_datetime_end(s: &str) -> Result<NaiveDateTime, String> {
     Err(format!("`{s}` is not a valid date/datetime — expected YYYY-MM-DD or YYYY-MM-DDTHH:MM"))
 }
 
+/// Return the ISO week range (Monday..Sunday) for the given date.
+fn iso_week_range(d: NaiveDate) -> (NaiveDate, NaiveDate) {
+    let days_back = d.weekday().num_days_from_monday();
+    let monday = d - Duration::days(days_back as i64);
+    (monday, monday + Duration::days(6))
+}
+
+/// Return the first and last day of the month containing `d`.
+fn month_range(year: i32, month: u32) -> (NaiveDate, NaiveDate) {
+    let first = NaiveDate::from_ymd_opt(year, month, 1).unwrap();
+    let (ny, nm) = if month == 12 { (year + 1, 1u32) } else { (year, month + 1) };
+    let last = NaiveDate::from_ymd_opt(ny, nm, 1).unwrap() - Duration::days(1);
+    (first, last)
+}
+
+/// Wrap a date range into a [`Period::Range`].
+fn day_range(start: NaiveDate, end: NaiveDate) -> Period {
+    Period::Range(
+        start.and_hms_opt(0, 0, 0).unwrap(),
+        end.and_hms_opt(23, 59, 59).unwrap(),
+    )
+}
+
+/// Parse an ISO week string like `2026-W15` into (Monday, Sunday).
+fn parse_iso_week(s: &str) -> Result<(NaiveDate, NaiveDate), String> {
+    // Expected format: YYYY-Www
+    let (year_s, w_s) = s.split_once("-W").or_else(|| s.split_once("-w"))
+        .ok_or_else(|| format!("`{s}` is not a valid ISO week — expected YYYY-Www"))?;
+    let year: i32 = year_s.parse().map_err(|_| format!("`{year_s}` is not a valid year"))?;
+    let week: u32 = w_s.parse().map_err(|_| format!("`{w_s}` is not a valid week number"))?;
+    if week == 0 || week > 53 {
+        return Err(format!("week number {week} is out of range (1–53)"));
+    }
+    let monday = NaiveDate::from_isoywd_opt(year, week, chrono::Weekday::Mon)
+        .ok_or_else(|| format!("`{s}` does not correspond to a valid ISO week"))?;
+    Ok((monday, monday + Duration::days(6)))
+}
+
 /// Parse a period string into a [`Period`].
 ///
 /// Accepted formats:
 /// - `none`                                  → [`Period::None`] (field is absent)
 /// - `today`                                 → today 00:00:00 .. 23:59:59
-/// - `this_week`                             → Monday (or Sunday) .. Saturday of the current week
+/// - `this_week`                             → ISO week (Mon–Sun) of the current week
 /// - `this_month`                            → first .. last day of the current calendar month
+/// - `YYYY`                                  → that year (Jan 1 .. Dec 31)
+/// - `YYYY-MM`                               → that month (1st .. last day)
+/// - `YYYY-Www`                              → ISO week (Mon .. Sun)
 /// - `YYYY-MM-DD`                            → that day 00:00:00 .. 23:59:59
-/// - `YYYY-MM-DD,YYYY-MM-DD`                → start 00:00:00 .. end 23:59:59
-/// - `YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM`   → exact datetime range (start inclusive, end inclusive)
-pub fn parse_period(s: &str, week_start: WeekStart) -> Result<Period, String> {
+/// - `YYYY-MM-DD/YYYY-MM-DD`                → start 00:00:00 .. end 23:59:59
+/// - `YYYY-MM-DDTHH:MM/YYYY-MM-DDTHH:MM`   → exact datetime range (start inclusive, end inclusive)
+pub fn parse_period(s: &str) -> Result<Period, String> {
     if s == "none" {
         return Ok(Period::None);
     }
@@ -91,75 +130,37 @@ pub fn parse_period(s: &str, week_start: WeekStart) -> Result<Period, String> {
     let today = chrono::Local::now().date_naive();
 
     if s == "today" {
-        let start = today.and_hms_opt(0, 0, 0).unwrap();
-        let end = today.and_hms_opt(23, 59, 59).unwrap();
-        return Ok(Period::Range(start, end));
+        return Ok(day_range(today, today));
     }
 
     if s == "yesterday" {
         let d = today - Duration::days(1);
-        let start = d.and_hms_opt(0, 0, 0).unwrap();
-        let end = d.and_hms_opt(23, 59, 59).unwrap();
-        return Ok(Period::Range(start, end));
+        return Ok(day_range(d, d));
     }
 
     if s == "tomorrow" {
         let d = today + Duration::days(1);
-        let start = d.and_hms_opt(0, 0, 0).unwrap();
-        let end = d.and_hms_opt(23, 59, 59).unwrap();
-        return Ok(Period::Range(start, end));
+        return Ok(day_range(d, d));
     }
 
     if s == "this_week" {
-        let days_back = match week_start {
-            WeekStart::Monday => today.weekday().num_days_from_monday(),
-            WeekStart::Sunday => today.weekday().num_days_from_sunday(),
-        };
-        let week_start_date = today - Duration::days(days_back as i64);
-        let week_end_date = week_start_date + Duration::days(6);
-        let start = week_start_date.and_hms_opt(0, 0, 0).unwrap();
-        let end = week_end_date.and_hms_opt(23, 59, 59).unwrap();
-        return Ok(Period::Range(start, end));
+        let (mon, sun) = iso_week_range(today);
+        return Ok(day_range(mon, sun));
     }
 
     if s == "last_week" {
-        let d = today - Duration::days(7);
-        let days_back = match week_start {
-            WeekStart::Monday => d.weekday().num_days_from_monday(),
-            WeekStart::Sunday => d.weekday().num_days_from_sunday(),
-        };
-        let start_date = d - Duration::days(days_back as i64);
-        let end_date = start_date + Duration::days(6);
-        let start = start_date.and_hms_opt(0, 0, 0).unwrap();
-        let end = end_date.and_hms_opt(23, 59, 59).unwrap();
-        return Ok(Period::Range(start, end));
+        let (mon, sun) = iso_week_range(today - Duration::days(7));
+        return Ok(day_range(mon, sun));
     }
 
     if s == "next_week" {
-        let d = today + Duration::days(7);
-        let days_back = match week_start {
-            WeekStart::Monday => d.weekday().num_days_from_monday(),
-            WeekStart::Sunday => d.weekday().num_days_from_sunday(),
-        };
-        let start_date = d - Duration::days(days_back as i64);
-        let end_date = start_date + Duration::days(6);
-        let start = start_date.and_hms_opt(0, 0, 0).unwrap();
-        let end = end_date.and_hms_opt(23, 59, 59).unwrap();
-        return Ok(Period::Range(start, end));
+        let (mon, sun) = iso_week_range(today + Duration::days(7));
+        return Ok(day_range(mon, sun));
     }
 
     if s == "this_month" {
-        let month_start = today.with_day(1).unwrap();
-        let next_month = NaiveDate::from_ymd_opt(
-            if today.month() == 12 { today.year() + 1 } else { today.year() },
-            if today.month() == 12 { 1 } else { today.month() + 1 },
-            1,
-        )
-        .unwrap();
-        let month_end = next_month - Duration::days(1);
-        let start = month_start.and_hms_opt(0, 0, 0).unwrap();
-        let end = month_end.and_hms_opt(23, 59, 59).unwrap();
-        return Ok(Period::Range(start, end));
+        let (first, last) = month_range(today.year(), today.month());
+        return Ok(day_range(first, last));
     }
 
     if s == "last_month" {
@@ -168,11 +169,8 @@ pub fn parse_period(s: &str, week_start: WeekStart) -> Result<Period, String> {
         } else {
             (today.year(), today.month() - 1)
         };
-        let start_date = NaiveDate::from_ymd_opt(year, month, 1).unwrap();
-        let end_date = today.with_day(1).unwrap() - Duration::days(1);
-        let start = start_date.and_hms_opt(0, 0, 0).unwrap();
-        let end = end_date.and_hms_opt(23, 59, 59).unwrap();
-        return Ok(Period::Range(start, end));
+        let (first, last) = month_range(year, month);
+        return Ok(day_range(first, last));
     }
 
     if s == "next_month" {
@@ -181,16 +179,13 @@ pub fn parse_period(s: &str, week_start: WeekStart) -> Result<Period, String> {
         } else {
             (today.year(), today.month() + 1)
         };
-        let start_date = NaiveDate::from_ymd_opt(year, month, 1).unwrap();
-        let (ey, em) = if month == 12 { (year + 1, 1u32) } else { (year, month + 1) };
-        let end_date = NaiveDate::from_ymd_opt(ey, em, 1).unwrap() - Duration::days(1);
-        let start = start_date.and_hms_opt(0, 0, 0).unwrap();
-        let end = end_date.and_hms_opt(23, 59, 59).unwrap();
-        return Ok(Period::Range(start, end));
+        let (first, last) = month_range(year, month);
+        return Ok(day_range(first, last));
     }
 
-    // Comma-separated range (e.g. "2026-03-01,2026-03-07" or "2026-03-01T09:00,2026-03-01T17:00")
-    if let Some((left, right)) = s.split_once(',') {
+    // ISO time interval: slash-separated range
+    // (e.g. "2026-03-01/2026-03-07" or "2026-03-01T09:00/2026-03-01T17:00")
+    if let Some((left, right)) = s.split_once('/') {
         let start = parse_datetime(left).map_err(|_| {
             format!("`{left}` is not a valid date/datetime in period `{s}`")
         })?;
@@ -200,11 +195,34 @@ pub fn parse_period(s: &str, week_start: WeekStart) -> Result<Period, String> {
         return Ok(Period::Range(start, end));
     }
 
-    // Single date
+    // ISO week: YYYY-Www (e.g. "2026-W15")
+    if s.contains("-W") || s.contains("-w") {
+        let (mon, sun) = parse_iso_week(s)?;
+        return Ok(day_range(mon, sun));
+    }
+
+    // Single date: YYYY-MM-DD
     if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        let start = d.and_hms_opt(0, 0, 0).unwrap();
-        let end = d.and_hms_opt(23, 59, 59).unwrap();
-        return Ok(Period::Range(start, end));
+        return Ok(day_range(d, d));
+    }
+
+    // Year-month: YYYY-MM
+    if let Some((year_s, month_s)) = s.split_once('-') {
+        if let (Ok(year), Ok(month)) = (year_s.parse::<i32>(), month_s.parse::<u32>()) {
+            if (1..=12).contains(&month) {
+                let (first, last) = month_range(year, month);
+                return Ok(day_range(first, last));
+            }
+        }
+    }
+
+    // Year only: YYYY
+    if let Ok(year) = s.parse::<i32>() {
+        if (1000..=9999).contains(&year) {
+            let first = NaiveDate::from_ymd_opt(year, 1, 1).unwrap();
+            let last = NaiveDate::from_ymd_opt(year, 12, 31).unwrap();
+            return Ok(day_range(first, last));
+        }
     }
 
     Err(format!(
@@ -212,8 +230,8 @@ pub fn parse_period(s: &str, week_start: WeekStart) -> Result<Period, String> {
          none | today | yesterday | tomorrow | \
          this_week | last_week | next_week | \
          this_month | last_month | next_month | \
-         YYYY-MM-DD | YYYY-MM-DD,YYYY-MM-DD | \
-         YYYY-MM-DDTHH:MM,YYYY-MM-DDTHH:MM"
+         YYYY | YYYY-MM | YYYY-Www | YYYY-MM-DD | \
+         YYYY-MM-DD/YYYY-MM-DD | YYYY-MM-DDTHH:MM/YYYY-MM-DDTHH:MM"
     ))
 }
 
@@ -227,31 +245,56 @@ mod tests {
 
     #[test]
     fn parse_single_date() {
-        let p = parse_period("2026-03-05", WeekStart::Monday).unwrap();
+        let p = parse_period("2026-03-05").unwrap();
         let Period::Range(s, e) = p else { panic!() };
         assert_eq!(s, dt("2026-03-05T00:00:00"));
         assert_eq!(e, dt("2026-03-05T23:59:59"));
     }
 
     #[test]
-    fn parse_date_range() {
-        let p = parse_period("2026-03-01,2026-03-07", WeekStart::Monday).unwrap();
+    fn parse_date_range_slash() {
+        let p = parse_period("2026-03-01/2026-03-07").unwrap();
         let Period::Range(s, e) = p else { panic!() };
         assert_eq!(s, dt("2026-03-01T00:00:00"));
         assert_eq!(e, dt("2026-03-07T23:59:59"));
     }
 
     #[test]
-    fn parse_datetime_range() {
-        let p = parse_period("2026-03-01T09:00,2026-03-01T17:30", WeekStart::Monday).unwrap();
+    fn parse_datetime_range_slash() {
+        let p = parse_period("2026-03-01T09:00/2026-03-01T17:30").unwrap();
         let Period::Range(s, e) = p else { panic!() };
         assert_eq!(s, dt("2026-03-01T09:00:00"));
         assert_eq!(e, dt("2026-03-01T17:30:00"));
     }
 
     #[test]
+    fn parse_year() {
+        let p = parse_period("2026").unwrap();
+        let Period::Range(s, e) = p else { panic!() };
+        assert_eq!(s, dt("2026-01-01T00:00:00"));
+        assert_eq!(e, dt("2026-12-31T23:59:59"));
+    }
+
+    #[test]
+    fn parse_year_month() {
+        let p = parse_period("2026-04").unwrap();
+        let Period::Range(s, e) = p else { panic!() };
+        assert_eq!(s, dt("2026-04-01T00:00:00"));
+        assert_eq!(e, dt("2026-04-30T23:59:59"));
+    }
+
+    #[test]
+    fn parse_iso_week_format() {
+        // 2026-W15 = 2026-04-06 (Mon) to 2026-04-12 (Sun)
+        let p = parse_period("2026-W15").unwrap();
+        let Period::Range(s, e) = p else { panic!() };
+        assert_eq!(s, dt("2026-04-06T00:00:00"));
+        assert_eq!(e, dt("2026-04-12T23:59:59"));
+    }
+
+    #[test]
     fn parse_none() {
-        let p = parse_period("none", WeekStart::Monday).unwrap();
+        let p = parse_period("none").unwrap();
         assert!(matches!(p, Period::None));
     }
 
@@ -271,14 +314,12 @@ mod tests {
 
     #[test]
     fn overlaps_event_no_event_never_matches() {
-        // Entry has no event at all — must not match any Range period.
         let p = Period::Range(dt("2026-03-08T00:00:00"), dt("2026-03-08T23:59:59"));
         assert!(!p.overlaps_event(None, None));
     }
 
     #[test]
     fn overlaps_event_spanning_period() {
-        // Event spans the entire month; a single-day period inside it must match.
         let p = Period::Range(dt("2026-03-08T00:00:00"), dt("2026-03-08T23:59:59"));
         assert!(p.overlaps_event(
             Some(dt("2026-03-01T00:00:00")),
@@ -288,7 +329,6 @@ mod tests {
 
     #[test]
     fn overlaps_event_outside_period() {
-        // Event is entirely after the period.
         let p = Period::Range(dt("2026-03-08T00:00:00"), dt("2026-03-08T23:59:59"));
         assert!(!p.overlaps_event(
             Some(dt("2026-03-10T00:00:00")),

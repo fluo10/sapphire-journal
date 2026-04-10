@@ -135,6 +135,7 @@ impl Journal {
     }
 
     /// Return the stable journal ID, generating and persisting it if not yet set.
+    #[allow(deprecated)] // id field is deprecated in config but still used at runtime
     pub fn journal_id(&self) -> Result<Uuid> {
         let config = self.config()?;
         if let Some(id) = config.journal.id {
@@ -145,6 +146,7 @@ impl Journal {
         Ok(id)
     }
 
+    #[allow(deprecated)]
     fn save_journal_id(&self, id: Uuid) -> Result<()> {
         let mut config = self.config()?;
         config.journal.id = Some(id);
@@ -212,17 +214,19 @@ pub struct JournalConfig {
     pub journal: JournalSection,
 }
 
+#[allow(deprecated)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalSection {
-    /// First day of the week, used by `--this-week`. Defaults to `monday`.
-    #[serde(default)]
+    /// **Deprecated.** ISO weeks (Monday start) are now always used.
+    /// Kept for backward-compatible deserialization; ignored at runtime.
+    #[deprecated(note = "ISO weeks (Monday start) are always used; this field is ignored")]
+    #[serde(default, skip_serializing)]
     pub week_start: WeekStart,
 
-    /// Stable identifier for this journal, used to locate the machine-local
-    /// SQLite cache at `$XDG_CACHE_HOME/sapphire-journal/{id}/cache.db`.
-    /// Generated on first cache access and stored here so the cache survives
-    /// directory moves and is never synced by git/Syncthing/Nextcloud.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// **Deprecated.** The cache ID is now derived from the journal root path hash.
+    /// Kept for backward-compatible deserialization; ignored at runtime.
+    #[deprecated(note = "cache ID is now derived from the journal root path; this field is ignored")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<Uuid>,
 
     /// What to do when two entries share the same title during cache sync.
@@ -244,6 +248,7 @@ pub struct JournalSection {
     pub extra: IndexMap<String, toml::Value>,
 }
 
+#[allow(deprecated)]
 impl Default for JournalSection {
     fn default() -> Self {
         JournalSection {
@@ -269,7 +274,10 @@ pub enum DuplicateTitlePolicy {
     Error,
 }
 
-/// First day of the week for `--this-week` calculations.
+/// **Deprecated.** ISO weeks (Monday start) are always used now.
+/// Kept for backward-compatible deserialization of existing `config.toml` files.
+#[deprecated(note = "ISO weeks (Monday start) are always used")]
+#[allow(deprecated)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum WeekStart {

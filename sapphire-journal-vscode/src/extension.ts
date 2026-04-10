@@ -37,6 +37,17 @@ export async function activate(context: vscode.ExtensionContext) {
     });
     context.subscriptions.push(treeView);
 
+    /** Rebuild treeView.title from current period + filter state. */
+    const updateTreeViewTitle = () => {
+        const period = treeProvider.period;
+        const filter = treeProvider.filter;
+        let title = period ? `Entries [${period}]` : 'Entries';
+        if (filter) { title += `: ${filter}`; }
+        treeView.title = title;
+    };
+    // Set initial title based on default period
+    updateTreeViewTitle();
+
     context.subscriptions.push(
         vscode.commands.registerCommand('sapphire-journal.refreshTree', () => {
             treeProvider.refresh();
@@ -84,7 +95,7 @@ export async function activate(context: vscode.ExtensionContext) {
             });
             if (input === undefined) { return; }
             treeProvider.setFilter(input);
-            treeView.title = input ? `Entries: ${input}` : 'Entries';
+            updateTreeViewTitle();
         })
     );
 
@@ -234,8 +245,8 @@ export async function activate(context: vscode.ExtensionContext) {
             let period: string | undefined = picked.period;
             if (period === '__custom__') {
                 const input = await vscode.window.showInputBox({
-                    prompt: 'Date (YYYY-MM-DD) or range (YYYY-MM-DD,YYYY-MM-DD)',
-                    placeHolder: '2026-03-12  or  2026-03-01,2026-03-31',
+                    prompt: 'YYYY | YYYY-MM | YYYY-Www | YYYY-MM-DD | start/end range',
+                    placeHolder: '2026  or  2026-04  or  2026-W15  or  2026-03-01/2026-03-31',
                     value: treeProvider.period ?? '',
                 });
                 if (input === undefined) { return; }
@@ -243,8 +254,7 @@ export async function activate(context: vscode.ExtensionContext) {
             }
 
             treeProvider.setPeriod(period);
-            const label = period ? `Entries: ${period}` : 'Entries';
-            treeView.title = treeProvider.filter ? `${label}: ${treeProvider.filter}` : label;
+            updateTreeViewTitle();
         })
     );
 

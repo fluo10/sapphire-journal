@@ -194,7 +194,7 @@ For start/close timestamps (`--event-start`, `--task-closed-at`), date-only inpu
 ```toml
 [journal]
 timezone = "Asia/Tokyo"   # IANA timezone name
-week_start = "monday"     # or "sunday" — used by this_week period
+# week_start is deprecated — ISO weeks (Monday start) are always used
 ```
 
 ---
