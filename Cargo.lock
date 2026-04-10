@@ -7399,7 +7399,7 @@ dependencies = [
 
 [[package]]
 name = "sapphire-journal"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7416,7 +7416,7 @@ dependencies = [
 
 [[package]]
 name = "sapphire-journal-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "chrono",
  "grain-id",
@@ -7448,9 +7448,9 @@ dependencies = [
 
 [[package]]
 name = "sapphire-retrieve"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a0cee02b4b61d6d280051361f010264442ac6576bf8e5f35bde9d0f5aafd4cf"
+checksum = "e82f1e21211d82badee2194ed69145e020a45af973a8f86e73f9b7af7c600a25"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -7468,9 +7468,9 @@ dependencies = [
 
 [[package]]
 name = "sapphire-sync"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20d958dbced3e0f5d04acf041cf55d7a9d00e03cc4ace9c5d74cc7c83e6486f3"
+checksum = "0633ecb2091bde4afd8e33c0b5caeb0e52653e65f1b3e3762b3de49f2a593975"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -7478,9 +7478,9 @@ dependencies = [
 
 [[package]]
 name = "sapphire-workspace"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b9d84f06f3230cfb790c0ae1fe32b884ea6bced92b7136457fbf1cce68bd9ab"
+checksum = "e1c8e03c0c6cf85c1ad43f1bd6f2563235359ef21d3a8ed8c9d7c30ff57f8c11"
 dependencies = [
  "dirs 5.0.1",
  "indexmap 2.13.1",
