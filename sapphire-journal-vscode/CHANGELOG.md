@@ -2,6 +2,12 @@
 
 All notable changes to `sapphire-journal-vscode` are documented here.
 
+## [0.11.0] - 2026-04-12
+
+### Changed
+
+- Bundled `sapphire-journal` CLI updated to 0.11.0
+
 ## [0.10.0] - 2026-04-10
 
 ### Added
