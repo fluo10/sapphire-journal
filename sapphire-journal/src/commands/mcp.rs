@@ -10,7 +10,7 @@ use sapphire_journal_core::{
     parser::read_entry,
     period::{parse_datetime, parse_datetime_end, parse_period},
     user_config::UserConfig,
-    JournalState, RetrieveDb,
+    JournalState,
 };
 use tokio::time;
 use rmcp::{
@@ -20,6 +20,7 @@ use rmcp::{
     schemars, tool, tool_handler, tool_router,
     transport::stdio,
 };
+use sapphire_journal_core::dedup_chunk_results;
 use serde::Deserialize;
 
 // ── server struct ─────────────────────────────────────────────────────────────
@@ -728,7 +729,7 @@ impl ArchelonServer {
                         .ok_or_else(|| anyhow::anyhow!("embedder returned empty result"))?;
                     let raw = s.retrieve_db().search_similar(&query_vec, limit * 3)
                         .map_err(anyhow::Error::msg)?;
-                    let results = RetrieveDb::dedup_chunk_results(raw, limit);
+                    let results = dedup_chunk_results(raw, limit);
                     return Ok(serde_json::to_string_pretty(&results)?);
                 }
 

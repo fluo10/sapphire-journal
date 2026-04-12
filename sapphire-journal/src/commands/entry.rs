@@ -719,7 +719,7 @@ fn search(state: &JournalState, query: &str, semantic: bool, limit: usize) -> Re
             println!("no results");
             return Ok(());
         }
-        let results = sapphire_journal_core::RetrieveDb::dedup_chunk_results(raw, limit);
+        let results = sapphire_journal_core::dedup_chunk_results(raw, limit);
         for r in &results {
             println!("{:.4}  {}  {}", r.score, r.title, r.path);
         }
