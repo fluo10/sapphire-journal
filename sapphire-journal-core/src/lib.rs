@@ -32,7 +32,9 @@ pub mod period;
 pub mod user_config;
 
 pub use journal_state::JournalState;
+#[allow(deprecated)]
 pub use sapphire_workspace::RetrieveDb;
+pub use sapphire_workspace::dedup_chunk_results;
 pub use sapphire_workspace::SyncBackend;
 #[cfg(feature = "git-sync")]
 pub use sapphire_workspace::GitSync;

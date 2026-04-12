@@ -27,5 +27,5 @@ serde_json.workspace = true
 schemars.workspace = true
 uuid = { version = "1", features = ["v4", "serde"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
-sapphire-workspace = { version = "0.5.1", default-features = false }
+sapphire-workspace = { version = "0.8.0", default-features = false }
 grain-id = { version = "0.14", features = ["serde", "rusqlite", "schemars"] }
