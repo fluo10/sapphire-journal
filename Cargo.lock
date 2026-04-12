@@ -7423,7 +7423,7 @@ dependencies = [
 
 [[package]]
 name = "sapphire-journal"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7440,7 +7440,7 @@ dependencies = [
 
 [[package]]
 name = "sapphire-journal-core"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "grain-id",
