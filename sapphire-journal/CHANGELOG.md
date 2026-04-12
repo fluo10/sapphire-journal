@@ -2,6 +2,13 @@
 
 All notable changes to `sapphire-journal` and `sapphire-journal-core` are documented here.
 
+## [0.11.0] - 2026-04-12
+
+### Changed
+
+- `sapphire-workspace` bumped from 0.5.1 to 0.8.0
+- `rmcp` bumped to 1.4.0
+
 ## [0.10.0] - 2026-04-10
 
 ### Changed

@@ -11,7 +11,7 @@ description = "Markdown-based task and note manager that keeps your data alive a
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/fluo10/sapphire-journal"
 edition = "2024"
-version = "0.10.0"
+version = "0.11.0"
 
 [workspace.dependencies]
 anyhow = "1"
