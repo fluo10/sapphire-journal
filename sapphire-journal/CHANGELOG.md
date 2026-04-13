@@ -2,6 +2,12 @@
 
 All notable changes to `sapphire-journal` and `sapphire-journal-core` are documented here.
 
+## [0.11.1] - 2026-04-13
+
+### Fixed
+
+- `sapphire-workspace` bumped from 0.8.0 to 0.8.1 (fixes sync-related bug)
+
 ## [0.11.0] - 2026-04-12
 
 ### Changed
