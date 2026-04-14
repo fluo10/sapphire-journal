@@ -2,16 +2,22 @@
 
 All notable changes to `sapphire-journal-vscode` are documented here.
 
+## [0.11.2] - 2026-04-14
+
+### Changed
+
+- Bumped pnpm from 10.30.3 to 10.33.0
+
+### Fixed
+
+- Release workflow now pins `pnpm/action-setup` to v5 to avoid the broken lockfile failure introduced by v6's pnpm 11 support; 0.11.1 was tagged but its VSIX was never published because the release workflow hit `ERR_PNPM_BROKEN_LOCKFILE`
+
 ## [0.11.1] - 2026-04-14
 
 ### Changed
 
 - Bundled `sapphire-journal` CLI updated to 0.11.1
-- Bumped pnpm from 10.30.3 to 10.33.0
-
-### Fixed
-
-- Release workflow now pins `pnpm/action-setup` to v5 to avoid the broken lockfile failure introduced by v6's pnpm 11 support (which caused the 0.11.0 release workflow to fail with `ERR_PNPM_BROKEN_LOCKFILE`)
+- Re-run release workflow to publish the VSIX (0.11.0 release workflow failed with `ERR_PNPM_BROKEN_LOCKFILE`)
 
 ## [0.11.0] - 2026-04-12
 

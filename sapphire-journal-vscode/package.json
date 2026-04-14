@@ -4,7 +4,7 @@
   "displayName": "Sapphire Journal",
   "publisher": "fluo10",
   "description": "VS Code extension for the Sapphire Journal",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/fluo10/sapphire-journal"
