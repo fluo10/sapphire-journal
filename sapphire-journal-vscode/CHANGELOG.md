@@ -2,6 +2,13 @@
 
 All notable changes to `sapphire-journal-vscode` are documented here.
 
+## [0.11.1] - 2026-04-14
+
+### Changed
+
+- Bundled `sapphire-journal` CLI updated to 0.11.1
+- Re-run release workflow to publish the VSIX (0.11.0 release workflow failed with `ERR_PNPM_BROKEN_LOCKFILE`)
+
 ## [0.11.0] - 2026-04-12
 
 ### Changed
