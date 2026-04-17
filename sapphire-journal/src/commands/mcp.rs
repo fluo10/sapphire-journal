@@ -14,10 +14,12 @@ use sapphire_journal_core::{
 };
 use tokio::time;
 use rmcp::{
-    ServerHandler, ServiceExt,
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    Peer, RoleServer, ServerHandler, ServiceExt,
+    handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
     model::*,
-    schemars, tool, tool_handler, tool_router,
+    schemars,
+    service::RequestContext,
+    tool, tool_router,
     transport::stdio,
 };
 use sapphire_journal_core::dedup_chunk_results;
@@ -31,7 +33,10 @@ struct ArchelonServer {
     default_dir: Option<PathBuf>,
     /// Cached journal + SQLite connection, shared across tool calls.
     state: Arc<Mutex<Option<JournalState>>>,
-    tool_router: ToolRouter<Self>,
+    /// Tools available while no journal is open (init/open).
+    closed_tool_router: ToolRouter<Self>,
+    /// Tools available once a journal is open (entry/cache/git/search).
+    open_tool_router: ToolRouter<Self>,
 }
 
 impl std::fmt::Debug for ArchelonServer {
@@ -47,8 +52,15 @@ impl ArchelonServer {
         Self {
             default_dir: journal_dir,
             state: Arc::new(Mutex::new(None)),
-            tool_router: Self::tool_router(),
+            closed_tool_router: Self::closed_tool_router(),
+            open_tool_router: Self::open_tool_router(),
         }
+    }
+
+    /// Returns true when a journal is currently open — i.e. the open-state
+    /// tool list should be advertised to MCP clients.
+    fn is_journal_open(&self) -> bool {
+        self.state.lock().unwrap().is_some()
     }
 
     /// Provide access to the cached state, auto-opening on first use.
@@ -344,7 +356,7 @@ fn build_filter(p: &EntryListParams) -> anyhow::Result<EntryFilter> {
 
 // ── tool implementations ──────────────────────────────────────────────────────
 
-#[tool_router]
+#[tool_router(router = closed_tool_router)]
 impl ArchelonServer {
     #[tool(description = "Open (or reopen) a journal workspace. \
         Loads the journal directory and its SQLite cache into memory so subsequent \
@@ -393,6 +405,20 @@ impl ArchelonServer {
             ))
         })()
         .map_err(|e| e.to_string())
+    }
+}
+
+#[tool_router(router = open_tool_router)]
+impl ArchelonServer {
+    #[tool(description = "Close the currently open journal workspace. \
+        Releases the in-memory state and returns the server to the initial state \
+        where only journal_init and journal_open are available.")]
+    fn journal_close(&self, _: Parameters<serde_json::Value>) -> Result<String, String> {
+        let mut guard = self.state.lock().unwrap();
+        match guard.take() {
+            Some(state) => Ok(format!("closed: {}", state.journal.root.display())),
+            None => Err("no journal is currently open".to_string()),
+        }
     }
 
     #[tool(description = "List journal entries as JSON. \
@@ -743,17 +769,80 @@ impl ArchelonServer {
     }
 }
 
-#[tool_handler]
 impl ServerHandler for ArchelonServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_instructions(
-                "Archelon is a Markdown-based journal/task manager. \
-                 Use journal_open to load a workspace into memory (auto-opens on first use). \
-                 Use entry_list to browse entries, entry_show to read one, \
-                 entry_new to create, and entry_modify to update metadata."
-                    .to_owned(),
-            )
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_tool_list_changed()
+                .build(),
+        )
+        .with_instructions(
+            "Archelon is a Markdown-based journal/task manager. \
+             When no journal is open, use journal_init to create one or journal_open to load an \
+             existing workspace. Once open, use entry_list to browse entries, entry_show to read \
+             one, entry_new to create, and entry_modify to update metadata. \
+             The tool list changes dynamically based on whether a journal is open."
+                .to_owned(),
+        )
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        let tools = if self.is_journal_open() {
+            self.open_tool_router.list_all()
+        } else {
+            self.closed_tool_router.list_all()
+        };
+        Ok(ListToolsResult {
+            tools,
+            meta: None,
+            next_cursor: None,
+        })
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let was_open = self.is_journal_open();
+        let peer = context.peer.clone();
+
+        let router = if self.closed_tool_router.has_route(request.name.as_ref()) {
+            &self.closed_tool_router
+        } else {
+            &self.open_tool_router
+        };
+
+        let tcc = ToolCallContext::new(self, request, context);
+        let result = router.call(tcc).await;
+
+        let is_open = self.is_journal_open();
+        if was_open != is_open {
+            Self::notify_tools_changed(peer).await;
+        }
+
+        result
+    }
+
+    fn get_tool(&self, name: &str) -> Option<rmcp::model::Tool> {
+        if self.is_journal_open() {
+            self.open_tool_router.get(name).cloned()
+        } else {
+            self.closed_tool_router.get(name).cloned()
+        }
+    }
+}
+
+impl ArchelonServer {
+    async fn notify_tools_changed(peer: Peer<RoleServer>) {
+        if let Err(e) = peer.notify_tool_list_changed().await {
+            tracing::warn!("failed to send tools/list_changed notification: {e}");
+        }
     }
 }
 
@@ -765,6 +854,16 @@ pub async fn run(journal_dir: Option<&Path>) -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_writer(std::io::stderr).init();
 
     let server = ArchelonServer::new(journal_dir.map(|x| x.to_path_buf()));
+
+    // When a journal directory is supplied at startup, eagerly open it so the
+    // initial tools/list advertises the open-state tool set. Failures are
+    // logged but non-fatal: the server falls back to the closed-state list so
+    // the client can still run journal_init or journal_open.
+    if server.default_dir.is_some() {
+        if let Err(e) = server.reload_state(None) {
+            tracing::warn!("failed to open journal at startup: {e}");
+        }
+    }
 
     // Spawn periodic git sync task if configured.
     let state_for_sync = Arc::clone(&server.state);
