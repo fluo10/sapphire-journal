@@ -9,6 +9,7 @@ use sapphire_journal_core::{
     user_config::UserConfig,
     JournalState,
 };
+use sapphire_journal_core::{FtsQuery, VectorQuery};
 
 use chrono::NaiveDateTime;
 use clap::{Args, Subcommand};
@@ -707,26 +708,22 @@ fn search(state: &JournalState, query: &str, semantic: bool, limit: usize) -> Re
                  for semantic search"
             )
         })?;
-        let query_vec = embedder.embed_texts(&[query])
-            .map_err(anyhow::Error::msg)?
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("embedding API returned empty result"))?;
 
-        let raw = state.retrieve_db().search_similar(&query_vec, limit * 3)
+        let q = VectorQuery::new(query, embedder).limit(limit);
+        let results = state.retrieve_db().search_similar(&q)
             .map_err(anyhow::Error::msg)?;
-        if raw.is_empty() {
+        if results.is_empty() {
             println!("no results");
             return Ok(());
         }
-        let results = sapphire_journal_core::dedup_chunk_results(raw, limit);
         for r in &results {
-            println!("{:.4}  {}  {}", r.score, r.title, r.path);
+            println!("{:.4}  {}", r.score, r.path);
         }
     } else {
         // ── full-text search (FTS5 trigram) ───────────────────────────────────
         state.sync()?;
-        let results = state.retrieve_db().search_fts(query, limit)
+        let q = FtsQuery::new(query).limit(limit);
+        let results = state.retrieve_db().search_fts(&q)
             .map_err(anyhow::Error::msg)?;
 
         if results.is_empty() {
@@ -735,7 +732,6 @@ fn search(state: &JournalState, query: &str, semantic: bool, limit: usize) -> Re
         }
         for r in &results {
             println!("{}", r.path);
-            println!("  {}", r.title);
         }
     }
 

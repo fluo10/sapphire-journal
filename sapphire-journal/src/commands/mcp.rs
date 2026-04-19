@@ -22,7 +22,7 @@ use rmcp::{
     tool, tool_router,
     transport::stdio,
 };
-use sapphire_journal_core::dedup_chunk_results;
+use sapphire_journal_core::{FtsQuery, VectorQuery};
 use serde::Deserialize;
 
 // ── server struct ─────────────────────────────────────────────────────────────
@@ -749,18 +749,16 @@ impl ArchelonServer {
                         let _ = s.retrieve_db().embed_pending(embedder, |_, _| {});
                     }
 
-                    // Vector search: embed the query and find similar chunks.
-                    let query_vecs = embedder.embed_texts(&[p.query.as_str()])?;
-                    let query_vec = query_vecs.into_iter().next()
-                        .ok_or_else(|| anyhow::anyhow!("embedder returned empty result"))?;
-                    let raw = s.retrieve_db().search_similar(&query_vec, limit * 3)
+                    // Vector search.
+                    let q = VectorQuery::new(p.query.as_str(), embedder).limit(limit);
+                    let results = s.retrieve_db().search_similar(&q)
                         .map_err(anyhow::Error::msg)?;
-                    let results = dedup_chunk_results(raw, limit);
                     return Ok(serde_json::to_string_pretty(&results)?);
                 }
 
                 // Fallback: full-text search.
-                let results = s.retrieve_db().search_fts(&p.query, limit)
+                let q = FtsQuery::new(&p.query).limit(limit);
+                let results = s.retrieve_db().search_fts(&q)
                     .map_err(anyhow::Error::msg)?;
                 Ok(serde_json::to_string_pretty(&results)?)
             })
