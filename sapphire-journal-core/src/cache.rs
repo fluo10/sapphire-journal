@@ -177,8 +177,6 @@ pub fn sync_cache(
 
     let db_files = retrieve.file_mtimes()?;
 
-    let mut entry_changed = false;
-
     conn.execute_batch("PRAGMA defer_foreign_keys=ON; BEGIN")?;
 
     // ── delete files removed from disk ───────────────────────────────────────
@@ -196,7 +194,6 @@ pub fn sync_cache(
             conn.execute("DELETE FROM entries WHERE path = ?1", [db_path])?;
             let _ = retrieve.remove_file(db_path);
             if let Some(id) = entry_id {
-                entry_changed = true;
                 let _ = retrieve.remove_document(id);
             }
         }
@@ -219,7 +216,6 @@ pub fn sync_cache(
                     upsert_entry(conn, &entry)?;
                     let doc = entry_to_document(&entry);
                     let _ = retrieve.upsert_document(&doc);
-                    entry_changed = true;
                 }
                 Err(e) => {
                     let _ = retrieve.upsert_file(path_str.as_ref(), *mtime);
@@ -260,10 +256,6 @@ pub fn sync_cache(
     }
 
     conn.execute_batch("COMMIT")?;
-
-    if entry_changed {
-        let _ = retrieve.rebuild_fts();
-    }
 
     Ok(())
 }
@@ -452,7 +444,6 @@ pub fn upsert_entry_from_path(
     upsert_entry(conn, &entry)?;
     let doc = entry_to_document(&entry);
     let _ = retrieve.upsert_document(&doc);
-    let _ = retrieve.rebuild_fts();
     Ok(())
 }
 
@@ -628,7 +619,6 @@ fn upsert_entry(conn: &Connection, entry: &crate::entry::Entry) -> Result<()> {
 fn entry_to_document(entry: &crate::entry::Entry) -> sapphire_workspace::Document {
     sapphire_workspace::Document {
         id: u64::from(entry.frontmatter.id) as i64,
-        title: entry.frontmatter.title.clone(),
         body: entry.body.clone(),
         path: entry.path.to_string_lossy().into_owned(),
         chunks: None,
