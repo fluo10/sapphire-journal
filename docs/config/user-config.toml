@@ -1,0 +1,46 @@
+# Example user-level config for sapphire-journal.
+#
+# Location: $XDG_CONFIG_HOME/sapphire-journal/config.toml
+#          (typically ~/.config/sapphire-journal/config.toml)
+#
+# This file holds host/machine-specific settings (cache backend, embedding
+# provider, sync cadence). It is intentionally separate from the per-journal
+# `.sapphire-journal/config.toml` so that the same journal can be shared
+# across machines with different hardware capabilities.
+
+# ── Retrieve cache ───────────────────────────────────────────────────────────
+[cache.retrieve]
+# "none" | "sqlite_vec" | "lancedb"
+db = "sqlite_vec"
+
+# How often to refresh the retrieve cache (full-text + vector index).
+# Omit or set to 0 to disable periodic refresh.
+# sync_interval_minutes = 15
+
+[cache.retrieve.embedding]
+enabled     = true
+provider    = "openai"
+model       = "text-embedding-3-small"
+dimension   = 1536
+api_key_env = "OPENAI_API_KEY"
+
+# For local providers (Ollama, fastembed, etc.):
+# provider  = "ollama"
+# model     = "nomic-embed-text"
+# dimension = 768
+# base_url  = "http://localhost:11434"
+
+# ── Git sync ─────────────────────────────────────────────────────────────────
+[sync]
+# "auto" | "git" | "none"
+backend = "git"
+remote  = "origin"
+branch  = "main"
+
+# Run a full sync cycle (commit → fetch → merge → push) every N minutes.
+# Picked up by the MCP server's periodic sync task.
+# Omit or set to 0 to disable periodic sync.
+sync_interval_minutes = 30
+
+# Optional stable device identifier used in auto-generated commit messages.
+# device_id = "laptop-home"
