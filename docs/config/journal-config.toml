@@ -1,0 +1,16 @@
+# Example per-journal config for sapphire-journal.
+#
+# Location: <journal-root>/.sapphire-journal/config.toml
+#
+# This file is committed to the journal repo and shared across all machines
+# that open the journal. Keep host-specific settings (cache backend, embedding
+# API keys, sync cadence) in the user-level config instead.
+
+[journal]
+# How to handle two entries with the same title during cache sync.
+# "allow" | "warn" (default) | "error"
+duplicate_title = "warn"
+
+# Sub-directory (relative to the journal root) where year directories are
+# created. When unset, year directories live directly under the journal root.
+# entries_dir = "entries"
