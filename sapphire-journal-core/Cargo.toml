@@ -28,4 +28,4 @@ schemars.workspace = true
 uuid = { version = "1", features = ["v4", "serde"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 sapphire-workspace = { version = "0.9.0", default-features = false }
-grain-id = { version = "0.14", features = ["serde", "rusqlite", "schemars"] }
+grain-id = { version = "0.15", features = ["serde", "rusqlite", "schemars"] }
