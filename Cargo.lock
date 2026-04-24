@@ -6632,7 +6632,7 @@ version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.14.0",
  "log",
  "multimap",
@@ -7475,9 +7475,9 @@ dependencies = [
 
 [[package]]
 name = "sapphire-retrieve"
-version = "0.9.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ad4bad23eedba96b695a389bd325b030a9452330c9ab54cf50db5adbeb8b636"
+checksum = "6e666070eb7fda63c1e72d044854adbc8efeada2ab070581008a6916fc62749d"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -7495,13 +7495,15 @@ dependencies = [
 
 [[package]]
 name = "sapphire-sync"
-version = "0.9.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14262216508f61acf2a9c387065be8ad633068cea469d8ac390bafc77ccc7565"
+checksum = "30f97e19d9cde77fb01389798481b3d4d1210cf8b94b87e996819f9ce91512c8"
 dependencies = [
+ "chrono",
  "dirs 5.0.1",
  "git2",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
  "uuid",
@@ -7509,11 +7511,11 @@ dependencies = [
 
 [[package]]
 name = "sapphire-workspace"
-version = "0.9.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d65ac73122bbaa09fba44072d37a6e510e2d63ecd1c266903aecf5f70e626a2"
+checksum = "5cbce87834133a783f55622d16558bfecaa721c6c584cc109d257273d47517d7"
 dependencies = [
- "dirs 5.0.1",
+ "chrono",
  "indexmap 2.13.1",
  "md-5",
  "sapphire-retrieve",
@@ -7522,6 +7524,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
+ "tracing",
  "uuid",
  "walkdir",
 ]
@@ -7991,7 +7994,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -8003,7 +8006,7 @@ version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54254b8531cafa275c5e096f62d48c81435d1015405a91198ddb11e967301d40"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
