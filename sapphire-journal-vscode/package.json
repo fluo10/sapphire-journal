@@ -220,6 +220,11 @@
           ],
           "description": "Vector database backend for semantic search. Overrides config.toml when set."
         },
+        "sapphire-journal.cache.embedding.enabled": {
+          "type": ["boolean", "null"],
+          "default": null,
+          "description": "Enable embedding-based semantic search. Leave unset to inherit config.toml; set true/false to override."
+        },
         "sapphire-journal.cache.embedding.provider": {
           "type": "string",
           "default": "",
@@ -244,6 +249,29 @@
           "type": "string",
           "default": "",
           "description": "Output vector dimension of the embedding model (e.g. 1536, 768). Overrides config.toml when set."
+        },
+        "sapphire-journal.syncIntervalMinutes": {
+          "type": ["integer", "null"],
+          "default": null,
+          "minimum": 0,
+          "description": "How often the MCP server runs periodic sync (commit/pull/push when a git backend is attached, plus cache refresh), in minutes. Leave unset to inherit config.toml (default: 10). Set to 0 to disable."
+        },
+        "sapphire-journal.sync.backend": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "auto",
+            "none",
+            "git"
+          ],
+          "enumDescriptions": [
+            "Use the value from config.toml",
+            "Auto-detect: git when inside a git repo, otherwise local-only",
+            "Disable sync (local-only) even inside a git repository",
+            "Force git-based sync (commit → pull → push)"
+          ],
+          "description": "Sync backend. Overrides config.toml when set."
         }
       }
     }

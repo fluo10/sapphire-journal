@@ -1,11 +1,24 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
-pub use sapphire_workspace::{EmbeddingConfig, RetrieveConfig, SyncConfig, VectorDb};
+pub use sapphire_workspace::{EmbeddingConfig, RetrieveConfig, SyncBackendKind, SyncConfig, VectorDb};
+
+/// Default cadence (minutes) for periodic sync when nothing is configured.
+///
+/// Periodic sync is enabled by default at this interval. The MCP server
+/// also drives an incremental cache + retrieve refresh on the same tick, so
+/// even workspaces without a git sync backend benefit from having it on.
+/// Set `sync_interval_minutes = 0` to opt out.
+const DEFAULT_SYNC_INTERVAL_MINUTES: u32 = 10;
+
+fn default_sync_interval_minutes() -> Option<u32> {
+    Some(DEFAULT_SYNC_INTERVAL_MINUTES)
+}
 
 /// Contents of `$XDG_CONFIG_HOME/sapphire-journal/config.toml`.
 ///
@@ -13,7 +26,7 @@ pub use sapphire_workspace::{EmbeddingConfig, RetrieveConfig, SyncConfig, Vector
 /// settings such as caching backends. It is intentionally separate from the
 /// per-journal `.sapphire-journal/config.toml` so that the same journal can be
 /// shared across machines with different hardware capabilities.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserConfig {
     #[serde(default)]
     pub cache: CacheConfig,
@@ -21,9 +34,33 @@ pub struct UserConfig {
     /// Sync backend configuration (`[sync]` section).
     #[serde(default)]
     pub sync: SyncConfig,
+
+    /// How often to run periodic sync, in minutes.
+    ///
+    /// Defaults to 10 minutes. Set to `0` to disable.
+    #[serde(default = "default_sync_interval_minutes", skip_serializing_if = "Option::is_none")]
+    pub sync_interval_minutes: Option<u32>,
+}
+
+impl Default for UserConfig {
+    fn default() -> Self {
+        Self {
+            cache: CacheConfig::default(),
+            sync: SyncConfig::default(),
+            sync_interval_minutes: default_sync_interval_minutes(),
+        }
+    }
 }
 
 impl UserConfig {
+    /// Periodic sync cadence as a [`Duration`]. Returns `None` when disabled
+    /// (`sync_interval_minutes = 0`).
+    pub fn sync_interval(&self) -> Option<Duration> {
+        self.sync_interval_minutes
+            .filter(|&m| m > 0)
+            .map(|m| Duration::from_secs(u64::from(m) * 60))
+    }
+
     /// Canonical path to the user config file.
     ///
     /// Resolves to `$XDG_CONFIG_HOME/sapphire-journal/config.toml`.
@@ -46,6 +83,8 @@ impl UserConfig {
     /// | `SAPPHIRE_JOURNAL_CACHE_EMBEDDING_API_KEY_ENV` | `cache.retrieve.embedding.api_key_env` |
     /// | `SAPPHIRE_JOURNAL_CACHE_EMBEDDING_BASE_URL` | `cache.retrieve.embedding.base_url` |
     /// | `SAPPHIRE_JOURNAL_CACHE_EMBEDDING_DIMENSION` | `cache.retrieve.embedding.dimension` |
+    /// | `SAPPHIRE_JOURNAL_SYNC_BACKEND` | `sync.backend` (`auto`/`none`/`git`) |
+    /// | `SAPPHIRE_JOURNAL_SYNC_INTERVAL_MINUTES` | `sync_interval_minutes` |
     pub fn load() -> Result<Self> {
         let path = Self::path();
         let mut config = if !path.exists() {
@@ -95,6 +134,27 @@ impl UserConfig {
             if let Some(v) = base_url { embed.base_url = Some(v); }
             if let Some(v) = dimension { embed.dimension = Some(v); }
         }
+
+        if let Ok(v) = std::env::var("SAPPHIRE_JOURNAL_SYNC_BACKEND") {
+            if let Some(backend) = parse_sync_backend(&v) {
+                self.sync.backend = backend;
+            }
+        }
+        if let Ok(v) = std::env::var("SAPPHIRE_JOURNAL_SYNC_INTERVAL_MINUTES") {
+            if let Ok(n) = v.parse::<u32>() {
+                self.sync_interval_minutes = Some(n);
+            }
+        }
+    }
+}
+
+fn parse_sync_backend(s: &str) -> Option<sapphire_workspace::SyncBackendKind> {
+    use sapphire_workspace::SyncBackendKind;
+    match s {
+        "auto" => Some(SyncBackendKind::Auto),
+        "none" => Some(SyncBackendKind::None),
+        "git" => Some(SyncBackendKind::Git),
+        _ => None,
     }
 }
 
