@@ -868,7 +868,7 @@ pub async fn run(journal_dir: Option<&Path>) -> anyhow::Result<()> {
     let _sync_handle = {
         let interval = UserConfig::load()
             .ok()
-            .and_then(|c| c.sync.sync_interval());
+            .and_then(|c| c.sync_interval());
         interval.map(|dur| {
             tokio::spawn(async move {
                 let mut ticker = time::interval(dur);

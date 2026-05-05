@@ -7,31 +7,44 @@ let _extensionPath: string | undefined;
 /**
  * Build environment variable overrides from VSCode settings.
  *
- * Any `sapphire-journal.cache.*` setting with a non-empty value is translated to the
- * corresponding `ARCHELON_CACHE_*` environment variable so that the CLI treats
- * VSCode settings as overrides on top of `config.toml`.
+ * Any `sapphire-journal.*` setting with a non-default value is translated to
+ * the corresponding `SAPPHIRE_JOURNAL_*` environment variable so that the CLI
+ * treats VSCode settings as overrides on top of `config.toml`.
  */
 export function configEnv(): Record<string, string> {
     const cfg = vscode.workspace.getConfiguration('sapphire-journal');
     const env: Record<string, string> = {};
 
     const vectorDb = cfg.get<string>('cache.vectorDb', '');
-    if (vectorDb) { env['ARCHELON_CACHE_VECTOR_DB'] = vectorDb; }
+    if (vectorDb) { env['SAPPHIRE_JOURNAL_CACHE_RETRIEVE_DB'] = vectorDb; }
+
+    const embeddingEnabled = cfg.get<boolean | null>('cache.embedding.enabled', null);
+    if (embeddingEnabled !== null && embeddingEnabled !== undefined) {
+        env['SAPPHIRE_JOURNAL_CACHE_EMBEDDING_ENABLED'] = embeddingEnabled ? 'true' : 'false';
+    }
 
     const provider = cfg.get<string>('cache.embedding.provider', '');
-    if (provider) { env['ARCHELON_CACHE_EMBEDDING_PROVIDER'] = provider; }
+    if (provider) { env['SAPPHIRE_JOURNAL_CACHE_EMBEDDING_PROVIDER'] = provider; }
 
     const model = cfg.get<string>('cache.embedding.model', '');
-    if (model) { env['ARCHELON_CACHE_EMBEDDING_MODEL'] = model; }
+    if (model) { env['SAPPHIRE_JOURNAL_CACHE_EMBEDDING_MODEL'] = model; }
 
     const apiKeyEnv = cfg.get<string>('cache.embedding.apiKeyEnv', '');
-    if (apiKeyEnv) { env['ARCHELON_CACHE_EMBEDDING_API_KEY_ENV'] = apiKeyEnv; }
+    if (apiKeyEnv) { env['SAPPHIRE_JOURNAL_CACHE_EMBEDDING_API_KEY_ENV'] = apiKeyEnv; }
 
     const baseUrl = cfg.get<string>('cache.embedding.baseUrl', '');
-    if (baseUrl) { env['ARCHELON_CACHE_EMBEDDING_BASE_URL'] = baseUrl; }
+    if (baseUrl) { env['SAPPHIRE_JOURNAL_CACHE_EMBEDDING_BASE_URL'] = baseUrl; }
 
     const dimension = cfg.get<string>('cache.embedding.dimension', '');
-    if (dimension) { env['ARCHELON_CACHE_EMBEDDING_DIMENSION'] = dimension; }
+    if (dimension) { env['SAPPHIRE_JOURNAL_CACHE_EMBEDDING_DIMENSION'] = dimension; }
+
+    const syncBackend = cfg.get<string>('sync.backend', '');
+    if (syncBackend) { env['SAPPHIRE_JOURNAL_SYNC_BACKEND'] = syncBackend; }
+
+    const syncIntervalMinutes = cfg.get<number | null>('syncIntervalMinutes', null);
+    if (syncIntervalMinutes !== null && syncIntervalMinutes !== undefined) {
+        env['SAPPHIRE_JOURNAL_SYNC_INTERVAL_MINUTES'] = String(syncIntervalMinutes);
+    }
 
     return env;
 }
