@@ -108,7 +108,7 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: cli-v${{ needs.prepare.outputs.version }}
           generate_release_notes: true
