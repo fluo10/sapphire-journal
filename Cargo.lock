@@ -3568,9 +3568,9 @@ dependencies = [
 
 [[package]]
 name = "grain-id"
-version = "0.14.1"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f35d7887ef1f86198ac521290e87c07e81a75d03623f49e430f4c95212d0991"
+checksum = "df5e26a703bae8b14765dca3daa2716411cbce6037cc59df15f95df8ae14e858"
 dependencies = [
  "prost-build",
  "rand 0.10.0",
