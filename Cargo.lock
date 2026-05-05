@@ -7475,9 +7475,9 @@ dependencies = [
 
 [[package]]
 name = "sapphire-retrieve"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e6f5aa427c2882c399232edf42457e5902e30ce773807dbe9333fe8cf6aab62"
+checksum = "6e666070eb7fda63c1e72d044854adbc8efeada2ab070581008a6916fc62749d"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -7495,9 +7495,9 @@ dependencies = [
 
 [[package]]
 name = "sapphire-sync"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cba21afe17e54475e34feabf7467af1d03e0f305c729e593b5f0d987e9a5d1e2"
+checksum = "30f97e19d9cde77fb01389798481b3d4d1210cf8b94b87e996819f9ce91512c8"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -7511,9 +7511,9 @@ dependencies = [
 
 [[package]]
 name = "sapphire-workspace"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "303d36580d0e6ac3809e5101a0fe2bf39b4c8af7292be182655ed1a69efbaf84"
+checksum = "5cbce87834133a783f55622d16558bfecaa721c6c584cc109d257273d47517d7"
 dependencies = [
  "chrono",
  "indexmap 2.13.1",
