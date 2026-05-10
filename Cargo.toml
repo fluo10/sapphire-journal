@@ -3,6 +3,7 @@ members = [
     "sapphire-journal",
     "sapphire-journal-core",
     "sapphire-journal-dioxus",
+    "sapphire-journal-gui",
 ]
 resolver = "3"
 
