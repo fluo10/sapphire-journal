@@ -1,11 +1,14 @@
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
+use sapphire_journal_core::journal::Journal;
 
 use crate::app::{
     App, AppState, CloneState, ConfirmDeleteState, DialogKind, DialogState, NewJournalState,
 };
 use crate::dialogs;
+use crate::registry::{JournalRegistry, RegistryEntry};
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     egui::Panel::top("list_header").show_inside(ui, |ui| {
@@ -19,6 +22,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         url: String::new(),
                         progress: Arc::new(Mutex::new(None)),
                     }));
+                }
+                if ui.button("Open Existing…").clicked() && app.dialog.is_none() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Open Sapphire Journal")
+                        .pick_folder()
+                    {
+                        if let Err(msg) = register_existing(&mut app.registry, path) {
+                            app.error_msg = Some(msg);
+                        }
+                    }
                 }
                 if ui.button("New Journal").clicked() && app.dialog.is_none() {
                     app.dialog = Some(DialogState::NewJournal(NewJournalState {
@@ -53,7 +66,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
                 ui.label("No journals yet.");
-                ui.label("Create a new journal or clone an existing one to get started.");
+                ui.label("Create a new journal, open an existing one, or clone one to get started.");
             });
         } else {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -112,4 +125,30 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         Some(DialogKind::ConfirmDelete) => dialogs::confirm_delete::show(app, &ctx),
         None => {}
     }
+}
+
+fn register_existing(registry: &mut JournalRegistry, path: PathBuf) -> Result<(), String> {
+    let journal = Journal::from_root(path.clone()).map_err(|_| {
+        format!(
+            "Not a sapphire journal (missing .sapphire-journal/): {}",
+            path.display()
+        )
+    })?;
+    let id = journal.journal_id().map_err(|e| e.to_string())?;
+
+    if let Some(existing) = registry.journals.iter().find(|e| e.id == id) {
+        return Err(format!("Already registered as \"{}\".", existing.name));
+    }
+
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Untitled")
+        .to_string();
+    registry.add(RegistryEntry {
+        id,
+        name,
+        storage_path: path,
+    });
+    registry.save().map_err(|e| e.to_string())
 }
