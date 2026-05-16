@@ -5,6 +5,7 @@ use eframe::egui;
 mod app;
 mod dialogs;
 mod error;
+mod fonts;
 mod registry;
 mod screens;
 
@@ -22,6 +23,9 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Sapphire Journal",
         options,
-        Box::new(|_cc| Ok(Box::new(App::new()))),
+        Box::new(|cc| {
+            fonts::install(&cc.egui_ctx);
+            Ok(Box::new(App::new()))
+        }),
     )
 }
