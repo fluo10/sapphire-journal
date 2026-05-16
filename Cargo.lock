@@ -8870,6 +8870,7 @@ dependencies = [
 name = "sapphire-journal-gui"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "eframe",
  "egui",
  "git2",

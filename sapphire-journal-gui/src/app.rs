@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
+use sapphire_journal_core::entry::EntryHeader;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -69,9 +70,86 @@ pub struct App {
     pub registry: JournalRegistry,
     pub dialog: Option<DialogState>,
     pub error_msg: Option<String>,
+    pub home: Option<HomeState>,
     pub runtime: Arc<tokio::runtime::Runtime>,
     pub event_tx: mpsc::UnboundedSender<AppEvent>,
     pub event_rx: mpsc::UnboundedReceiver<AppEvent>,
+}
+
+/// State for the journal-home screen (sidebar + editor).
+///
+/// Created when entering `AppState::Home` for a given journal and cleared
+/// when going back to the list.  Holds both transient UI state (filters,
+/// selection, form fields) and the loaded entry headers shown in the sidebar.
+pub struct HomeState {
+    pub journal_id: Uuid,
+    pub journal_root: PathBuf,
+    pub journal_name: String,
+
+    /// Cached headers for the entry sidebar; refreshed when `needs_reload` is set.
+    pub entries: Vec<EntryHeader>,
+    pub entries_error: Option<String>,
+    pub needs_reload: bool,
+
+    /// Currently-selected entry, if any.
+    pub selected_path: Option<PathBuf>,
+    pub editor: Option<EditorState>,
+
+    // ── Sidebar filter / sort state ─────────────────────────────────────────
+    pub filter_text: String,
+    /// Period preset (empty = all). One of "" | "today" | "yesterday" | ...
+    pub period: String,
+    /// Sort field. One of "updated_at" | "created_at" | "title" | "id"
+    /// | "task_due" | "event_start".
+    pub sort_by: String,
+    /// "asc" | "desc".
+    pub sort_order: String,
+
+    pub confirm_delete_entry: bool,
+    pub error_msg: Option<String>,
+    pub info_msg: Option<String>,
+}
+
+impl HomeState {
+    pub fn new(entry: RegistryEntry) -> Self {
+        Self {
+            journal_id: entry.id,
+            journal_root: entry.storage_path,
+            journal_name: entry.name,
+            entries: Vec::new(),
+            entries_error: None,
+            needs_reload: true,
+            selected_path: None,
+            editor: None,
+            filter_text: String::new(),
+            period: String::new(),
+            sort_by: "updated_at".to_string(),
+            sort_order: "desc".to_string(),
+            confirm_delete_entry: false,
+            error_msg: None,
+            info_msg: None,
+        }
+    }
+}
+
+/// Form fields for the entry currently being edited in the main panel.
+///
+/// The path of the entry being edited lives in `HomeState::selected_path` so
+/// that selection-aware UI (e.g. the sidebar's active-row highlight) and the
+/// editor stay in sync.
+pub struct EditorState {
+    pub id: String,
+    pub title: String,
+    /// Comma-separated tag input.
+    pub tags: String,
+    pub body: String,
+    pub has_task: bool,
+    pub task_status: String,
+    /// `YYYY-MM-DD` (empty = no due date).
+    pub task_due: String,
+    pub has_event: bool,
+    pub event_start: String,
+    pub event_end: String,
 }
 
 impl App {
@@ -88,6 +166,7 @@ impl App {
             registry: JournalRegistry::load().unwrap_or_default(),
             dialog: None,
             error_msg: None,
+            home: None,
             runtime,
             event_tx,
             event_rx,

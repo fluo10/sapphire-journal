@@ -17,3 +17,4 @@ uuid = { version = "1", features = ["v4", "serde"] }
 serde = { workspace = true }
 toml = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }
+chrono = { workspace = true }
