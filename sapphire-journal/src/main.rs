@@ -43,6 +43,8 @@ enum Command {
 }
 
 fn main() -> Result<()> {
+    sapphire_journal_core::init_app_context();
+
     let cli = Cli::parse();
 
     match cli.command {

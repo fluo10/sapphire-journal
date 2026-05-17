@@ -15,7 +15,7 @@ egui_extras = { version = "0.34", features = ["svg"] }
 rfd = "0.15"
 git2 = { version = "0.20", default-features = false }
 uuid = { version = "1", features = ["v4", "serde"] }
-grain-id = { version = "0.14" }
+grain-id = { version = "0.15" }
 serde = { workspace = true }
 toml = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }

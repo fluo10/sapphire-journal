@@ -15,6 +15,7 @@ const MAIN_CSS: Asset = asset!("/assets/styling/main.css");
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 fn main() {
+    sapphire_journal_core::init_app_context();
     dioxus::launch(App);
 }
 

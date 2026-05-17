@@ -14,6 +14,8 @@ mod settings;
 use app::App;
 
 fn main() -> eframe::Result<()> {
+    sapphire_journal_core::init_app_context();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([900.0, 600.0])
