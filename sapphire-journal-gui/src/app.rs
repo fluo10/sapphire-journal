@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use grain_id::GrainId;
-use sapphire_journal_core::entry::EntryHeader;
+use sapphire_journal_core::{JournalState, entry::EntryHeader, user_config::UserConfig};
 use tokio::sync::mpsc;
+use tokio::time;
 use uuid::Uuid;
 
 use crate::registry::{JournalRegistry, RegistryEntry};
@@ -66,6 +67,9 @@ pub enum AppEvent {
         storage_path: PathBuf,
         error: String,
     },
+    /// Sent by the periodic-sync task after a successful sync so the UI can
+    /// reload entries that may have been added or modified by `git pull`.
+    EntriesNeedReload,
 }
 
 pub struct App {
@@ -78,6 +82,10 @@ pub struct App {
     /// When the user went to the journal-list screen from an open journal,
     /// this records that journal so the list can offer a "back" button.
     pub previous_journal_id: Option<Uuid>,
+    /// Currently-open journal's [`JournalState`] (cache DB + retrieve DB +
+    /// optional git-sync backend).  `None` when no journal is open.  Shared
+    /// with the background-sync tokio task, hence `Arc<Mutex<…>>`.
+    pub journal_state: Arc<Mutex<Option<JournalState>>>,
     pub runtime: Arc<tokio::runtime::Runtime>,
     pub event_tx: mpsc::UnboundedSender<AppEvent>,
     pub event_rx: mpsc::UnboundedReceiver<AppEvent>,
@@ -181,7 +189,7 @@ pub struct EditorState {
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(egui_ctx: egui::Context) -> Self {
         let runtime = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -206,6 +214,49 @@ impl App {
             None => (AppState::List, None),
         };
 
+        let journal_state: Arc<Mutex<Option<JournalState>>> = Arc::new(Mutex::new(None));
+
+        // Periodic background sync: cache + retrieve refresh + git pull/push,
+        // mirroring the cadence used by the MCP server.  Skips ticks when no
+        // journal is open.
+        if let Some(interval) = UserConfig::load().ok().and_then(|c| c.sync_interval()) {
+            let state_arc = Arc::clone(&journal_state);
+            let tx = event_tx.clone();
+            let ctx = egui_ctx.clone();
+            runtime.spawn(async move {
+                let mut ticker = time::interval(interval);
+                ticker.tick().await; // skip the immediate first tick
+                loop {
+                    ticker.tick().await;
+                    let did_sync = {
+                        let guard = state_arc.lock().unwrap();
+                        match guard.as_ref() {
+                            Some(state) => {
+                                if let Err(e) = state.sync() {
+                                    let _ = tx.send(AppEvent::Error(format!(
+                                        "Periodic cache sync failed: {e}"
+                                    )));
+                                }
+                                if let Err(e) = state.git_sync() {
+                                    let _ = tx.send(AppEvent::Error(format!(
+                                        "Periodic git sync failed: {e}"
+                                    )));
+                                }
+                                true
+                            }
+                            None => false,
+                        }
+                    };
+                    if did_sync {
+                        let _ = tx.send(AppEvent::EntriesNeedReload);
+                    }
+                    // Wake the UI thread so the event is processed promptly
+                    // even if the window has no pending input.
+                    ctx.request_repaint();
+                }
+            });
+        }
+
         Self {
             screen,
             registry,
@@ -214,6 +265,7 @@ impl App {
             error_msg: None,
             home,
             previous_journal_id: None,
+            journal_state,
             runtime,
             event_tx,
             event_rx,
@@ -260,6 +312,11 @@ impl App {
                     let _ = std::fs::remove_dir_all(&storage_path);
                     self.error_msg = Some(error);
                     self.dialog = None;
+                }
+                AppEvent::EntriesNeedReload => {
+                    if let Some(home) = self.home.as_mut() {
+                        home.needs_reload = true;
+                    }
                 }
             }
         }

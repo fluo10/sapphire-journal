@@ -6,6 +6,7 @@ use grain_id::GrainId;
 use uuid::Uuid;
 
 use sapphire_journal_core::{
+    JournalState,
     entry::EntryHeader,
     journal::Journal,
     ops::{
@@ -30,10 +31,22 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, journal_id: Uuid) {
             }
             None => {
                 app.home = None;
+                *app.journal_state.lock().unwrap() = None;
                 show_journal_missing(app, ui);
                 return;
             }
         }
+    }
+
+    // ── Ensure JournalState is open for the current journal ───────────────
+    // Idempotent — bails out immediately when state.journal.root already
+    // matches.  Called unconditionally so the startup auto-open path (which
+    // builds HomeState in `App::new` but never enters the `if needs_init`
+    // branch here) still gets its state initialised, which is what the
+    // periodic-sync task needs to see in order to do anything.
+    let root_opt = app.home.as_ref().map(|h| h.journal_root.clone());
+    if let Some(root) = root_opt {
+        ensure_journal_state(app, &root);
     }
 
     // ── Reload entries from disk if dirty ────────────────────────────────
@@ -111,6 +124,7 @@ fn show_journal_missing(app: &mut App, ui: &mut egui::Ui) {
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 
 fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
+    let mut new_entry_path: Option<PathBuf> = None;
     let home = match app.home.as_mut() {
         Some(h) => h,
         None => return,
@@ -132,6 +146,7 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
                             }
                         };
                         home.needs_reload = true;
+                        new_entry_path = Some(path);
                     }
                     Err(e) => home.error_msg = Some(e.to_string()),
                 },
@@ -279,6 +294,12 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
         });
+
+    // Stage the freshly-created entry file with the sync backend (if any).
+    // Done after the `home` borrow ends so we can take `&mut app` here.
+    if let Some(path) = new_entry_path {
+        notify_file_updated(app, &path);
+    }
 }
 
 fn draw_tree(
@@ -400,22 +421,35 @@ fn draw_entry_row(
 // ── Editor panel ─────────────────────────────────────────────────────────────
 
 fn draw_editor_panel(app: &mut App, ui: &mut egui::Ui) {
-    let home = match app.home.as_mut() {
-        Some(h) => h,
-        None => return,
-    };
+    let do_save = {
+        let home = match app.home.as_mut() {
+            Some(h) => h,
+            None => return,
+        };
 
-    if home.editor.is_none() {
-        ui.vertical_centered(|ui| {
-            ui.add_space(40.0);
-            ui.heading("No entry selected");
-            ui.label("Pick an entry from the sidebar, or create a new one.");
-        });
-        return;
+        if home.editor.is_none() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
+                ui.heading("No entry selected");
+                ui.label("Pick an entry from the sidebar, or create a new one.");
+            });
+            return;
+        }
+
+        draw_editor_panel_inner(home, ui)
+    };
+    if do_save {
+        save_current_entry(app);
     }
+}
+
+/// Renders the editor body using an exclusive `&mut HomeState`.  Returns
+/// `true` when the Save button was clicked so the caller can apply the
+/// disk write outside the home borrow.
+fn draw_editor_panel_inner(home: &mut HomeState, ui: &mut egui::Ui) -> bool {
+    let mut do_save = false;
 
     // Header bar: id + action buttons
-    let mut do_save = false;
     let mut do_request_delete = false;
     {
         let editor = home.editor.as_ref().unwrap();
@@ -527,9 +561,7 @@ fn draw_editor_panel(app: &mut App, ui: &mut egui::Ui) {
             );
         });
 
-    if do_save {
-        save_current_entry(home);
-    }
+    do_save
 }
 
 fn draw_confirm_delete_entry(app: &mut App, ctx: &egui::Context) {
@@ -563,27 +595,35 @@ fn draw_confirm_delete_entry(app: &mut App, ctx: &egui::Context) {
         cancel = true;
     }
 
-    let home = match app.home.as_mut() {
-        Some(h) => h,
-        None => return,
-    };
+    let mut deleted_path: Option<PathBuf> = None;
+    {
+        let home = match app.home.as_mut() {
+            Some(h) => h,
+            None => return,
+        };
 
-    if cancel {
-        home.confirm_delete_entry = false;
-    }
-    if confirm {
-        home.confirm_delete_entry = false;
-        if let Some(path) = home.selected_path.clone() {
-            match remove_entry(&path) {
-                Ok(()) => {
-                    home.selected_path = None;
-                    home.editor = None;
-                    home.info_msg = None;
-                    home.needs_reload = true;
+        if cancel {
+            home.confirm_delete_entry = false;
+        }
+        if confirm {
+            home.confirm_delete_entry = false;
+            if let Some(path) = home.selected_path.clone() {
+                match remove_entry(&path) {
+                    Ok(()) => {
+                        home.selected_path = None;
+                        home.editor = None;
+                        home.info_msg = None;
+                        home.needs_reload = true;
+                        deleted_path = Some(path);
+                    }
+                    Err(e) => home.error_msg = Some(e.to_string()),
                 }
-                Err(e) => home.error_msg = Some(e.to_string()),
             }
         }
+    }
+
+    if let Some(path) = deleted_path {
+        notify_file_deleted(app, &path);
     }
 }
 
@@ -713,16 +753,23 @@ fn load_editor(path: &std::path::Path) -> Result<EditorState, String> {
     })
 }
 
-fn save_current_entry(home: &mut HomeState) {
-    let Some(path) = home.selected_path.clone() else {
-        return;
-    };
-    let Some(editor) = home.editor.as_ref() else {
-        return;
-    };
+fn save_current_entry(app: &mut App) {
+    let mut updated_path: Option<PathBuf> = None;
+    let mut renamed_from: Option<PathBuf> = None;
+    {
+        let home = match app.home.as_mut() {
+            Some(h) => h,
+            None => return,
+        };
+        let Some(path) = home.selected_path.clone() else {
+            return;
+        };
+        let Some(editor) = home.editor.as_ref() else {
+            return;
+        };
 
-    home.error_msg = None;
-    home.info_msg = None;
+        home.error_msg = None;
+        home.info_msg = None;
 
     let mut entry = match read_entry(&path) {
         Ok(e) => e,
@@ -814,21 +861,101 @@ fn save_current_entry(home: &mut HomeState) {
         return;
     }
 
-    match fix_entry(&entry.path) {
-        Ok(maybe_new) => {
-            let final_path = maybe_new.unwrap_or(entry.path.clone());
-            home.selected_path = Some(final_path.clone());
-            home.editor = match load_editor(&final_path) {
-                Ok(e) => Some(e),
-                Err(msg) => {
-                    home.error_msg = Some(msg);
-                    None
+        match fix_entry(&entry.path) {
+            Ok(maybe_new) => {
+                let final_path = maybe_new.clone().unwrap_or(entry.path.clone());
+                if let Some(new_path) = maybe_new.as_ref() {
+                    if new_path != &entry.path {
+                        renamed_from = Some(entry.path.clone());
+                    }
                 }
-            };
-            home.info_msg = Some("Saved.".to_string());
-            home.needs_reload = true;
+                home.selected_path = Some(final_path.clone());
+                home.editor = match load_editor(&final_path) {
+                    Ok(e) => Some(e),
+                    Err(msg) => {
+                        home.error_msg = Some(msg);
+                        None
+                    }
+                };
+                home.info_msg = Some("Saved.".to_string());
+                home.needs_reload = true;
+                updated_path = Some(final_path);
+            }
+            Err(e) => home.error_msg = Some(format!("fix failed: {e}")),
         }
-        Err(e) => home.error_msg = Some(format!("fix failed: {e}")),
+    }
+
+    // Notify the sync backend (outside the home borrow).  When `fix_entry`
+    // renamed the file we also untrack the previous path.
+    if let Some(old) = renamed_from {
+        notify_file_deleted(app, &old);
+    }
+    if let Some(path) = updated_path {
+        notify_file_updated(app, &path);
+    }
+}
+
+// ── Journal-state lifecycle ────────────────────────────────────────────────
+
+/// Open the journal's [`JournalState`] (cache DB + retrieve DB + sync backend)
+/// and stash it in `app.journal_state` so the periodic-sync task can use it.
+/// Idempotent: re-opening for the same `journal_root` is a no-op.
+///
+/// On a successful transition (None → Some, or different journal → this one)
+/// kicks off an initial sync so the user gets fresh remote state immediately
+/// rather than waiting up to `sync_interval_minutes` for the first tick.
+fn ensure_journal_state(app: &mut App, journal_root: &std::path::Path) {
+    let already_open = {
+        let guard = app.journal_state.lock().unwrap();
+        guard
+            .as_ref()
+            .map(|s| s.journal.root.as_path() == journal_root)
+            .unwrap_or(false)
+    };
+    if already_open {
+        return;
+    }
+    let result = Journal::from_root(journal_root.to_path_buf())
+        .map_err(|e| e.to_string())
+        .and_then(|j| JournalState::open(j).map_err(|e| e.to_string()));
+    match result {
+        Ok(state) => {
+            *app.journal_state.lock().unwrap() = Some(state);
+            trigger_manual_sync(app);
+        }
+        Err(msg) => {
+            *app.journal_state.lock().unwrap() = None;
+            if let Some(home) = app.home.as_mut() {
+                home.error_msg = Some(format!("Failed to open journal state: {msg}"));
+            }
+        }
+    }
+}
+
+/// Notify the sync backend that `path` was created or modified.
+/// Failures are reported to the home error banner.
+fn notify_file_updated(app: &mut App, path: &std::path::Path) {
+    let result = {
+        let guard = app.journal_state.lock().unwrap();
+        guard.as_ref().map(|s| s.on_file_updated(path))
+    };
+    if let Some(Err(e)) = result {
+        if let Some(home) = app.home.as_mut() {
+            home.error_msg = Some(format!("Failed to stage file: {e}"));
+        }
+    }
+}
+
+/// Notify the sync backend that `path` was deleted.
+fn notify_file_deleted(app: &mut App, path: &std::path::Path) {
+    let result = {
+        let guard = app.journal_state.lock().unwrap();
+        guard.as_ref().map(|s| s.on_file_deleted(path))
+    };
+    if let Some(Err(e)) = result {
+        if let Some(home) = app.home.as_mut() {
+            home.error_msg = Some(format!("Failed to unstage file: {e}"));
+        }
     }
 }
 
@@ -853,6 +980,7 @@ fn draw_journal_switcher(app: &mut App, ui: &mut egui::Ui, current_id: Uuid) {
 
     let mut switch_to: Option<Uuid> = None;
     let mut go_manage = false;
+    let mut sync_now = false;
 
     let response = ui.menu_button(format!("{current_name} ▾"), |ui| {
         if !others.is_empty() {
@@ -865,6 +993,10 @@ fn draw_journal_switcher(app: &mut App, ui: &mut egui::Ui, current_id: Uuid) {
             }
             ui.separator();
         }
+        if ui.button("Sync now").clicked() {
+            sync_now = true;
+            ui.close();
+        }
         if ui.button("Manage Journals…").clicked() {
             go_manage = true;
             ui.close();
@@ -874,12 +1006,50 @@ fn draw_journal_switcher(app: &mut App, ui: &mut egui::Ui, current_id: Uuid) {
 
     if let Some(id) = switch_to {
         app.home = None;
+        *app.journal_state.lock().unwrap() = None;
         app.remember_last_opened(Some(id));
         app.screen = AppState::Home { journal_id: id };
     } else if go_manage {
         app.previous_journal_id = Some(current_id);
         app.screen = AppState::List;
+    } else if sync_now {
+        trigger_manual_sync(app);
     }
+}
+
+/// Run cache + git sync once, off-thread, and report success/failure via
+/// `AppEvent`.  Lets the user verify sync independently of the 10-minute
+/// periodic tick.
+fn trigger_manual_sync(app: &mut App) {
+    let state_arc = std::sync::Arc::clone(&app.journal_state);
+    let tx = app.event_tx.clone();
+    app.runtime.spawn(async move {
+        let result = tokio::task::spawn_blocking(move || {
+            let guard = state_arc.lock().unwrap();
+            let Some(state) = guard.as_ref() else {
+                return Err("no journal is open".to_string());
+            };
+            state.sync().map_err(|e| format!("cache sync: {e}"))?;
+            state.git_sync().map_err(|e| format!("git sync: {e}"))?;
+            Ok::<(), String>(())
+        })
+        .await;
+        match result {
+            Ok(Ok(())) => {
+                let _ = tx.send(crate::app::AppEvent::EntriesNeedReload);
+            }
+            Ok(Err(msg)) => {
+                let _ = tx.send(crate::app::AppEvent::Error(format!(
+                    "Sync failed: {msg}"
+                )));
+            }
+            Err(join_err) => {
+                let _ = tx.send(crate::app::AppEvent::Error(format!(
+                    "Sync task panicked: {join_err}"
+                )));
+            }
+        }
+    });
 }
 
 // ── Display helpers ─────────────────────────────────────────────────────────

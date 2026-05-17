@@ -28,7 +28,7 @@ fn main() -> eframe::Result<()> {
         Box::new(|cc| {
             fonts::install(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(App::new()))
+            Ok(Box::new(App::new(cc.egui_ctx.clone())))
         }),
     )
 }
