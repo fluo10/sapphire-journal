@@ -14,6 +14,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     egui::Panel::top("list_header").show_inside(ui, |ui| {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
+            if let Some(prev_id) = app.previous_journal_id {
+                if ui.button("← Back").clicked() {
+                    app.screen = AppState::Home { journal_id: prev_id };
+                    app.previous_journal_id = None;
+                    return;
+                }
+                ui.separator();
+            }
             ui.heading("Sapphire Journal");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Clone").clicked() && app.dialog.is_none() {
@@ -102,6 +110,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                         .add_enabled(reachable, egui::Button::new("Open"))
                                         .clicked();
                                     if open {
+                                        app.previous_journal_id = None;
+                                        app.remember_last_opened(Some(entry.id));
                                         app.screen = AppState::Home {
                                             journal_id: entry.id,
                                         };

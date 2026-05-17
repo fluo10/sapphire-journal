@@ -1,13 +1,16 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
+use grain_id::GrainId;
 use sapphire_journal_core::entry::EntryHeader;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::registry::{JournalRegistry, RegistryEntry};
 use crate::screens;
+use crate::settings::Settings;
 
 #[derive(Clone, PartialEq)]
 pub enum AppState {
@@ -68,9 +71,13 @@ pub enum AppEvent {
 pub struct App {
     pub screen: AppState,
     pub registry: JournalRegistry,
+    pub settings: Settings,
     pub dialog: Option<DialogState>,
     pub error_msg: Option<String>,
     pub home: Option<HomeState>,
+    /// When the user went to the journal-list screen from an open journal,
+    /// this records that journal so the list can offer a "back" button.
+    pub previous_journal_id: Option<Uuid>,
     pub runtime: Arc<tokio::runtime::Runtime>,
     pub event_tx: mpsc::UnboundedSender<AppEvent>,
     pub event_rx: mpsc::UnboundedReceiver<AppEvent>,
@@ -94,6 +101,15 @@ pub struct HomeState {
     /// Currently-selected entry, if any.
     pub selected_path: Option<PathBuf>,
     pub editor: Option<EditorState>,
+
+    /// Hierarchical (tree) or flat (list) display of entries.
+    pub view_mode: ViewMode,
+    /// IDs of tree nodes whose children are currently hidden.  Default open
+    /// (a node not in this set is expanded).
+    pub collapsed: HashSet<GrainId>,
+    /// Whether the period / sort / order pickers are visible. Toggled by
+    /// the funnel icon in the sidebar toolbar.  Search input stays visible.
+    pub show_filters: bool,
 
     // ── Sidebar filter / sort state ─────────────────────────────────────────
     pub filter_text: String,
@@ -121,6 +137,9 @@ impl HomeState {
             needs_reload: true,
             selected_path: None,
             editor: None,
+            view_mode: ViewMode::Tree,
+            collapsed: HashSet::new(),
+            show_filters: false,
             filter_text: String::new(),
             period: String::new(),
             sort_by: "updated_at".to_string(),
@@ -130,6 +149,15 @@ impl HomeState {
             info_msg: None,
         }
     }
+}
+
+/// How the entry sidebar should display entries.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    /// Hierarchical view following `parent_id` relationships.
+    Tree,
+    /// Flat list, ignoring hierarchy.
+    List,
 }
 
 /// Form fields for the entry currently being edited in the main panel.
@@ -161,15 +189,46 @@ impl App {
                 .expect("failed to start tokio runtime"),
         );
         let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let registry = JournalRegistry::load().unwrap_or_default();
+        let settings = Settings::load().unwrap_or_default();
+
+        // Resume into the previously-open journal when possible; otherwise
+        // fall back to the list screen as a first-run / picker fallback.
+        let (screen, home) = match settings
+            .last_opened_journal_id
+            .and_then(|id| registry.journals.iter().find(|e| e.id == id).cloned())
+            .filter(|entry| entry.storage_path.join(".sapphire-journal").is_dir())
+        {
+            Some(entry) => {
+                let id = entry.id;
+                (AppState::Home { journal_id: id }, Some(HomeState::new(entry)))
+            }
+            None => (AppState::List, None),
+        };
+
         Self {
-            screen: AppState::List,
-            registry: JournalRegistry::load().unwrap_or_default(),
+            screen,
+            registry,
+            settings,
             dialog: None,
             error_msg: None,
-            home: None,
+            home,
+            previous_journal_id: None,
             runtime,
             event_tx,
             event_rx,
+        }
+    }
+
+    /// Update `settings.last_opened_journal_id` and persist immediately.
+    /// Errors fall into `self.error_msg`.
+    pub fn remember_last_opened(&mut self, id: Option<Uuid>) {
+        if self.settings.last_opened_journal_id == id {
+            return;
+        }
+        self.settings.last_opened_journal_id = id;
+        if let Err(e) = self.settings.save() {
+            self.error_msg = Some(format!("Failed to save settings: {e}"));
         }
     }
 

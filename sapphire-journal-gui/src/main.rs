@@ -6,8 +6,10 @@ mod app;
 mod dialogs;
 mod error;
 mod fonts;
+mod icons;
 mod registry;
 mod screens;
+mod settings;
 
 use app::App;
 
@@ -25,6 +27,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| {
             fonts::install(&cc.egui_ctx);
+            egui_extras::install_image_loaders(&cc.egui_ctx);
             Ok(Box::new(App::new()))
         }),
     )

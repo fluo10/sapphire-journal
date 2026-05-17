@@ -1,28 +1,33 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use eframe::egui;
+use grain_id::GrainId;
 use uuid::Uuid;
 
 use sapphire_journal_core::{
     entry::EntryHeader,
     journal::Journal,
-    labels::EntryFlag,
     ops::{
-        EntryFilter, FieldSelector, SortField as CoreSortField, SortOrder as CoreSortOrder,
-        fix_entry, prepare_new_entry, remove_entry,
+        EntryFilter, EntryTreeNode, FieldSelector, SortField as CoreSortField,
+        SortOrder as CoreSortOrder, build_entry_tree, fix_entry, prepare_new_entry, remove_entry,
     },
     parser::{read_entry, write_entry},
     period::parse_period,
 };
 
-use crate::app::{App, AppState, EditorState, HomeState};
+use crate::app::{App, AppState, EditorState, HomeState, ViewMode};
+use crate::icons;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui, journal_id: Uuid) {
     // ── Ensure HomeState matches the requested journal ────────────────────
     let needs_init = app.home.as_ref().map(|h| h.journal_id) != Some(journal_id);
     if needs_init {
         match app.registry.journals.iter().find(|e| e.id == journal_id).cloned() {
-            Some(entry) => app.home = Some(HomeState::new(entry)),
+            Some(entry) => {
+                app.home = Some(HomeState::new(entry));
+                app.remember_last_opened(Some(journal_id));
+            }
             None => {
                 app.home = None;
                 show_journal_missing(app, ui);
@@ -44,13 +49,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, journal_id: Uuid) {
         .show_inside(ui, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.button("← Back").clicked() {
-                    app.home = None;
-                    app.screen = AppState::List;
-                }
+                draw_journal_switcher(app, ui, journal_id);
                 if let Some(home) = &app.home {
-                    ui.separator();
-                    ui.strong(&home.journal_name);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.small(home.journal_root.display().to_string());
                     });
@@ -116,10 +116,10 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
         None => return,
     };
 
-    // Toolbar: New Entry + Refresh
+    // Toolbar: New Entry + Refresh + view mode toggle
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        if ui.button("+ New Entry").clicked() {
+        if icon_text_btn(ui, icons::plus(), "New Entry").clicked() {
             match Journal::from_root(home.journal_root.clone()) {
                 Ok(journal) => match prepare_new_entry(&journal, None) {
                     Ok(path) => {
@@ -138,9 +138,30 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
                 Err(e) => home.error_msg = Some(e.to_string()),
             }
         }
-        if ui.button("⟳").on_hover_text("Refresh entry list").clicked() {
+        if icon_btn(ui, icons::refresh(), "Refresh entry list").clicked() {
             home.needs_reload = true;
         }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Show the icon for the *other* mode (i.e. what clicking would switch to).
+            let (icon, tooltip) = match home.view_mode {
+                ViewMode::Tree => (icons::list_view(), "Switch to list view"),
+                ViewMode::List => (icons::tree_view(), "Switch to tree view"),
+            };
+            if icon_btn(ui, icon, tooltip).clicked() {
+                home.view_mode = match home.view_mode {
+                    ViewMode::Tree => ViewMode::List,
+                    ViewMode::List => ViewMode::Tree,
+                };
+            }
+            let filters_tooltip = if home.show_filters {
+                "Hide filters"
+            } else {
+                "Show filters"
+            };
+            if icon_toggle_btn(ui, icons::funnel(), home.show_filters, filters_tooltip).clicked() {
+                home.show_filters = !home.show_filters;
+            }
+        });
     });
     ui.add_space(4.0);
 
@@ -162,43 +183,45 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
             .desired_width(f32::INFINITY),
     );
 
-    ui.add_space(6.0);
+    if home.show_filters {
+        ui.add_space(6.0);
 
-    // Filters: period + sort
-    ui.label("Period");
-    egui::ComboBox::from_id_salt("home_period")
-        .selected_text(period_label(&home.period))
-        .width(ui.available_width())
-        .show_ui(ui, |ui| {
-            for (value, label) in PERIOD_OPTIONS {
-                ui.selectable_value(&mut home.period, (*value).to_string(), *label);
-            }
-        });
+        // Filters: period + sort
+        ui.label("Period");
+        egui::ComboBox::from_id_salt("home_period")
+            .selected_text(period_label(&home.period))
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                for (value, label) in PERIOD_OPTIONS {
+                    ui.selectable_value(&mut home.period, (*value).to_string(), *label);
+                }
+            });
 
-    ui.add_space(4.0);
-    ui.label("Sort by");
-    egui::ComboBox::from_id_salt("home_sort_by")
-        .selected_text(sort_label(&home.sort_by))
-        .width(ui.available_width())
-        .show_ui(ui, |ui| {
-            for (value, label) in SORT_OPTIONS {
-                ui.selectable_value(&mut home.sort_by, (*value).to_string(), *label);
-            }
-        });
+        ui.add_space(4.0);
+        ui.label("Sort by");
+        egui::ComboBox::from_id_salt("home_sort_by")
+            .selected_text(sort_label(&home.sort_by))
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                for (value, label) in SORT_OPTIONS {
+                    ui.selectable_value(&mut home.sort_by, (*value).to_string(), *label);
+                }
+            });
 
-    ui.add_space(4.0);
-    ui.label("Order");
-    egui::ComboBox::from_id_salt("home_sort_order")
-        .selected_text(if home.sort_order == "asc" {
-            "Ascending"
-        } else {
-            "Descending"
-        })
-        .width(ui.available_width())
-        .show_ui(ui, |ui| {
-            ui.selectable_value(&mut home.sort_order, "desc".to_string(), "Descending");
-            ui.selectable_value(&mut home.sort_order, "asc".to_string(), "Ascending");
-        });
+        ui.add_space(4.0);
+        ui.label("Order");
+        egui::ComboBox::from_id_salt("home_sort_order")
+            .selected_text(if home.sort_order == "asc" {
+                "Ascending"
+            } else {
+                "Descending"
+            })
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut home.sort_order, "desc".to_string(), "Descending");
+                ui.selectable_value(&mut home.sort_order, "asc".to_string(), "Ascending");
+            });
+    }
 
     ui.add_space(6.0);
     ui.separator();
@@ -219,11 +242,27 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
         .auto_shrink([false; 2])
         .show(ui, |ui| {
             let mut want_select: Option<PathBuf> = None;
-            for header in &filtered {
-                let path = PathBuf::from(header.path.clone());
-                let is_active = home.selected_path.as_ref() == Some(&path);
-                if draw_entry_row(ui, header, is_active).clicked() {
-                    want_select = Some(path);
+            match home.view_mode {
+                ViewMode::List => {
+                    for header in &filtered {
+                        let path = PathBuf::from(header.path.clone());
+                        let is_active = home.selected_path.as_ref() == Some(&path);
+                        if draw_entry_row(ui, header, is_active).clicked() {
+                            want_select = Some(path);
+                        }
+                    }
+                }
+                ViewMode::Tree => {
+                    let pairs = filtered.into_iter().map(|h| (h, Vec::new())).collect();
+                    let tree = build_entry_tree(pairs);
+                    draw_tree(
+                        ui,
+                        &tree,
+                        0,
+                        &mut home.collapsed,
+                        &home.selected_path,
+                        &mut want_select,
+                    );
                 }
             }
             if let Some(path) = want_select {
@@ -242,6 +281,57 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
+fn draw_tree(
+    ui: &mut egui::Ui,
+    nodes: &[EntryTreeNode],
+    depth: usize,
+    collapsed: &mut HashSet<GrainId>,
+    selected: &Option<PathBuf>,
+    want_select: &mut Option<PathBuf>,
+) {
+    for node in nodes {
+        let id = node.entry.frontmatter.id;
+        let has_children = !node.children.is_empty();
+        let is_collapsed = collapsed.contains(&id);
+        let path = PathBuf::from(node.entry.path.clone());
+        let is_active = selected.as_ref() == Some(&path);
+
+        let row = ui
+            .horizontal(|ui| {
+                // Indent + collapse toggle (or spacer for leaves). The toggle
+                // and spacer use identical exact widths so parent rows and leaf
+                // rows align at the same indent.
+                ui.add_space(depth as f32 * 12.0);
+                if has_children {
+                    let icon = if is_collapsed {
+                        icons::chevron_right()
+                    } else {
+                        icons::chevron_down()
+                    };
+                    if tree_toggle(ui, icon).clicked() {
+                        if is_collapsed {
+                            collapsed.remove(&id);
+                        } else {
+                            collapsed.insert(id);
+                        }
+                    }
+                } else {
+                    ui.add_space(TREE_TOGGLE_SIZE);
+                }
+                draw_entry_row(ui, &node.entry, is_active)
+            })
+            .inner;
+
+        if row.clicked() {
+            *want_select = Some(path);
+        }
+
+        if has_children && !is_collapsed {
+            draw_tree(ui, &node.children, depth + 1, collapsed, selected, want_select);
+        }
+    }
+}
+
 fn draw_entry_row(
     ui: &mut egui::Ui,
     header: &EntryHeader,
@@ -252,12 +342,6 @@ fn draw_entry_row(
     } else {
         header.title().to_string()
     };
-    let flags: String = header
-        .flags
-        .iter()
-        .map(|f| flag_glyph(*f))
-        .collect::<Vec<_>>()
-        .join(" ");
     let id_str = header.id().to_string();
     let tags_str = if header.frontmatter.tags.is_empty() {
         String::new()
@@ -284,8 +368,14 @@ fn draw_entry_row(
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
-                    if !flags.is_empty() {
-                        ui.label(&flags);
+                    let tint = ui.visuals().text_color();
+                    for &flag in &header.flags {
+                        ui.add(
+                            egui::Image::new(icons::flag_icon(flag))
+                                .fit_to_exact_size(egui::vec2(14.0, 14.0))
+                                .tint(tint),
+                        )
+                        .on_hover_text(flag.as_str());
                     }
                     ui.add(egui::Label::new(egui::RichText::new(&title).strong()).truncate());
                 });
@@ -338,7 +428,7 @@ fn draw_editor_panel(app: &mut App, ui: &mut egui::Ui) {
                 if ui.button("Save").clicked() {
                     do_save = true;
                 }
-                if ui.button("Delete").clicked() {
+                if icon_text_btn(ui, icons::trash(), "Delete").clicked() {
                     do_request_delete = true;
                 }
             });
@@ -742,10 +832,115 @@ fn save_current_entry(home: &mut HomeState) {
     }
 }
 
+// ── Journal switcher ────────────────────────────────────────────────────────
+
+/// Top-left "current journal" dropdown.  Shows other registered journals as
+/// clickable switch targets and a "Manage Journals…" entry that drops back to
+/// the list screen for create / clone / delete actions.
+fn draw_journal_switcher(app: &mut App, ui: &mut egui::Ui, current_id: Uuid) {
+    let current_name = app
+        .home
+        .as_ref()
+        .map(|h| h.journal_name.clone())
+        .unwrap_or_else(|| "Journal".to_string());
+    let others: Vec<(Uuid, String)> = app
+        .registry
+        .journals
+        .iter()
+        .filter(|e| e.id != current_id)
+        .map(|e| (e.id, e.name.clone()))
+        .collect();
+
+    let mut switch_to: Option<Uuid> = None;
+    let mut go_manage = false;
+
+    let response = ui.menu_button(format!("{current_name} ▾"), |ui| {
+        if !others.is_empty() {
+            ui.label("Other journals");
+            for (id, name) in &others {
+                if ui.button(name).clicked() {
+                    switch_to = Some(*id);
+                    ui.close();
+                }
+            }
+            ui.separator();
+        }
+        if ui.button("Manage Journals…").clicked() {
+            go_manage = true;
+            ui.close();
+        }
+    });
+    response.response.on_hover_text("Switch journal");
+
+    if let Some(id) = switch_to {
+        app.home = None;
+        app.remember_last_opened(Some(id));
+        app.screen = AppState::Home { journal_id: id };
+    } else if go_manage {
+        app.previous_journal_id = Some(current_id);
+        app.screen = AppState::List;
+    }
+}
+
 // ── Display helpers ─────────────────────────────────────────────────────────
 
-fn flag_glyph(flag: EntryFlag) -> &'static str {
-    flag.to_emoji()
+/// Square icon-only button (16×16) with a tooltip.
+fn icon_btn(
+    ui: &mut egui::Ui,
+    src: egui::ImageSource<'static>,
+    tooltip: &str,
+) -> egui::Response {
+    let tint = ui.visuals().text_color();
+    let img = egui::Image::new(src)
+        .fit_to_exact_size(egui::vec2(16.0, 16.0))
+        .tint(tint);
+    ui.add(egui::Button::image(img)).on_hover_text(tooltip)
+}
+
+/// Toggleable icon button — renders with a pressed/highlighted background
+/// when `active` is true.
+fn icon_toggle_btn(
+    ui: &mut egui::Ui,
+    src: egui::ImageSource<'static>,
+    active: bool,
+    tooltip: &str,
+) -> egui::Response {
+    let tint = ui.visuals().text_color();
+    let img = egui::Image::new(src)
+        .fit_to_exact_size(egui::vec2(16.0, 16.0))
+        .tint(tint);
+    ui.add(egui::Button::image(img).selected(active))
+        .on_hover_text(tooltip)
+}
+
+/// Icon + text button (14×14 icon to align with the label height).
+fn icon_text_btn(
+    ui: &mut egui::Ui,
+    src: egui::ImageSource<'static>,
+    text: &str,
+) -> egui::Response {
+    let tint = ui.visuals().text_color();
+    let img = egui::Image::new(src)
+        .fit_to_exact_size(egui::vec2(14.0, 14.0))
+        .tint(tint);
+    ui.add(egui::Button::image_and_text(img, text))
+}
+
+/// Exact width reserved for the tree expand/collapse toggle (and the
+/// matching leaf spacer).  Kept narrow so titles align with leaf rows.
+const TREE_TOGGLE_SIZE: f32 = 14.0;
+
+/// Frameless expand/collapse triangle for tree rows.  Matches `TREE_TOGGLE_SIZE`
+/// exactly so leaf rows (which insert a spacer of the same width) stay aligned.
+fn tree_toggle(ui: &mut egui::Ui, src: egui::ImageSource<'static>) -> egui::Response {
+    let tint = ui.visuals().weak_text_color();
+    let img = egui::Image::new(src)
+        .fit_to_exact_size(egui::vec2(TREE_TOGGLE_SIZE, TREE_TOGGLE_SIZE))
+        .tint(tint);
+    ui.add_sized(
+        [TREE_TOGGLE_SIZE, TREE_TOGGLE_SIZE],
+        egui::Button::image(img).frame(false),
+    )
 }
 
 const PERIOD_OPTIONS: &[(&str, &str)] = &[
