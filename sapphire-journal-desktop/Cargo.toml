@@ -1,5 +1,5 @@
 [package]
-name = "sapphire-journal-gui"
+name = "sapphire-journal-desktop"
 version = "0.0.0"
 authors = ["fluo10 <fluo10.dev@fireturtle.net>"]
 edition.workspace = true

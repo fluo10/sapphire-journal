@@ -81,7 +81,7 @@ jobs:
         working-directory: sapphire-journal-vscode
 
       - name: Build CLI binary
-        run: cargo build --release -p sapphire-journal
+        run: cargo build --release -p sapphire-journal-cli
 
       - name: Stage CLI binary (Unix)
         if: runner.os != 'Windows'
