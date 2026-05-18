@@ -2,14 +2,15 @@ use anyhow::{bail, Context, Result};
 use sapphire_journal_core::{
     cache,
     entry_ref::EntryRef,
-    journal::Journal,
     labels::EntryFlag,
-    ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryListItem, EntryTreeNode, FieldSelector, MatchFlag, SortField, SortOrder, UpdateOption},
-    period::{parse_datetime, parse_datetime_end, parse_period},
+    ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryListItem, EntryTreeNode, MatchFlag, UpdateOption},
+    period::{parse_datetime, parse_datetime_end},
     user_config::UserConfig,
     JournalState,
 };
 use sapphire_journal_core::{FtsQuery, VectorQuery};
+
+use crate::shared;
 
 use chrono::NaiveDateTime;
 use clap::{Args, Subcommand};
@@ -97,28 +98,26 @@ fn build_filter(args: &EntryFilterArgs) -> Result<EntryFilter> {
              or pass `--all-periods` to show all entries"
         );
     }
-    let parse = |s: &str| parse_period(s).map_err(anyhow::Error::msg);
-    Ok(EntryFilter {
-        period: args.period.as_deref().map(parse).transpose()?,
-        fields: {
-            let base = if args.active { FieldSelector::active() } else { FieldSelector::default() };
-            FieldSelector {
-                task_overdue:     base.task_overdue     || args.task_overdue,
-                task_in_progress: base.task_in_progress || args.task_in_progress,
-                task_unstarted:   base.task_unstarted   || args.task_unstarted,
-                event_span:       base.event_span       || args.event_span,
-                created_at:       base.created_at       || args.created_at,
-                updated_at:       base.updated_at       || args.updated_at,
-            }
-        },
-        task_status: args.task_status.clone().unwrap_or_default(),
-        tags: args.tags.clone().unwrap_or_default(),
-        sort_by: args.sort_by.as_deref()
-            .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
-            .transpose()?
-            .unwrap_or_default(),
-        sort_order: args.sort_order.parse::<SortOrder>().map_err(anyhow::Error::msg)?,
-    })
+    shared::filter::build_filter(shared::filter::FilterInputs::from(args))
+}
+
+impl<'a> From<&'a EntryFilterArgs> for shared::filter::FilterInputs<'a> {
+    fn from(a: &'a EntryFilterArgs) -> Self {
+        Self {
+            period: a.period.as_deref(),
+            active: a.active,
+            task_overdue: a.task_overdue,
+            task_in_progress: a.task_in_progress,
+            task_unstarted: a.task_unstarted,
+            event_span: a.event_span,
+            created_at: a.created_at,
+            updated_at: a.updated_at,
+            task_status: a.task_status.as_deref().unwrap_or(&[]),
+            tags: a.tags.as_deref().unwrap_or(&[]),
+            sort_by: a.sort_by.as_deref(),
+            sort_order: Some(a.sort_order.as_str()),
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -312,7 +311,7 @@ impl From<EntryFields> for CoreEntryFields {
 }
 
 pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
-    let state = open_state(journal_dir)?;
+    let state = shared::state::open_state(journal_dir)?;
 
     match cmd {
         EntryCommand::List { filter: filter_args, json, emoji, nerd } => {
@@ -359,16 +358,6 @@ pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
             search(&state, &query, semantic, limit)
         }
     }
-}
-
-fn open_state(journal_dir: Option<&Path>) -> Result<JournalState> {
-    let journal = match journal_dir {
-        Some(dir) => Journal::from_root(dir.to_path_buf())
-            .context("not a sapphire-journal — run `sapphire-journal init` to initialize one"),
-        None => Journal::find()
-            .context("not in a sapphire-journal — run `sapphire-journal init` to initialize one"),
-    }?;
-    JournalState::open(journal).map_err(Into::into)
 }
 
 fn resolve_entry(state: &JournalState, entry: &str) -> Result<PathBuf> {
@@ -544,6 +533,7 @@ fn new(state: &JournalState, fields: EntryFields) -> Result<()> {
     if let Ok(conn) = state.open_conn() {
         let _ = cache::upsert_entry_from_path(&conn, &dest, state.retrieve_db());
     }
+    let _ = state.on_file_updated(&dest);
     println!("created: {}", dest.display());
     Ok(())
 }
@@ -562,13 +552,18 @@ fn edit(path: &Path, state: &JournalState) -> Result<()> {
     if !status.success() {
         bail!("editor exited with non-zero status");
     }
-    let final_path = match ops::fix_entry(path)? {
-        Some(new_path) => { println!("updated: {}", new_path.display()); new_path }
+    let renamed = ops::fix_entry(path)?;
+    let final_path = match &renamed {
+        Some(new_path) => { println!("updated: {}", new_path.display()); new_path.clone() }
         None           => { println!("updated: {}", path.display()); path.to_path_buf() }
     };
     if let Ok(conn) = state.open_conn() {
         let _ = cache::upsert_entry_from_path(&conn, &final_path, state.retrieve_db());
     }
+    if renamed.is_some() {
+        let _ = state.on_file_deleted(path);
+    }
+    let _ = state.on_file_updated(&final_path);
     Ok(())
 }
 
@@ -585,13 +580,18 @@ fn edit_new(state: &JournalState) -> Result<()> {
         bail!("editor exited with non-zero status");
     }
 
-    let final_path = match ops::fix_entry(&path)? {
-        Some(new_path) => { println!("created: {}", new_path.display()); new_path }
-        None           => { println!("created: {}", path.display()); path }
+    let renamed = ops::fix_entry(&path)?;
+    let final_path = match &renamed {
+        Some(new_path) => { println!("created: {}", new_path.display()); new_path.clone() }
+        None           => { println!("created: {}", path.display()); path.clone() }
     };
     if let Ok(conn) = state.open_conn() {
         let _ = cache::upsert_entry_from_path(&conn, &final_path, state.retrieve_db());
     }
+    if renamed.is_some() {
+        let _ = state.on_file_deleted(&path);
+    }
+    let _ = state.on_file_updated(&final_path);
     Ok(())
 }
 
@@ -620,11 +620,14 @@ fn set(state: &JournalState, path: &Path, fields: EntryFields, no_parent: bool) 
         core_fields.parent = UpdateOption::Clear;
     }
     let new_path_opt = ops::update_entry(path, &conn, core_fields)?;
-    let final_path = new_path_opt.as_deref().unwrap_or(path);
-    let _ = cache::upsert_entry_from_path(&conn, final_path, state.retrieve_db());
     if let Some(new_path) = new_path_opt {
+        let _ = cache::upsert_entry_from_path(&conn, &new_path, state.retrieve_db());
+        let _ = state.on_file_deleted(path);
+        let _ = state.on_file_updated(&new_path);
         println!("updated and renamed: {}", new_path.display());
     } else {
+        let _ = cache::upsert_entry_from_path(&conn, path, state.retrieve_db());
+        let _ = state.on_file_updated(path);
         println!("updated: {}", path.display());
     }
     Ok(())
@@ -650,12 +653,22 @@ fn check(state: &JournalState, entry: &str) -> Result<()> {
 fn fix(state: &JournalState, entry: &str) -> Result<()> {
     let path = resolve_entry(state, entry)?;
     match ops::fix_entry(&path)? {
-        Some(new_path) => println!(
-            "renamed: {} → {}",
-            path.file_name().unwrap_or_default().to_string_lossy(),
-            new_path.file_name().unwrap_or_default().to_string_lossy(),
-        ),
-        None => println!("ok: {} (already correct)", path.display()),
+        Some(new_path) => {
+            if let Ok(conn) = state.open_conn() {
+                let _ = cache::upsert_entry_from_path(&conn, &new_path, state.retrieve_db());
+            }
+            let _ = state.on_file_deleted(&path);
+            let _ = state.on_file_updated(&new_path);
+            println!(
+                "renamed: {} → {}",
+                path.file_name().unwrap_or_default().to_string_lossy(),
+                new_path.file_name().unwrap_or_default().to_string_lossy(),
+            );
+        }
+        None => {
+            let _ = state.on_file_updated(&path);
+            println!("ok: {} (already correct)", path.display());
+        }
     }
     Ok(())
 }
@@ -690,6 +703,7 @@ fn remove(state: &JournalState, entry: &str) -> Result<()> {
     if let Ok(conn) = state.open_conn() {
         let _ = cache::remove_from_cache(&conn, &path, state.retrieve_db());
     }
+    let _ = state.on_file_deleted(&path);
     println!("removed: {}", path.display());
     Ok(())
 }
@@ -699,15 +713,22 @@ fn remove(state: &JournalState, entry: &str) -> Result<()> {
 fn search(state: &JournalState, query: &str, semantic: bool, limit: usize) -> Result<()> {
     if semantic {
         // ── vector similarity search ──────────────────────────────────────────
+        state.sync()?;
         let user_cfg = UserConfig::load()?;
-        state.load_retrieve_backend(&user_cfg).map_err(anyhow::Error::msg)?;
-        state.load_embedder(&user_cfg).map_err(anyhow::Error::msg)?;
+        shared::state::bootstrap_embedder(state, &user_cfg)?;
         let embedder = state.embedder().ok_or_else(|| {
             anyhow::anyhow!(
                 "[cache.embedding] is required in ~/.config/sapphire-journal/config.toml \
                  for semantic search"
             )
         })?;
+
+        let pending = state.retrieve_db().vec_info()
+            .map(|vi| vi.pending_count)
+            .unwrap_or(0);
+        if pending > 0 && pending <= 50 {
+            let _ = state.retrieve_db().embed_pending(embedder, |_, _| {});
+        }
 
         let q = VectorQuery::new(query, embedder).limit(limit);
         let results = state.retrieve_db().search_similar(&q)
