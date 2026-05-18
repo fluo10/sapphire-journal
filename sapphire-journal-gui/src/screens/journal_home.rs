@@ -8,10 +8,12 @@ use uuid::Uuid;
 use sapphire_journal_core::{
     JournalState,
     entry::EntryHeader,
+    entry_ref::EntryRef,
     journal::Journal,
     ops::{
-        EntryFilter, EntryTreeNode, FieldSelector, SortField as CoreSortField,
-        SortOrder as CoreSortOrder, build_entry_tree, fix_entry, prepare_new_entry, remove_entry,
+        EntryFields, EntryFilter, EntryTreeNode, FieldSelector, SortField as CoreSortField,
+        SortOrder as CoreSortOrder, UpdateOption, build_entry_tree, fix_entry, prepare_new_entry,
+        remove_entry, update_entry,
     },
     parser::{read_entry, write_entry},
     period::parse_period,
@@ -253,6 +255,7 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
 
+    let mut reparent_action: Option<(PathBuf, Option<GrainId>)> = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
@@ -268,6 +271,8 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
                 ViewMode::Tree => {
+                    // Root drop zone: dropping above the first row clears `parent_id`.
+                    draw_root_drop_zone(ui, &home.entries, &mut reparent_action);
                     let pairs = filtered.into_iter().map(|h| (h, Vec::new())).collect();
                     let tree = build_entry_tree(pairs);
                     draw_tree(
@@ -277,6 +282,8 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
                         &mut home.collapsed,
                         &home.selected_path,
                         &mut want_select,
+                        &home.entries,
+                        &mut reparent_action,
                     );
                 }
             }
@@ -300,6 +307,9 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
     if let Some(path) = new_entry_path {
         notify_file_updated(app, &path);
     }
+    if let Some((source_path, new_parent)) = reparent_action {
+        apply_reparent(app, source_path, new_parent);
+    }
 }
 
 fn draw_tree(
@@ -309,6 +319,8 @@ fn draw_tree(
     collapsed: &mut HashSet<GrainId>,
     selected: &Option<PathBuf>,
     want_select: &mut Option<PathBuf>,
+    entries: &[EntryHeader],
+    reparent: &mut Option<(PathBuf, Option<GrainId>)>,
 ) {
     for node in nodes {
         let id = node.entry.frontmatter.id;
@@ -319,9 +331,10 @@ fn draw_tree(
 
         let row = ui
             .horizontal(|ui| {
-                // Indent + collapse toggle (or spacer for leaves). The toggle
-                // and spacer use identical exact widths so parent rows and leaf
-                // rows align at the same indent.
+                // Indent + collapse toggle (or spacer for leaves). The spacer
+                // is allocated as a widget (not raw `add_space`) so the same
+                // `item_spacing.x` is inserted on each side as for the chevron
+                // button — keeping leaf rows aligned with parent rows.
                 ui.add_space(depth as f32 * 12.0);
                 if has_children {
                     let icon = if is_collapsed {
@@ -337,20 +350,196 @@ fn draw_tree(
                         }
                     }
                 } else {
-                    ui.add_space(TREE_TOGGLE_SIZE);
+                    ui.allocate_exact_size(
+                        egui::vec2(TREE_TOGGLE_SIZE, TREE_TOGGLE_SIZE),
+                        egui::Sense::hover(),
+                    );
                 }
-                draw_entry_row(ui, &node.entry, is_active)
+                let dnd_id = egui::Id::new(("entry_dnd", id));
+                // dnd_drag_source returns an InnerResponse where `.inner` carries
+                // the row's click-sense response and `.response` carries the
+                // drag-sense + drop-detection response. Union both so the row
+                // remains clickable for selection AND acts as a drop target.
+                let dnd = ui.dnd_drag_source(dnd_id, id, |ui| {
+                    draw_entry_row(ui, &node.entry, is_active)
+                });
+                dnd.inner | dnd.response
             })
             .inner;
 
         if row.clicked() {
-            *want_select = Some(path);
+            *want_select = Some(path.clone());
+        }
+
+        // ── drag-and-drop drop target ────────────────────────────────────
+        // Highlight the row when something is being dragged over it.
+        if let Some(payload) = row.dnd_hover_payload::<GrainId>() {
+            let src = *payload;
+            let would_be_cycle = is_descendant_or_self(entries, src, id);
+            let stroke = if would_be_cycle {
+                egui::Stroke::new(1.5, egui::Color32::DARK_RED)
+            } else {
+                egui::Stroke::new(1.5, ui.visuals().selection.bg_fill)
+            };
+            ui.painter()
+                .rect_stroke(row.rect, 4.0, stroke, egui::StrokeKind::Inside);
+        }
+        if let Some(payload) = row.dnd_release_payload::<GrainId>() {
+            let src = *payload;
+            if src != id && !is_descendant_or_self(entries, src, id) {
+                if let Some(header) = entries.iter().find(|e| e.frontmatter.id == src) {
+                    // Only act when the parent actually changes.
+                    if header.frontmatter.parent_id != Some(id) {
+                        *reparent = Some((PathBuf::from(header.path.clone()), Some(id)));
+                    }
+                }
+            }
         }
 
         if has_children && !is_collapsed {
-            draw_tree(ui, &node.children, depth + 1, collapsed, selected, want_select);
+            draw_tree(
+                ui,
+                &node.children,
+                depth + 1,
+                collapsed,
+                selected,
+                want_select,
+                entries,
+                reparent,
+            );
         }
     }
+}
+
+/// Returns `true` if `candidate` is `ancestor` itself, or any descendant of
+/// `ancestor`, by walking the `parent_id` chain on `candidate`.  Used to
+/// prevent the user from dropping an entry into its own subtree.
+fn is_descendant_or_self(
+    entries: &[EntryHeader],
+    ancestor: GrainId,
+    candidate: GrainId,
+) -> bool {
+    if candidate == ancestor {
+        return true;
+    }
+    let mut current = candidate;
+    let mut seen: HashSet<GrainId> = HashSet::new();
+    loop {
+        if !seen.insert(current) {
+            return false;
+        }
+        let entry = match entries.iter().find(|e| e.frontmatter.id == current) {
+            Some(e) => e,
+            None => return false,
+        };
+        match entry.frontmatter.parent_id {
+            Some(pid) if pid == ancestor => return true,
+            Some(pid) => current = pid,
+            None => return false,
+        }
+    }
+}
+
+/// Thin strip at the top of the tree that accepts drops to clear `parent_id`
+/// (make the entry top-level).  Only renders visibly when a drag is in
+/// progress, so it doesn't add chrome the rest of the time.
+fn draw_root_drop_zone(
+    ui: &mut egui::Ui,
+    entries: &[EntryHeader],
+    reparent: &mut Option<(PathBuf, Option<GrainId>)>,
+) {
+    let is_dragging = egui::DragAndDrop::has_payload_of_type::<GrainId>(ui.ctx());
+    if !is_dragging {
+        return;
+    }
+    let (rect, resp) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 20.0),
+        egui::Sense::hover(),
+    );
+    let visuals = ui.visuals();
+    let is_hover = resp.contains_pointer();
+    let bg = if is_hover {
+        visuals.selection.bg_fill
+    } else {
+        visuals.widgets.inactive.bg_fill
+    };
+    ui.painter().rect_filled(rect, 4.0, bg);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "Drop here for top level",
+        egui::FontId::proportional(11.0),
+        visuals.text_color(),
+    );
+    if let Some(payload) = resp.dnd_release_payload::<GrainId>() {
+        let src = *payload;
+        if let Some(header) = entries.iter().find(|e| e.frontmatter.id == src) {
+            if header.frontmatter.parent_id.is_some() {
+                *reparent = Some((PathBuf::from(header.path.clone()), None));
+            }
+        }
+    }
+}
+
+/// Apply a drag-and-drop reparenting action: rewrite the source entry's
+/// `parent_id` via [`update_entry`], update any path rename, and notify the
+/// sync backend.  Runs outside the `home` borrow so it can take `&mut App`.
+fn apply_reparent(app: &mut App, source_path: PathBuf, new_parent: Option<GrainId>) {
+    let conn_result = {
+        let guard = app.journal_state.lock().unwrap();
+        guard.as_ref().map(|s| s.open_conn())
+    };
+    let conn = match conn_result {
+        Some(Ok(c)) => c,
+        Some(Err(e)) => {
+            if let Some(home) = app.home.as_mut() {
+                home.error_msg = Some(format!("Failed to open cache: {e}"));
+            }
+            return;
+        }
+        None => {
+            if let Some(home) = app.home.as_mut() {
+                home.error_msg = Some("No journal is open".to_string());
+            }
+            return;
+        }
+    };
+
+    let parent_field = match new_parent {
+        Some(id) => UpdateOption::Set(EntryRef::Id(id)),
+        None => UpdateOption::Clear,
+    };
+    let fields = EntryFields {
+        parent: parent_field,
+        ..Default::default()
+    };
+
+    let renamed = match update_entry(&source_path, &conn, fields) {
+        Ok(maybe_new) => maybe_new,
+        Err(e) => {
+            if let Some(home) = app.home.as_mut() {
+                home.error_msg = Some(format!("Reparent failed: {e}"));
+            }
+            return;
+        }
+    };
+    drop(conn);
+
+    let final_path = renamed.clone().unwrap_or_else(|| source_path.clone());
+    // Track selection if it moved with the rename.
+    if let Some(home) = app.home.as_mut() {
+        if home.selected_path.as_deref() == Some(source_path.as_path()) {
+            home.selected_path = Some(final_path.clone());
+        }
+        home.needs_reload = true;
+        home.info_msg = Some("Reparented.".to_string());
+    }
+    if let Some(new_path) = renamed.as_ref() {
+        if new_path != &source_path {
+            notify_file_deleted(app, &source_path);
+        }
+    }
+    notify_file_updated(app, &final_path);
 }
 
 fn draw_entry_row(
