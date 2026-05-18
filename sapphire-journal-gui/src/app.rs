@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::registry::{JournalRegistry, RegistryEntry};
 use crate::screens;
+use crate::screens::settings_panel::SettingsPanelState;
 use crate::settings::Settings;
 
 #[derive(Clone, PartialEq)]
@@ -86,6 +87,9 @@ pub struct App {
     /// optional git-sync backend).  `None` when no journal is open.  Shared
     /// with the background-sync tokio task, hence `Arc<Mutex<…>>`.
     pub journal_state: Arc<Mutex<Option<JournalState>>>,
+    /// When `Some`, the Settings window is shown on top of the current
+    /// screen.  Opened from the journal switcher menu.
+    pub settings_panel: Option<SettingsPanelState>,
     pub runtime: Arc<tokio::runtime::Runtime>,
     pub event_tx: mpsc::UnboundedSender<AppEvent>,
     pub event_rx: mpsc::UnboundedReceiver<AppEvent>,
@@ -266,6 +270,7 @@ impl App {
             home,
             previous_journal_id: None,
             journal_state,
+            settings_panel: None,
             runtime,
             event_tx,
             event_rx,

@@ -99,6 +99,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, journal_id: Uuid) {
         let ctx = ui.ctx().clone();
         draw_confirm_delete_entry(app, &ctx);
     }
+
+    // Settings panel (opened from the journal-switcher menu)
+    if app.settings_panel.is_some() {
+        let ctx = ui.ctx().clone();
+        crate::screens::settings_panel::show(app, &ctx);
+    }
 }
 
 // ── Helpers: missing journal ────────────────────────────────────────────────
@@ -1170,6 +1176,7 @@ fn draw_journal_switcher(app: &mut App, ui: &mut egui::Ui, current_id: Uuid) {
     let mut switch_to: Option<Uuid> = None;
     let mut go_manage = false;
     let mut sync_now = false;
+    let mut open_settings = false;
 
     let response = ui.menu_button(format!("{current_name} ▾"), |ui| {
         if !others.is_empty() {
@@ -1184,6 +1191,10 @@ fn draw_journal_switcher(app: &mut App, ui: &mut egui::Ui, current_id: Uuid) {
         }
         if ui.button("Sync now").clicked() {
             sync_now = true;
+            ui.close();
+        }
+        if ui.button("Settings…").clicked() {
+            open_settings = true;
             ui.close();
         }
         if ui.button("Manage Journals…").clicked() {
@@ -1203,6 +1214,13 @@ fn draw_journal_switcher(app: &mut App, ui: &mut egui::Ui, current_id: Uuid) {
         app.screen = AppState::List;
     } else if sync_now {
         trigger_manual_sync(app);
+    } else if open_settings {
+        if let Some(home) = app.home.as_ref() {
+            let root = home.journal_root.clone();
+            app.settings_panel = Some(
+                crate::screens::settings_panel::SettingsPanelState::open(root),
+            );
+        }
     }
 }
 
