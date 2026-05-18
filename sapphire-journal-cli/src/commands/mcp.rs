@@ -6,13 +6,14 @@ use sapphire_journal_core::{
     cache,
     entry_ref::EntryRef,
     journal::Journal,
-    ops::{self, EntryFields, EntryFilter, EntryListItem, FieldSelector, SortField, SortOrder, UpdateOption},
+    ops::{self, EntryFields, EntryListItem, UpdateOption},
     parser::read_entry,
-    period::{parse_datetime, parse_datetime_end, parse_period},
     user_config::UserConfig,
     JournalState,
 };
 use tokio::time;
+
+use crate::shared;
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
@@ -78,15 +79,9 @@ impl ArchelonServer {
             let state = JournalState::open(journal)?;
             let config = UserConfig::load()?;
             if config.cache.retrieve.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
-                // block_in_place suspends the current tokio worker and lets us
-                // call block_on without nesting runtimes.  Requires the
-                // multi-thread runtime (the default for #[tokio::main]).
-                tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(async {
-                        state.load_retrieve_backend_async(&config).await?;
-                        state.load_embedder_async(&config).await
-                    })
-                })?;
+                // block_in_place lets the embedder/lancedb init block without
+                // starving other tokio tasks on the multi-thread runtime.
+                tokio::task::block_in_place(|| shared::state::bootstrap_embedder(&state, &config))?;
             }
             *guard = Some(state);
         }
@@ -105,12 +100,7 @@ impl ArchelonServer {
         state.sync()?;
         let config = UserConfig::load()?;
         if config.cache.retrieve.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    state.load_retrieve_backend_async(&config).await?;
-                    state.load_embedder_async(&config).await
-                })
-            })?;
+            tokio::task::block_in_place(|| shared::state::bootstrap_embedder(&state, &config))?;
         }
         let info = state.cache_info()?;
         let root = state.journal.root.display().to_string();
@@ -298,60 +288,39 @@ fn parse_entry_fields(
     event_start: Option<&str>,
     event_end: Option<&str>,
 ) -> anyhow::Result<EntryFields> {
+    use shared::fields::{parse_optional_datetime, parse_optional_datetime_end, parse_tags_csv};
     Ok(EntryFields {
         title: None,
         body: None,
         parent: UpdateOption::Unchanged,
         slug,
-        tags: tags.as_deref().map(|s| {
-            s.split(',')
-                .map(|t| t.trim().to_owned())
-                .filter(|t| !t.is_empty())
-                .collect()
-        }),
-        task_due: task_due
-            .map(|s| parse_datetime_end(s).map_err(anyhow::Error::msg))
-            .transpose()?,
+        tags: parse_tags_csv(tags.as_deref()),
+        task_due: parse_optional_datetime_end(task_due)?,
         task_status,
-        task_started_at: task_started_at
-            .map(|s| parse_datetime(s).map_err(anyhow::Error::msg))
-            .transpose()?,
-        task_closed_at: task_closed_at
-            .map(|s| parse_datetime(s).map_err(anyhow::Error::msg))
-            .transpose()?,
-        event_start: event_start
-            .map(|s| parse_datetime(s).map_err(anyhow::Error::msg))
-            .transpose()?,
-        event_end: event_end
-            .map(|s| parse_datetime_end(s).map_err(anyhow::Error::msg))
-            .transpose()?,
+        task_started_at: parse_optional_datetime(task_started_at)?,
+        task_closed_at: parse_optional_datetime(task_closed_at)?,
+        event_start: parse_optional_datetime(event_start)?,
+        event_end: parse_optional_datetime_end(event_end)?,
     })
 }
 
-fn build_filter(p: &EntryListParams) -> anyhow::Result<EntryFilter> {
-    let parse = |s: &str| parse_period(s).map_err(anyhow::Error::msg);
-    let base = if p.active.unwrap_or(false) { FieldSelector::active() } else { FieldSelector::default() };
-    Ok(EntryFilter {
-        period: p.period.as_deref().map(parse).transpose()?,
-        fields: FieldSelector {
-            task_overdue:     base.task_overdue     || p.task_overdue.unwrap_or(false),
-            task_in_progress: base.task_in_progress || p.task_in_progress.unwrap_or(false),
-            task_unstarted:   base.task_unstarted   || p.task_unstarted.unwrap_or(false),
-            event_span:       base.event_span       || p.event_span.unwrap_or(false),
-            created_at:       base.created_at       || p.created_at.unwrap_or(false),
-            updated_at:       base.updated_at       || p.updated_at.unwrap_or(false),
-        },
-        task_status: p.task_status.clone().unwrap_or_default(),
-        tags: p.tags.clone().unwrap_or_default(),
-        sort_by: p.sort_by.as_deref()
-            .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
-            .transpose()?
-            .unwrap_or_default(),
-        sort_order: p.sort_order.as_deref()
-            .map(|s| s.parse::<SortOrder>().map_err(anyhow::Error::msg))
-            .transpose()?
-            .unwrap_or_default(),
-    })
+impl<'a> From<&'a EntryListParams> for shared::filter::FilterInputs<'a> {
+    fn from(p: &'a EntryListParams) -> Self {
+        Self {
+            period: p.period.as_deref(),
+            active: p.active.unwrap_or(false),
+            task_overdue: p.task_overdue.unwrap_or(false),
+            task_in_progress: p.task_in_progress.unwrap_or(false),
+            task_unstarted: p.task_unstarted.unwrap_or(false),
+            event_span: p.event_span.unwrap_or(false),
+            created_at: p.created_at.unwrap_or(false),
+            updated_at: p.updated_at.unwrap_or(false),
+            task_status: p.task_status.as_deref().unwrap_or(&[]),
+            tags: p.tags.as_deref().unwrap_or(&[]),
+            sort_by: p.sort_by.as_deref(),
+            sort_order: p.sort_order.as_deref(),
+        }
+    }
 }
 
 // ── tool implementations ──────────────────────────────────────────────────────
@@ -430,7 +399,7 @@ impl ArchelonServer {
         included. task_status and tags are independent AND filters.")]
     fn entry_list(&self, Parameters(p): Parameters<EntryListParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let filter = build_filter(&p)?;
+            let filter = shared::filter::build_filter(shared::filter::FilterInputs::from(&p))?;
             let has_filter = filter.has_any_filter();
             let entries = self.with_state(|s| ops::list_entries(s, &filter).map_err(Into::into))?;
             let records: Vec<EntryListItem> = entries
@@ -450,7 +419,7 @@ impl ArchelonServer {
         Each node contains an `id`, `title`, `task`, `tags`, and a `children` array of nested nodes.")]
     fn entry_tree(&self, Parameters(p): Parameters<EntryTreeParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let filter = build_filter(&p)?;
+            let filter = shared::filter::build_filter(shared::filter::FilterInputs::from(&p))?;
             let entries = self.with_state(|s| ops::list_entries(s, &filter).map_err(Into::into))?;
             let roots = ops::build_entry_tree(entries);
             Ok(serde_json::to_string_pretty(&roots)?)

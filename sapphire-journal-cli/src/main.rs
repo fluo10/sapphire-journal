@@ -1,4 +1,5 @@
 mod commands;
+mod shared;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
