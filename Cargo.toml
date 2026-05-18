@@ -1,9 +1,9 @@
 [workspace]
 members = [
-    "sapphire-journal",
+    "sapphire-journal-cli",
     "sapphire-journal-core",
+    "sapphire-journal-desktop",
     "sapphire-journal-dioxus",
-    "sapphire-journal-gui",
 ]
 resolver = "3"
 

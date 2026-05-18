@@ -2,9 +2,9 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Build Rust (sapphire-journal)",
+      "label": "Build Rust (sapphire-journal-cli)",
       "type": "shell",
-      "command": "cargo build -p sapphire-journal",
+      "command": "cargo build -p sapphire-journal-cli",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -18,7 +18,7 @@
       "options": {
         "cwd": "${workspaceFolder}"
       },
-      "dependsOn": "Build Rust (sapphire-journal)",
+      "dependsOn": "Build Rust (sapphire-journal-cli)",
       "problemMatcher": []
     },
     {

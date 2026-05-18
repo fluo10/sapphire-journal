@@ -1,5 +1,5 @@
 [package]
-name = "sapphire-journal"
+name = "sapphire-journal-cli"
 edition.workspace = true
 version.workspace = true
 description.workspace = true

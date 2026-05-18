@@ -87,18 +87,18 @@ irm https://raw.githubusercontent.com/fluo10/sapphire-journal/main/install.ps1 |
 ### cargo-binstall
 
 ```sh
-cargo binstall sapphire-journal
+cargo binstall sapphire-journal-cli
 ```
 
 ### From source
 
 ```sh
-cargo install sapphire-journal
+cargo install sapphire-journal-cli
 ```
 
 ## CLI usage
 
-See [sapphire-journal/README.md](sapphire-journal/README.md) for the full command reference.
+See [sapphire-journal-cli/README.md](sapphire-journal-cli/README.md) for the full command reference.
 
 A **journal** is any directory tree that contains a `.sapphire-journal/` directory.
 `sapphire-journal` locates it by walking up from the current directory, the same way `git` finds `.git/`.
@@ -121,10 +121,10 @@ Platform-specific VSIX files (with the CLI binary bundled) are also on the [Rele
 
 ```
 sapphire-journal/
-├── sapphire-journal-core/    # Data model, Markdown parser/serializer, SQLite cache
-├── sapphire-journal/         # Unified binary: CLI + MCP server (sapphire-journal mcp)
-├── sapphire-journal-dioxus/  # GUI app (desktop / mobile)
-└── sapphire-journal-vscode/  # VS Code extension
+├── sapphire-journal-core/     # Data model, Markdown parser/serializer, SQLite cache
+├── sapphire-journal-cli/      # Unified binary: CLI + MCP server (sajo mcp)
+├── sapphire-journal-desktop/  # Desktop GUI (egui)
+└── sapphire-journal-vscode/   # VS Code extension
 ```
 
 ## Status

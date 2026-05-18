@@ -9244,7 +9244,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sapphire-journal"
+name = "sapphire-journal-cli"
 version = "0.11.1"
 dependencies = [
  "anyhow",
@@ -9282,20 +9282,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sapphire-journal-dioxus"
-version = "0.0.0"
-dependencies = [
- "dioxus",
- "git2",
- "sapphire-journal-core",
- "serde",
- "tokio",
- "toml 1.1.2+spec-1.1.0",
- "uuid",
-]
-
-[[package]]
-name = "sapphire-journal-gui"
+name = "sapphire-journal-desktop"
 version = "0.0.0"
 dependencies = [
  "chrono",
@@ -9305,6 +9292,19 @@ dependencies = [
  "git2",
  "grain-id",
  "rfd 0.15.4",
+ "sapphire-journal-core",
+ "serde",
+ "tokio",
+ "toml 1.1.2+spec-1.1.0",
+ "uuid",
+]
+
+[[package]]
+name = "sapphire-journal-dioxus"
+version = "0.0.0"
+dependencies = [
+ "dioxus",
+ "git2",
  "sapphire-journal-core",
  "serde",
  "tokio",
