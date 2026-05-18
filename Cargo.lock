@@ -9250,15 +9250,12 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
- "rmcp",
  "sapphire-journal-core",
- "schemars 1.2.1",
+ "sapphire-journal-mcp",
  "serde",
  "serde_json",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -9310,6 +9307,24 @@ dependencies = [
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "uuid",
+]
+
+[[package]]
+name = "sapphire-journal-mcp"
+version = "0.11.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "rmcp",
+ "sapphire-journal-core",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 1.1.2+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

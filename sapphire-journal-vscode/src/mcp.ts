@@ -20,11 +20,11 @@ export class ArchelonMcpClient implements vscode.Disposable {
     private readonly _outputChannel: vscode.OutputChannel;
     private _openedJournalDir: string | null = null;
 
-    constructor(binPath: string, workspaceRoot?: string) {
+    constructor(launcher: { command: string; args: string[] }, workspaceRoot?: string) {
         this._outputChannel = vscode.window.createOutputChannel('Archelon');
         this._transport = new StdioClientTransport({
-            command: binPath,
-            args: ['mcp'],
+            command: launcher.command,
+            args: launcher.args,
             stderr: 'pipe',
             env: { ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)), ...configEnv() },
             ...(workspaceRoot ? { cwd: workspaceRoot } : {}),

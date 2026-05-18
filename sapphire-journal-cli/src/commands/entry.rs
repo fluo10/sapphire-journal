@@ -10,7 +10,7 @@ use sapphire_journal_core::{
 };
 use sapphire_journal_core::{FtsQuery, VectorQuery};
 
-use crate::shared;
+use sapphire_journal_mcp::shared;
 
 use chrono::NaiveDateTime;
 use clap::{Args, Subcommand};
