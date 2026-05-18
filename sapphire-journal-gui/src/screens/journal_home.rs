@@ -262,6 +262,7 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
     }
 
     let mut reparent_action: Option<(PathBuf, Option<GrainId>)> = None;
+    let mut entry_action: Option<EntryAction> = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
@@ -271,7 +272,7 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
                     for header in &filtered {
                         let path = PathBuf::from(header.path.clone());
                         let is_active = home.selected_path.as_ref() == Some(&path);
-                        if draw_entry_row(ui, header, is_active).clicked() {
+                        if draw_entry_row(ui, header, is_active, &mut entry_action).clicked() {
                             want_select = Some(path);
                         }
                     }
@@ -290,6 +291,7 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
                         &mut want_select,
                         &home.entries,
                         &mut reparent_action,
+                        &mut entry_action,
                     );
                 }
             }
@@ -308,6 +310,44 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
             }
         });
 
+    match entry_action {
+        Some(EntryAction::AddChild(parent_id)) => {
+            match Journal::from_root(home.journal_root.clone()) {
+                Ok(journal) => match prepare_new_entry(&journal, Some(parent_id)) {
+                    Ok(path) => {
+                        home.selected_path = Some(path.clone());
+                        home.editor = match load_editor(&path) {
+                            Ok(e) => Some(e),
+                            Err(msg) => {
+                                home.error_msg = Some(msg);
+                                None
+                            }
+                        };
+                        home.needs_reload = true;
+                        new_entry_path = Some(path);
+                    }
+                    Err(e) => home.error_msg = Some(e.to_string()),
+                },
+                Err(e) => home.error_msg = Some(e.to_string()),
+            }
+        }
+        Some(EntryAction::RequestDelete(path)) => {
+            if home.selected_path.as_ref() != Some(&path) {
+                home.editor = match load_editor(&path) {
+                    Ok(e) => Some(e),
+                    Err(msg) => {
+                        home.error_msg = Some(msg);
+                        None
+                    }
+                };
+                home.selected_path = Some(path);
+                home.info_msg = None;
+            }
+            home.confirm_delete_entry = true;
+        }
+        None => {}
+    }
+
     // Stage the freshly-created entry file with the sync backend (if any).
     // Done after the `home` borrow ends so we can take `&mut app` here.
     if let Some(path) = new_entry_path {
@@ -316,6 +356,31 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
     if let Some((source_path, new_parent)) = reparent_action {
         apply_reparent(app, source_path, new_parent);
     }
+}
+
+#[derive(Clone)]
+enum EntryAction {
+    AddChild(GrainId),
+    RequestDelete(PathBuf),
+}
+
+fn entry_row_context_menu(
+    response: &egui::Response,
+    header: &EntryHeader,
+    pending: &mut Option<EntryAction>,
+) {
+    response.context_menu(|ui| {
+        if ui.button("Add child entry").clicked() {
+            *pending = Some(EntryAction::AddChild(header.id()));
+            ui.close();
+        }
+        if ui.button("Delete entry…").clicked() {
+            *pending = Some(EntryAction::RequestDelete(PathBuf::from(
+                header.path.clone(),
+            )));
+            ui.close();
+        }
+    });
 }
 
 fn draw_tree(
@@ -327,6 +392,7 @@ fn draw_tree(
     want_select: &mut Option<PathBuf>,
     entries: &[EntryHeader],
     reparent: &mut Option<(PathBuf, Option<GrainId>)>,
+    pending: &mut Option<EntryAction>,
 ) {
     for node in nodes {
         let id = node.entry.frontmatter.id;
@@ -372,7 +438,7 @@ fn draw_tree(
                     let layer_id = egui::LayerId::new(egui::Order::Tooltip, dnd_id);
                     let inner = ui.scope_builder(
                         egui::UiBuilder::new().layer_id(layer_id),
-                        |ui| draw_entry_row(ui, &node.entry, is_active),
+                        |ui| draw_entry_row(ui, &node.entry, is_active, pending),
                     );
                     if let Some(pos) = ui.ctx().pointer_interact_pos() {
                         let delta = pos - inner.response.rect.center();
@@ -384,13 +450,16 @@ fn draw_tree(
                     inner.response
                 } else {
                     let inner =
-                        ui.scope(|ui| draw_entry_row(ui, &node.entry, is_active));
-                    ui.interact(
-                        inner.response.rect,
-                        dnd_id,
-                        egui::Sense::click_and_drag(),
-                    )
-                    .on_hover_cursor(egui::CursorIcon::Grab)
+                        ui.scope(|ui| draw_entry_row(ui, &node.entry, is_active, pending));
+                    let outer = ui
+                        .interact(
+                            inner.response.rect,
+                            dnd_id,
+                            egui::Sense::click_and_drag(),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::Grab);
+                    entry_row_context_menu(&outer, &node.entry, pending);
+                    outer
                 }
             })
             .inner;
@@ -434,6 +503,7 @@ fn draw_tree(
                 want_select,
                 entries,
                 reparent,
+                pending,
             );
         }
     }
@@ -574,6 +644,7 @@ fn draw_entry_row(
     ui: &mut egui::Ui,
     header: &EntryHeader,
     is_active: bool,
+    pending: &mut Option<EntryAction>,
 ) -> egui::Response {
     let title = if header.title().is_empty() {
         "(untitled)".to_string()
@@ -632,6 +703,7 @@ fn draw_entry_row(
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
+    entry_row_context_menu(&resp, header, pending);
     resp
 }
 
