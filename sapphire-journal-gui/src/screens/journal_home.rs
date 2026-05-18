@@ -362,14 +362,36 @@ fn draw_tree(
                     );
                 }
                 let dnd_id = egui::Id::new(("entry_dnd", id));
-                // dnd_drag_source returns an InnerResponse where `.inner` carries
-                // the row's click-sense response and `.response` carries the
-                // drag-sense + drop-detection response. Union both so the row
-                // remains clickable for selection AND acts as a drop target.
-                let dnd = ui.dnd_drag_source(dnd_id, id, |ui| {
-                    draw_entry_row(ui, &node.entry, is_active)
-                });
-                dnd.inner | dnd.response
+                // Inlined `dnd_drag_source` using `Sense::click_and_drag()` so
+                // a press-and-release without movement registers as a click
+                // (for selection) while a press-and-drag still starts a drag.
+                // The stock `dnd_drag_source` overlays a `Sense::drag()` widget
+                // that shadows the row's click sense, so clicks were lost.
+                if ui.ctx().is_being_dragged(dnd_id) {
+                    egui::DragAndDrop::set_payload(ui.ctx(), id);
+                    let layer_id = egui::LayerId::new(egui::Order::Tooltip, dnd_id);
+                    let inner = ui.scope_builder(
+                        egui::UiBuilder::new().layer_id(layer_id),
+                        |ui| draw_entry_row(ui, &node.entry, is_active),
+                    );
+                    if let Some(pos) = ui.ctx().pointer_interact_pos() {
+                        let delta = pos - inner.response.rect.center();
+                        ui.ctx().transform_layer_shapes(
+                            layer_id,
+                            egui::emath::TSTransform::from_translation(delta),
+                        );
+                    }
+                    inner.response
+                } else {
+                    let inner =
+                        ui.scope(|ui| draw_entry_row(ui, &node.entry, is_active));
+                    ui.interact(
+                        inner.response.rect,
+                        dnd_id,
+                        egui::Sense::click_and_drag(),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::Grab)
+                }
             })
             .inner;
 
