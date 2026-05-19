@@ -1,60 +1,12 @@
-name: Release CLI
+name: Release CLI Binaries
 
 on:
-  pull_request:
-    types: [closed]
-    branches: [main]
+  push:
+    tags:
+      - 'sapphire-journal-cli-v*'
 
 jobs:
-  prepare:
-    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/cli/')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
-
-      - name: Extract version from branch name
-        id: version
-        run: |
-          BRANCH="${{ github.event.pull_request.head.ref }}"
-          VERSION="${BRANCH#release/cli/}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-      - name: Publish sapphire-journal-core
-        run: cargo publish -p sapphire-journal-core
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Publish sapphire-journal-mcp
-        run: cargo publish -p sapphire-journal-mcp
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Publish sapphire-journal-cli
-        run: cargo publish -p sapphire-journal-cli
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Create tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag cli-v${{ steps.version.outputs.version }}
-          git push origin cli-v${{ steps.version.outputs.version }}
-
   build:
-    needs: prepare
     strategy:
       matrix:
         include:
@@ -73,8 +25,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install protoc (Linux)
@@ -103,7 +53,7 @@ jobs:
           path: ${{ matrix.asset_name }}
 
   release:
-    needs: [prepare, build]
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -115,6 +65,5 @@ jobs:
 
       - uses: softprops/action-gh-release@v3
         with:
-          tag_name: cli-v${{ needs.prepare.outputs.version }}
-          generate_release_notes: true
+          tag_name: ${{ github.ref_name }}
           files: artifacts/*
