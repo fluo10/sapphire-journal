@@ -53,17 +53,32 @@ export function setExtensionPath(p: string) {
     _extensionPath = p;
 }
 
-export function bin(): string {
-    const configured = vscode.workspace.getConfiguration('sapphire-journal').get<string>('binaryPath', '');
-    if (configured) { return configured; }
+/**
+ * Resolve how to launch the MCP server.
+ *
+ * Preference order:
+ *   1. `sapphire-journal.mcpBinaryPath` — explicit path to a `sapphire-journal-mcp` binary.
+ *   2. Bundled `bin/sapphire-journal-mcp` shipped with the extension.
+ *   3. Legacy `sapphire-journal.binaryPath` — path to a `sajo` binary;
+ *      invoked as `sajo mcp` for backward compat with pre-split installs.
+ *   4. `sapphire-journal-mcp` on $PATH.
+ */
+export function mcpLauncher(): { command: string; args: string[] } {
+    const cfg = vscode.workspace.getConfiguration('sapphire-journal');
+
+    const mcpConfigured = cfg.get<string>('mcpBinaryPath', '');
+    if (mcpConfigured) { return { command: mcpConfigured, args: [] }; }
 
     if (_extensionPath) {
         const ext = process.platform === 'win32' ? '.exe' : '';
-        const bundled = path.join(_extensionPath, 'bin', `sajo${ext}`);
-        if (fs.existsSync(bundled)) { return bundled; }
+        const bundled = path.join(_extensionPath, 'bin', `sapphire-journal-mcp${ext}`);
+        if (fs.existsSync(bundled)) { return { command: bundled, args: [] }; }
     }
 
-    return 'sajo';
+    const legacyConfigured = cfg.get<string>('binaryPath', '');
+    if (legacyConfigured) { return { command: legacyConfigured, args: ['mcp'] }; }
+
+    return { command: 'sapphire-journal-mcp', args: [] };
 }
 
 export interface EntryRecord {

@@ -165,10 +165,15 @@
     "configuration": {
       "title": "Sapphire Journal",
       "properties": {
+        "sapphire-journal.mcpBinaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the sapphire-journal-mcp binary used by the extension. Leave empty to use the bundled binary or 'sapphire-journal-mcp' on $PATH."
+        },
         "sapphire-journal.binaryPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the sapphire-journal binary. Leave empty to use the bundled binary or 'sapphire-journal' on $PATH."
+          "description": "Deprecated. Path to a legacy 'sajo' binary; the extension will invoke it as 'sajo mcp'. Prefer 'sapphire-journal.mcpBinaryPath' for new setups."
         },
         "sapphire-journal.autoFixOnSave": {
           "type": "boolean",

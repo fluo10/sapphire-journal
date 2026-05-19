@@ -36,6 +36,11 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+      - name: Publish sapphire-journal-mcp
+        run: cargo publish -p sapphire-journal-mcp
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
       - name: Publish sapphire-journal-cli
         run: cargo publish -p sapphire-journal-cli
         env:
