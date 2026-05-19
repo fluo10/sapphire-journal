@@ -5,15 +5,23 @@ git_tag_enable = true
 
 [[package]]
 name = "sapphire-journal-core"
+git_tag_name = "core-v{{ version }}"
+git_release_name = "core-v{{ version }}"
 
 [[package]]
 name = "sapphire-journal-cli"
+git_tag_name = "cli-v{{ version }}"
+git_release_name = "cli-v{{ version }}"
 
 [[package]]
 name = "sapphire-journal-mcp"
+git_tag_name = "mcp-v{{ version }}"
+git_release_name = "mcp-v{{ version }}"
 
 [[package]]
 name = "sapphire-journal-desktop"
+git_tag_name = "desktop-v{{ version }}"
+git_release_name = "desktop-v{{ version }}"
 
 [[package]]
 name = "sapphire-journal-dioxus"

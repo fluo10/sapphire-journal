@@ -3,7 +3,7 @@ name: Release CLI Binaries
 on:
   push:
     tags:
-      - 'sapphire-journal-cli-v*'
+      - 'cli-v*'
 
 jobs:
   build:
