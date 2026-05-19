@@ -1,0 +1,20 @@
+[workspace]
+changelog_update = true
+git_release_enable = true
+git_tag_enable = true
+
+[[package]]
+name = "sapphire-journal-core"
+
+[[package]]
+name = "sapphire-journal-cli"
+
+[[package]]
+name = "sapphire-journal-mcp"
+
+[[package]]
+name = "sapphire-journal-desktop"
+
+[[package]]
+name = "sapphire-journal-dioxus"
+release = false
