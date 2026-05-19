@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { bin, setExtensionPath, SortField, SortOrder } from './cli';
+import { mcpLauncher, setExtensionPath, SortField, SortOrder } from './cli';
 import { ArchelonMcpClient } from './mcp';
 import { EntryItem, EntryTreeProvider } from './entryTreeProvider';
 import { findJournalRoot, isManagedFilename } from './journal';
@@ -17,7 +17,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // ── MCP client ────────────────────────────────────────────────────────────
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    const mcp = new ArchelonMcpClient(bin(), workspaceRoot);
+    const mcp = new ArchelonMcpClient(mcpLauncher(), workspaceRoot);
     context.subscriptions.push(mcp);
     try {
         await mcp.connect();

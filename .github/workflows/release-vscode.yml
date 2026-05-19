@@ -39,16 +39,16 @@ jobs:
         include:
           - os: ubuntu-latest
             vsce_target: linux-x64
-            binary: sajo
+            binary: sapphire-journal-mcp
           - os: ubuntu-24.04-arm
             vsce_target: linux-arm64
-            binary: sajo
+            binary: sapphire-journal-mcp
           - os: macos-latest
             vsce_target: darwin-arm64
-            binary: sajo
+            binary: sapphire-journal-mcp
           - os: windows-latest
             vsce_target: win32-x64
-            binary: sajo.exe
+            binary: sapphire-journal-mcp.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -80,22 +80,22 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: sapphire-journal-vscode
 
-      - name: Build CLI binary
-        run: cargo build --release -p sapphire-journal-cli
+      - name: Build MCP binary
+        run: cargo build --release -p sapphire-journal-mcp
 
-      - name: Stage CLI binary (Unix)
+      - name: Stage MCP binary (Unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p sapphire-journal-vscode/bin
-          cp target/release/${{ matrix.binary }} sapphire-journal-vscode/bin/sajo
-          chmod +x sapphire-journal-vscode/bin/sajo
+          cp target/release/${{ matrix.binary }} sapphire-journal-vscode/bin/sapphire-journal-mcp
+          chmod +x sapphire-journal-vscode/bin/sapphire-journal-mcp
 
-      - name: Stage CLI binary (Windows)
+      - name: Stage MCP binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path sapphire-journal-vscode/bin | Out-Null
-          Copy-Item target/release/${{ matrix.binary }} sapphire-journal-vscode/bin/sajo.exe
+          Copy-Item target/release/${{ matrix.binary }} sapphire-journal-vscode/bin/sapphire-journal-mcp.exe
 
       - name: Package VSIX
         run: npx vsce package --target ${{ matrix.vsce_target }} --no-dependencies
