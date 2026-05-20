@@ -201,12 +201,12 @@ timezone = "Asia/Tokyo"   # IANA timezone name
 
 ## MCP server
 
-`sajo mcp` launches an MCP (Model Context Protocol) server over stdio, letting AI agents (Claude, etc.) read and write journal entries.
+The MCP (Model Context Protocol) server now ships as a separate `sapphire-journal-mcp` binary in the [sapphire-journal-mcp](../sapphire-journal-mcp/) crate. Install it alongside the CLI to let AI agents (Claude, etc.) read and write journal entries.
 
 ### Start the server
 
 ```bash
-sajo mcp
+sapphire-journal-mcp
 ```
 
 ### Environment variables
@@ -221,8 +221,7 @@ sajo mcp
 {
   "mcpServers": {
     "sapphire-journal": {
-      "command": "sajo",
-      "args": ["mcp"],
+      "command": "sapphire-journal-mcp",
       "env": {
         "SAPPHIRE_JOURNAL_DIR": "/path/to/your/journal"
       }

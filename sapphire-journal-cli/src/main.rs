@@ -39,7 +39,6 @@ enum Command {
         #[command(subcommand)]
         action: commands::config::ConfigCommand,
     },
-    Mcp
 }
 
 fn main() -> Result<()> {
@@ -52,7 +51,6 @@ fn main() -> Result<()> {
         Command::Entry { action } => commands::entry::run(cli.journal_dir.as_deref(), action)?,
         Command::Cache { action } => commands::cache::run(cli.journal_dir.as_deref(), action)?,
         Command::Config { action } => commands::config::run(cli.journal_dir.as_deref(), action)?,
-        Command::Mcp => commands::mcp::run(cli.journal_dir.as_deref())?,
     }
 
     Ok(())

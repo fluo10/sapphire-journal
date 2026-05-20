@@ -14,6 +14,10 @@ sqlite-store    = ["sapphire-workspace/sqlite-store"]
 lancedb-store   = ["sapphire-workspace/lancedb-store"]
 fastembed-embed = ["sapphire-workspace/fastembed-embed"]
 git-sync        = ["sapphire-workspace/git-sync"]
+# Text-frontend helpers: converters from CLI/MCP-style string inputs into the
+# strongly-typed values consumed by `ops`. GUIs that build typed values
+# directly from widgets should leave this disabled.
+text-input      = []
 
 [dependencies]
 serde.workspace = true

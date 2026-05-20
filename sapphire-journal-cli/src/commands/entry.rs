@@ -5,12 +5,12 @@ use sapphire_journal_core::{
     labels::EntryFlag,
     ops::{self, EntryFields as CoreEntryFields, EntryFilter, EntryListItem, EntryTreeNode, MatchFlag, UpdateOption},
     period::{parse_datetime, parse_datetime_end},
+    state as core_state,
+    text_input::filter as core_filter,
     user_config::UserConfig,
     JournalState,
 };
 use sapphire_journal_core::{FtsQuery, VectorQuery};
-
-use sapphire_journal_mcp::shared;
 
 use chrono::NaiveDateTime;
 use clap::{Args, Subcommand};
@@ -98,10 +98,10 @@ fn build_filter(args: &EntryFilterArgs) -> Result<EntryFilter> {
              or pass `--all-periods` to show all entries"
         );
     }
-    shared::filter::build_filter(shared::filter::FilterInputs::from(args))
+    core_filter::build_filter(core_filter::FilterInputs::from(args)).map_err(Into::into)
 }
 
-impl<'a> From<&'a EntryFilterArgs> for shared::filter::FilterInputs<'a> {
+impl<'a> From<&'a EntryFilterArgs> for core_filter::FilterInputs<'a> {
     fn from(a: &'a EntryFilterArgs) -> Self {
         Self {
             period: a.period.as_deref(),
@@ -311,7 +311,7 @@ impl From<EntryFields> for CoreEntryFields {
 }
 
 pub fn run(journal_dir: Option<&Path>, cmd: EntryCommand) -> Result<()> {
-    let state = shared::state::open_state(journal_dir)?;
+    let state = core_state::open_state(journal_dir)?;
 
     match cmd {
         EntryCommand::List { filter: filter_args, json, emoji, nerd } => {
@@ -715,7 +715,7 @@ fn search(state: &JournalState, query: &str, semantic: bool, limit: usize) -> Re
         // ── vector similarity search ──────────────────────────────────────────
         state.sync()?;
         let user_cfg = UserConfig::load()?;
-        shared::state::bootstrap_embedder(state, &user_cfg)?;
+        core_state::bootstrap_embedder(state, &user_cfg)?;
         let embedder = state.embedder().ok_or_else(|| {
             anyhow::anyhow!(
                 "[cache.embedding] is required in ~/.config/sapphire-journal/config.toml \

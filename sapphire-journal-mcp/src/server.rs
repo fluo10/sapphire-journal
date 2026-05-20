@@ -8,12 +8,12 @@ use sapphire_journal_core::{
     journal::Journal,
     ops::{self, EntryFields, EntryListItem, UpdateOption},
     parser::read_entry,
+    state as core_state,
+    text_input::{fields as core_fields, filter as core_filter},
     user_config::UserConfig,
     JournalState,
 };
 use tokio::time;
-
-use crate::shared;
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
@@ -81,7 +81,7 @@ impl ArchelonServer {
             if config.cache.retrieve.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
                 // block_in_place lets the embedder/lancedb init block without
                 // starving other tokio tasks on the multi-thread runtime.
-                tokio::task::block_in_place(|| shared::state::bootstrap_embedder(&state, &config))?;
+                tokio::task::block_in_place(|| core_state::bootstrap_embedder(&state, &config))?;
             }
             *guard = Some(state);
         }
@@ -100,7 +100,7 @@ impl ArchelonServer {
         state.sync()?;
         let config = UserConfig::load()?;
         if config.cache.retrieve.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
-            tokio::task::block_in_place(|| shared::state::bootstrap_embedder(&state, &config))?;
+            tokio::task::block_in_place(|| core_state::bootstrap_embedder(&state, &config))?;
         }
         let info = state.cache_info()?;
         let root = state.journal.root.display().to_string();
@@ -288,7 +288,7 @@ fn parse_entry_fields(
     event_start: Option<&str>,
     event_end: Option<&str>,
 ) -> anyhow::Result<EntryFields> {
-    use shared::fields::{parse_optional_datetime, parse_optional_datetime_end, parse_tags_csv};
+    use core_fields::{parse_optional_datetime, parse_optional_datetime_end, parse_tags_csv};
     Ok(EntryFields {
         title: None,
         body: None,
@@ -304,7 +304,7 @@ fn parse_entry_fields(
     })
 }
 
-impl<'a> From<&'a EntryListParams> for shared::filter::FilterInputs<'a> {
+impl<'a> From<&'a EntryListParams> for core_filter::FilterInputs<'a> {
     fn from(p: &'a EntryListParams) -> Self {
         Self {
             period: p.period.as_deref(),
@@ -399,7 +399,7 @@ impl ArchelonServer {
         included. task_status and tags are independent AND filters.")]
     fn entry_list(&self, Parameters(p): Parameters<EntryListParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let filter = shared::filter::build_filter(shared::filter::FilterInputs::from(&p))?;
+            let filter = core_filter::build_filter(core_filter::FilterInputs::from(&p))?;
             let has_filter = filter.has_any_filter();
             let entries = self.with_state(|s| ops::list_entries(s, &filter).map_err(Into::into))?;
             let records: Vec<EntryListItem> = entries
@@ -419,7 +419,7 @@ impl ArchelonServer {
         Each node contains an `id`, `title`, `task`, `tags`, and a `children` array of nested nodes.")]
     fn entry_tree(&self, Parameters(p): Parameters<EntryTreeParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let filter = shared::filter::build_filter(shared::filter::FilterInputs::from(&p))?;
+            let filter = core_filter::build_filter(core_filter::FilterInputs::from(&p))?;
             let entries = self.with_state(|s| ops::list_entries(s, &filter).map_err(Into::into))?;
             let roots = ops::build_entry_tree(entries);
             Ok(serde_json::to_string_pretty(&roots)?)
