@@ -21,7 +21,7 @@ use rmcp::transport::streamable_http_server::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::server::{prepare_state, spawn_periodic_git_sync, ArchelonServer};
+use crate::server::{prepare_state, spawn_periodic_git_sync, SapphireJournalServer};
 
 /// Bind an HTTP MCP server to `bind:port`, serving the journal at
 /// `journal_dir`. Runs until `cancel` is triggered, at which point active
@@ -46,7 +46,7 @@ pub async fn serve_http(
     let shared_state = Arc::new(std::sync::Mutex::new(state));
 
     let factory_state = Arc::clone(&shared_state);
-    let factory = move || Ok(ArchelonServer::from_shared(Arc::clone(&factory_state)));
+    let factory = move || Ok(SapphireJournalServer::from_shared(Arc::clone(&factory_state)));
 
     let config = StreamableHttpServerConfig::default().with_cancellation_token(cancel.clone());
     let http_service = StreamableHttpService::new(

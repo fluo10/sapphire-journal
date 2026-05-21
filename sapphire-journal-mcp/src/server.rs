@@ -28,19 +28,19 @@ use serde::Deserialize;
 // ── server struct ─────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
-pub struct ArchelonServer {
+pub struct SapphireJournalServer {
     /// Cached journal + SQLite connection, shared across tool calls.
     state: Arc<Mutex<JournalState>>,
     tool_router: ToolRouter<Self>,
 }
 
-impl std::fmt::Debug for ArchelonServer {
+impl std::fmt::Debug for SapphireJournalServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ArchelonServer").finish_non_exhaustive()
+        f.debug_struct("SapphireJournalServer").finish_non_exhaustive()
     }
 }
 
-impl ArchelonServer {
+impl SapphireJournalServer {
     pub fn new(state: JournalState) -> Self {
         Self::from_shared(Arc::new(Mutex::new(state)))
     }
@@ -262,7 +262,7 @@ impl<'a> From<&'a EntryListParams> for core_filter::FilterInputs<'a> {
 // ── tool implementations ──────────────────────────────────────────────────────
 
 #[tool_router]
-impl ArchelonServer {
+impl SapphireJournalServer {
     #[tool(description = "List journal entries as JSON. \
         Use `period` to specify a time range. \
         Use field selectors (task_overdue, task_in_progress, event_span, created_at, updated_at) \
@@ -607,13 +607,13 @@ impl ArchelonServer {
 }
 
 #[rmcp::tool_handler(router = self.tool_router)]
-impl ServerHandler for ArchelonServer {
+impl ServerHandler for SapphireJournalServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder().enable_tools().build(),
         )
         .with_instructions(
-            "Archelon is a Markdown-based journal/task manager. \
+            "Sapphire Journal is a Markdown-based journal/task manager. \
              Use entry_list to browse entries, entry_show to read one, \
              entry_new to create, and entry_modify to update metadata."
                 .to_owned(),
@@ -729,7 +729,7 @@ pub async fn run(journal_dir: Option<&Path>, init: bool) -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_writer(std::io::stderr).init();
 
     let state = prepare_state(journal_dir, init)?;
-    let server = ArchelonServer::new(state);
+    let server = SapphireJournalServer::new(state);
     let _sync_handle = spawn_periodic_git_sync(server.shared_state());
 
     let service = server.serve(stdio()).await?;

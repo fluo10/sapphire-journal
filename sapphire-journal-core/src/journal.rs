@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::error::{Error, Result};
 
-const ARCHELON_DIR: &str = ".sapphire-journal";
+const JOURNAL_DIR_NAME: &str = ".sapphire-journal";
 
 /// A located journal — a directory tree that contains a `.sapphire-journal` directory.
 #[derive(Debug, Clone)]
@@ -22,7 +22,7 @@ impl Journal {
     ///
     /// Returns `Err(Error::JournalNotFound)` if `root` does not contain a `.sapphire-journal` directory.
     pub fn from_root(root: PathBuf) -> Result<Self> {
-        if root.join(ARCHELON_DIR).is_dir() {
+        if root.join(JOURNAL_DIR_NAME).is_dir() {
             Ok(Journal { root })
         } else {
             Err(Error::JournalNotFound)
@@ -35,7 +35,7 @@ impl Journal {
     pub fn find_from(start: &Path) -> Result<Self> {
         let mut current = start.to_path_buf();
         loop {
-            if current.join(ARCHELON_DIR).is_dir() {
+            if current.join(JOURNAL_DIR_NAME).is_dir() {
                 return Ok(Journal { root: current });
             }
             if !current.pop() {
@@ -52,7 +52,7 @@ impl Journal {
 
     /// Path to the `.sapphire-journal` directory itself.
     pub fn journal_dir(&self) -> PathBuf {
-        self.root.join(ARCHELON_DIR)
+        self.root.join(JOURNAL_DIR_NAME)
     }
 
     /// Path to the directory that directly contains year subdirectories.
