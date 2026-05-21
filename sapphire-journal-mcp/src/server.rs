@@ -28,24 +28,37 @@ use serde::Deserialize;
 // ── server struct ─────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
-struct ArchelonServer {
+pub struct SapphireJournalServer {
     /// Cached journal + SQLite connection, shared across tool calls.
     state: Arc<Mutex<JournalState>>,
     tool_router: ToolRouter<Self>,
 }
 
-impl std::fmt::Debug for ArchelonServer {
+impl std::fmt::Debug for SapphireJournalServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ArchelonServer").finish_non_exhaustive()
+        f.debug_struct("SapphireJournalServer").finish_non_exhaustive()
     }
 }
 
-impl ArchelonServer {
-    fn new(state: JournalState) -> Self {
+impl SapphireJournalServer {
+    pub fn new(state: JournalState) -> Self {
+        Self::from_shared(Arc::new(Mutex::new(state)))
+    }
+
+    /// Build a server that shares an existing `Arc<Mutex<JournalState>>`.
+    /// Used by the HTTP transport, where each session spawns a fresh server
+    /// instance via a factory but all instances must operate on the same state.
+    pub fn from_shared(state: Arc<Mutex<JournalState>>) -> Self {
         Self {
-            state: Arc::new(Mutex::new(state)),
+            state,
             tool_router: Self::tool_router(),
         }
+    }
+
+    /// Shared state — exposed so callers (HTTP transport setup) can spawn
+    /// background tasks like periodic git sync against the same journal.
+    pub fn shared_state(&self) -> Arc<Mutex<JournalState>> {
+        Arc::clone(&self.state)
     }
 
     fn with_state<F, T>(&self, f: F) -> anyhow::Result<T>
@@ -249,7 +262,7 @@ impl<'a> From<&'a EntryListParams> for core_filter::FilterInputs<'a> {
 // ── tool implementations ──────────────────────────────────────────────────────
 
 #[tool_router]
-impl ArchelonServer {
+impl SapphireJournalServer {
     #[tool(description = "List journal entries as JSON. \
         Use `period` to specify a time range. \
         Use field selectors (task_overdue, task_in_progress, event_span, created_at, updated_at) \
@@ -594,13 +607,13 @@ impl ArchelonServer {
 }
 
 #[rmcp::tool_handler(router = self.tool_router)]
-impl ServerHandler for ArchelonServer {
+impl ServerHandler for SapphireJournalServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder().enable_tools().build(),
         )
         .with_instructions(
-            "Archelon is a Markdown-based journal/task manager. \
+            "Sapphire Journal is a Markdown-based journal/task manager. \
              Use entry_list to browse entries, entry_show to read one, \
              entry_new to create, and entry_modify to update metadata."
                 .to_owned(),
@@ -615,7 +628,7 @@ impl ServerHandler for ArchelonServer {
 /// When `init` is true, the target path (literal `dir` or CWD — no upward search)
 /// is created as needed and turned into a sapphire-journal if it isn't one already.
 /// Existing journals are reused as-is.
-fn ensure_journal(dir: Option<&Path>, init: bool) -> anyhow::Result<Journal> {
+pub(crate) fn ensure_journal(dir: Option<&Path>, init: bool) -> anyhow::Result<Journal> {
     if init {
         let target: PathBuf = match dir {
             Some(d) => d.to_path_buf(),
@@ -657,13 +670,17 @@ fn ensure_journal(dir: Option<&Path>, init: bool) -> anyhow::Result<Journal> {
     }
 }
 
-// ── main ──────────────────────────────────────────────────────────────────────
-
-#[tokio::main]
-pub async fn run(journal_dir: Option<&Path>, init: bool) -> anyhow::Result<()> {
-    // Log to stderr so stdout remains clean for the MCP JSON-RPC protocol
-    tracing_subscriber::fmt().with_writer(std::io::stderr).init();
-
+/// Open a [`JournalState`] for the given directory and run any embedder
+/// bootstrap configured in the user config.
+///
+/// Used by both transports (stdio, HTTP). Caller is responsible for setting
+/// up tracing — stdio writes logs to stderr (so stdout stays clean for the
+/// JSON-RPC protocol), HTTP can use whatever subscriber the host process
+/// configured.
+pub(crate) fn prepare_state(
+    journal_dir: Option<&Path>,
+    init: bool,
+) -> anyhow::Result<JournalState> {
     let journal = ensure_journal(journal_dir, init)?;
     let state = JournalState::open(journal)?;
     state.sync()?;
@@ -679,28 +696,41 @@ pub async fn run(journal_dir: Option<&Path>, init: bool) -> anyhow::Result<()> {
     {
         tokio::task::block_in_place(|| core_state::bootstrap_embedder(&state, &config))?;
     }
+    Ok(state)
+}
 
-    let server = ArchelonServer::new(state);
+/// Spawn the periodic git sync task on the current tokio runtime when the
+/// user config sets a non-zero `sync_interval_minutes`. Returns `None` when
+/// disabled. The returned [`JoinHandle`] can be `.abort()`ed by the caller
+/// (e.g. when the HTTP transport shuts down) to stop the task.
+pub(crate) fn spawn_periodic_git_sync(
+    state: Arc<Mutex<JournalState>>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let interval = UserConfig::load().ok().and_then(|c| c.sync_interval())?;
+    Some(tokio::spawn(async move {
+        let mut ticker = time::interval(interval);
+        ticker.tick().await; // skip the first immediate tick
+        loop {
+            ticker.tick().await;
+            let guard = state.lock().unwrap();
+            if let Err(e) = guard.git_sync() {
+                eprintln!("[sapphire-journal] periodic git sync failed: {e}");
+            }
+            drop(guard);
+        }
+    }))
+}
 
-    // Spawn periodic git sync task if configured.
-    let state_for_sync = Arc::clone(&server.state);
-    let _sync_handle = {
-        let interval = UserConfig::load().ok().and_then(|c| c.sync_interval());
-        interval.map(|dur| {
-            tokio::spawn(async move {
-                let mut ticker = time::interval(dur);
-                ticker.tick().await; // skip the first immediate tick
-                loop {
-                    ticker.tick().await;
-                    let guard = state_for_sync.lock().unwrap();
-                    if let Err(e) = guard.git_sync() {
-                        eprintln!("[sapphire-journal] periodic git sync failed: {e}");
-                    }
-                    drop(guard);
-                }
-            })
-        })
-    };
+// ── stdio entry point ─────────────────────────────────────────────────────────
+
+#[tokio::main]
+pub async fn run(journal_dir: Option<&Path>, init: bool) -> anyhow::Result<()> {
+    // Log to stderr so stdout remains clean for the MCP JSON-RPC protocol
+    tracing_subscriber::fmt().with_writer(std::io::stderr).init();
+
+    let state = prepare_state(journal_dir, init)?;
+    let server = SapphireJournalServer::new(state);
+    let _sync_handle = spawn_periodic_git_sync(server.shared_state());
 
     let service = server.serve(stdio()).await?;
     service.waiting().await?;

@@ -7,12 +7,13 @@ use grain_id::GrainId;
 use sapphire_journal_core::{JournalState, entry::EntryHeader, user_config::UserConfig};
 use tokio::sync::mpsc;
 use tokio::time;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::registry::{JournalRegistry, RegistryEntry};
 use crate::screens;
 use crate::screens::settings_panel::SettingsPanelState;
-use crate::settings::Settings;
+use crate::settings::{McpHttpSettings, Settings};
 
 #[derive(Clone, PartialEq)]
 pub enum AppState {
@@ -93,6 +94,27 @@ pub struct App {
     pub runtime: Arc<tokio::runtime::Runtime>,
     pub event_tx: mpsc::UnboundedSender<AppEvent>,
     pub event_rx: mpsc::UnboundedReceiver<AppEvent>,
+    /// Handle to the in-process MCP HTTP server, when running. See
+    /// [`reconcile_mcp_server`].
+    mcp_server: Option<McpServerHandle>,
+}
+
+/// Tracks a running MCP HTTP server so the UI can stop or restart it when
+/// the user switches journals or toggles the setting.
+struct McpServerHandle {
+    cancel: CancellationToken,
+    task: tokio::task::JoinHandle<()>,
+    journal_root: PathBuf,
+    port: u16,
+}
+
+impl McpServerHandle {
+    fn stop(self) {
+        self.cancel.cancel();
+        // The serve loop awaits `cancel.cancelled()` for graceful shutdown;
+        // the JoinHandle is left to complete on its own.
+        drop(self.task);
+    }
 }
 
 /// State for the journal-home screen (sidebar + editor).
@@ -274,7 +296,76 @@ impl App {
             runtime,
             event_tx,
             event_rx,
+            mcp_server: None,
         }
+    }
+
+    /// Start, stop, or restart the MCP HTTP server so it matches the current
+    /// settings + open journal. Cheap to call every frame: in steady state it
+    /// just compares the current handle's `journal_root` and `port` against
+    /// what is desired and returns early when they match.
+    fn reconcile_mcp_server(&mut self) {
+        // If the previous task ended (e.g. bind failure), clear the handle
+        // so we'll start a fresh one when conditions allow.
+        if self
+            .mcp_server
+            .as_ref()
+            .is_some_and(|h| h.task.is_finished())
+        {
+            self.mcp_server = None;
+        }
+
+        let desired_root = self
+            .settings
+            .mcp_http
+            .enabled
+            .then(|| self.home.as_ref().map(|h| h.journal_root.clone()))
+            .flatten();
+        let desired_port = self.settings.mcp_http.port;
+
+        let needs_restart = match (&self.mcp_server, &desired_root) {
+            (None, None) => false,
+            (Some(_), None) | (None, Some(_)) => true,
+            (Some(h), Some(root)) => h.journal_root != *root || h.port != desired_port,
+        };
+
+        if !needs_restart {
+            return;
+        }
+
+        if let Some(old) = self.mcp_server.take() {
+            old.stop();
+        }
+        if let Some(root) = desired_root {
+            self.start_mcp_server(root, desired_port);
+        }
+    }
+
+    fn start_mcp_server(&mut self, journal_root: PathBuf, port: u16) {
+        let cancel = CancellationToken::new();
+        let cancel_for_task = cancel.clone();
+        let root_for_task = journal_root.clone();
+        let tx = self.event_tx.clone();
+        let task = self.runtime.spawn(async move {
+            if let Err(e) = sapphire_journal_mcp::serve_http(
+                &root_for_task,
+                McpHttpSettings::BIND,
+                port,
+                cancel_for_task,
+            )
+            .await
+            {
+                let _ = tx.send(AppEvent::Error(format!(
+                    "MCP HTTP server stopped: {e}"
+                )));
+            }
+        });
+        self.mcp_server = Some(McpServerHandle {
+            cancel,
+            task,
+            journal_root,
+            port,
+        });
     }
 
     /// Update `settings.last_opened_journal_id` and persist immediately.
@@ -331,6 +422,7 @@ impl App {
 impl eframe::App for App {
     fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_events();
+        self.reconcile_mcp_server();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
