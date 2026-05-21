@@ -5,7 +5,7 @@ use anyhow::Context as _;
 use sapphire_journal_core::{
     cache,
     entry_ref::EntryRef,
-    journal::Journal,
+    journal::{Journal, JournalConfig},
     ops::{self, EntryFields, EntryListItem, UpdateOption},
     parser::read_entry,
     state as core_state,
@@ -15,11 +15,10 @@ use sapphire_journal_core::{
 };
 use tokio::time;
 use rmcp::{
-    Peer, RoleServer, ServerHandler, ServiceExt,
-    handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
+    ServerHandler, ServiceExt,
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::*,
     schemars,
-    service::RequestContext,
     tool, tool_router,
     transport::stdio,
 };
@@ -30,111 +29,35 @@ use serde::Deserialize;
 
 #[derive(Clone)]
 struct ArchelonServer {
-    /// Default journal directory passed at server startup (if any).
-    default_dir: Option<PathBuf>,
     /// Cached journal + SQLite connection, shared across tool calls.
-    state: Arc<Mutex<Option<JournalState>>>,
-    /// Tools available while no journal is open (init/open).
-    closed_tool_router: ToolRouter<Self>,
-    /// Tools available once a journal is open (entry/cache/git/search).
-    open_tool_router: ToolRouter<Self>,
+    state: Arc<Mutex<JournalState>>,
+    tool_router: ToolRouter<Self>,
 }
 
 impl std::fmt::Debug for ArchelonServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ArchelonServer")
-            .field("default_dir", &self.default_dir)
-            .finish_non_exhaustive()
+        f.debug_struct("ArchelonServer").finish_non_exhaustive()
     }
 }
 
 impl ArchelonServer {
-    fn new(journal_dir: Option<PathBuf>) -> Self {
+    fn new(state: JournalState) -> Self {
         Self {
-            default_dir: journal_dir,
-            state: Arc::new(Mutex::new(None)),
-            closed_tool_router: Self::closed_tool_router(),
-            open_tool_router: Self::open_tool_router(),
+            state: Arc::new(Mutex::new(state)),
+            tool_router: Self::tool_router(),
         }
     }
 
-    /// Returns true when a journal is currently open — i.e. the open-state
-    /// tool list should be advertised to MCP clients.
-    fn is_journal_open(&self) -> bool {
-        self.state.lock().unwrap().is_some()
-    }
-
-    /// Provide access to the cached state, auto-opening on first use.
-    ///
-    /// When `cache.embedding.enabled = true`, the vector store and embedder
-    /// are initialised on first call via [`tokio::task::block_in_place`], which
-    /// is safe on the multi-thread runtime used by the MCP server.
     fn with_state<F, T>(&self, f: F) -> anyhow::Result<T>
     where
         F: FnOnce(&JournalState) -> anyhow::Result<T>,
     {
-        let mut guard = self.state.lock().unwrap();
-        if guard.is_none() {
-            let journal = self.open_default_journal()?;
-            let state = JournalState::open(journal)?;
-            let config = UserConfig::load()?;
-            if config.cache.retrieve.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
-                // block_in_place lets the embedder/lancedb init block without
-                // starving other tokio tasks on the multi-thread runtime.
-                tokio::task::block_in_place(|| core_state::bootstrap_embedder(&state, &config))?;
-            }
-            *guard = Some(state);
-        }
-        f(guard.as_ref().unwrap())
+        let guard = self.state.lock().unwrap();
+        f(&guard)
     }
-
-    /// Open a journal and replace the cached state.
-    /// Returns (journal_root_string, entry_count).
-    fn reload_state(&self, journal_dir: Option<&Path>) -> anyhow::Result<(String, u64)> {
-        let journal = match journal_dir {
-            Some(dir) => Journal::from_root(dir.to_path_buf())
-                .context("not a sapphire-journal — run `journal_init` first")?,
-            None => self.open_default_journal()?,
-        };
-        let state = JournalState::open(journal)?;
-        state.sync()?;
-        let config = UserConfig::load()?;
-        if config.cache.retrieve.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
-            tokio::task::block_in_place(|| core_state::bootstrap_embedder(&state, &config))?;
-        }
-        let info = state.cache_info()?;
-        let root = state.journal.root.display().to_string();
-        let count = info.entry_count;
-        *self.state.lock().unwrap() = Some(state);
-        Ok((root, count))
-    }
-
-    fn open_default_journal(&self) -> anyhow::Result<Journal> {
-        match &self.default_dir {
-            Some(dir) => Journal::from_root(dir.clone())
-                .context("not a sapphire-journal — run `journal_init` first"),
-            None => Journal::find()
-                .context("not in a sapphire-journal — run `journal_init` first"),
-        }
-    }
-
 }
 
 // ── parameter structs ─────────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct JournalOpenParams {
-    /// Path to the journal root directory.
-    /// If omitted, searches upward from the current directory
-    /// (or uses the directory provided at server startup).
-    path: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct InitParams {
-    /// Directory to initialize (created if it does not exist). Defaults to current directory.
-    path: Option<String>,
-}
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct EntryListParams {
@@ -325,71 +248,8 @@ impl<'a> From<&'a EntryListParams> for core_filter::FilterInputs<'a> {
 
 // ── tool implementations ──────────────────────────────────────────────────────
 
-#[tool_router(router = closed_tool_router)]
+#[tool_router]
 impl ArchelonServer {
-    #[tool(description = "Open (or reopen) a journal workspace. \
-        Loads the journal directory and its SQLite cache into memory so subsequent \
-        operations reuse the same connection without reopening files on each call. \
-        Call this when switching to a different journal or to refresh the in-memory state.")]
-    fn journal_open(&self, Parameters(p): Parameters<JournalOpenParams>) -> Result<String, String> {
-        (|| -> anyhow::Result<String> {
-            let dir = p.path.as_deref().map(Path::new);
-            let (root, count) = self.reload_state(dir)?;
-            Ok(format!("opened: {root}\n{count} entries indexed"))
-        })()
-        .map_err(|e| e.to_string())
-    }
-
-    #[tool(description = "Initialize a new sapphire-journal in the given directory (defaults to current directory)")]
-    fn journal_init(&self, Parameters(p): Parameters<InitParams>) -> Result<String, String> {
-        (|| -> anyhow::Result<String> {
-            let target = p.path.as_deref().unwrap_or(".");
-            let target = Path::new(target);
-
-            if !target.exists() {
-                std::fs::create_dir_all(target)
-                    .with_context(|| format!("failed to create directory {}", target.display()))?;
-            }
-
-            let journal_dir = target.join(".sapphire-journal");
-            if journal_dir.exists() {
-                anyhow::bail!(
-                    "journal already initialized at {}",
-                    target.canonicalize()?.display()
-                );
-            }
-
-            std::fs::create_dir(&journal_dir).context("failed to create .sapphire-journal directory")?;
-
-            let config = toml::to_string_pretty(&sapphire_journal_core::journal::JournalConfig::default())
-                .context("failed to serialize default config")?;
-            std::fs::write(journal_dir.join("config.toml"), config)
-                .context("failed to write .sapphire-journal/config.toml")?;
-            std::fs::write(journal_dir.join(".gitignore"), "cache/\n")
-                .context("failed to write .sapphire-journal/.gitignore")?;
-
-            Ok(format!(
-                "initialized sapphire-journal in {}",
-                target.canonicalize()?.display()
-            ))
-        })()
-        .map_err(|e| e.to_string())
-    }
-}
-
-#[tool_router(router = open_tool_router)]
-impl ArchelonServer {
-    #[tool(description = "Close the currently open journal workspace. \
-        Releases the in-memory state and returns the server to the initial state \
-        where only journal_init and journal_open are available.")]
-    fn journal_close(&self, _: Parameters<serde_json::Value>) -> Result<String, String> {
-        let mut guard = self.state.lock().unwrap();
-        match guard.take() {
-            Some(state) => Ok(format!("closed: {}", state.journal.root.display())),
-            None => Err("no journal is currently open".to_string()),
-        }
-    }
-
     #[tool(description = "List journal entries as JSON. \
         Use `period` to specify a time range. \
         Use field selectors (task_overdue, task_in_progress, event_span, created_at, updated_at) \
@@ -680,15 +540,12 @@ impl ArchelonServer {
     fn cache_rebuild(&self, _: Parameters<serde_json::Value>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let mut guard = self.state.lock().unwrap();
-            let journal_root = match guard.as_ref() {
-                Some(s) => s.journal.root.clone(),
-                None => self.open_default_journal()?.root,
-            };
+            let journal_root = guard.journal.root.clone();
             let journal = Journal::from_root(journal_root)?;
             let state = JournalState::rebuild(journal)?;
             state.sync()?;
             let info = state.cache_info()?;
-            *guard = Some(state);
+            *guard = state;
             Ok(format!("rebuilt: {} entries indexed", info.entry_count))
         })()
         .map_err(|e| e.to_string())
@@ -736,79 +593,66 @@ impl ArchelonServer {
     }
 }
 
+#[rmcp::tool_handler(router = self.tool_router)]
 impl ServerHandler for ArchelonServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
-            ServerCapabilities::builder()
-                .enable_tools()
-                .enable_tool_list_changed()
-                .build(),
+            ServerCapabilities::builder().enable_tools().build(),
         )
         .with_instructions(
             "Archelon is a Markdown-based journal/task manager. \
-             When no journal is open, use journal_init to create one or journal_open to load an \
-             existing workspace. Once open, use entry_list to browse entries, entry_show to read \
-             one, entry_new to create, and entry_modify to update metadata. \
-             The tool list changes dynamically based on whether a journal is open."
+             Use entry_list to browse entries, entry_show to read one, \
+             entry_new to create, and entry_modify to update metadata."
                 .to_owned(),
         )
     }
-
-    async fn list_tools(
-        &self,
-        _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<ListToolsResult, rmcp::ErrorData> {
-        let tools = if self.is_journal_open() {
-            self.open_tool_router.list_all()
-        } else {
-            self.closed_tool_router.list_all()
-        };
-        Ok(ListToolsResult {
-            tools,
-            meta: None,
-            next_cursor: None,
-        })
-    }
-
-    async fn call_tool(
-        &self,
-        request: CallToolRequestParams,
-        context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let was_open = self.is_journal_open();
-        let peer = context.peer.clone();
-
-        let router = if self.closed_tool_router.has_route(request.name.as_ref()) {
-            &self.closed_tool_router
-        } else {
-            &self.open_tool_router
-        };
-
-        let tcc = ToolCallContext::new(self, request, context);
-        let result = router.call(tcc).await;
-
-        let is_open = self.is_journal_open();
-        if was_open != is_open {
-            Self::notify_tools_changed(peer).await;
-        }
-
-        result
-    }
-
-    fn get_tool(&self, name: &str) -> Option<rmcp::model::Tool> {
-        if self.is_journal_open() {
-            self.open_tool_router.get(name).cloned()
-        } else {
-            self.closed_tool_router.get(name).cloned()
-        }
-    }
 }
 
-impl ArchelonServer {
-    async fn notify_tools_changed(peer: Peer<RoleServer>) {
-        if let Err(e) = peer.notify_tool_list_changed().await {
-            tracing::warn!("failed to send tools/list_changed notification: {e}");
+// ── startup helpers ───────────────────────────────────────────────────────────
+
+/// Resolve the journal at `dir` (or via upward search from CWD when `dir` is None).
+///
+/// When `init` is true, the target path (literal `dir` or CWD — no upward search)
+/// is created as needed and turned into a sapphire-journal if it isn't one already.
+/// Existing journals are reused as-is.
+fn ensure_journal(dir: Option<&Path>, init: bool) -> anyhow::Result<Journal> {
+    if init {
+        let target: PathBuf = match dir {
+            Some(d) => d.to_path_buf(),
+            None => std::env::current_dir().context("failed to read current directory")?,
+        };
+
+        if !target.exists() {
+            std::fs::create_dir_all(&target)
+                .with_context(|| format!("failed to create directory {}", target.display()))?;
+        }
+
+        let journal_dir = target.join(".sapphire-journal");
+        if !journal_dir.exists() {
+            std::fs::create_dir(&journal_dir)
+                .context("failed to create .sapphire-journal directory")?;
+            let config = toml::to_string_pretty(&JournalConfig::default())
+                .context("failed to serialize default config")?;
+            std::fs::write(journal_dir.join("config.toml"), config)
+                .context("failed to write .sapphire-journal/config.toml")?;
+            std::fs::write(journal_dir.join(".gitignore"), "cache/\n")
+                .context("failed to write .sapphire-journal/.gitignore")?;
+            tracing::info!("initialized sapphire-journal in {}", target.display());
+        }
+
+        Journal::from_root(target).context("failed to open journal after init")
+    } else {
+        match dir {
+            Some(d) => Journal::from_root(d.to_path_buf()).with_context(|| {
+                format!(
+                    "not a sapphire-journal: {} — pass --init to create one",
+                    d.display()
+                )
+            }),
+            None => Journal::find().context(
+                "no sapphire-journal found in the current directory or any parent \
+                 — pass --init to create one",
+            ),
         }
     }
 }
@@ -816,28 +660,32 @@ impl ArchelonServer {
 // ── main ──────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
-pub async fn run(journal_dir: Option<&Path>) -> anyhow::Result<()> {
+pub async fn run(journal_dir: Option<&Path>, init: bool) -> anyhow::Result<()> {
     // Log to stderr so stdout remains clean for the MCP JSON-RPC protocol
     tracing_subscriber::fmt().with_writer(std::io::stderr).init();
 
-    let server = ArchelonServer::new(journal_dir.map(|x| x.to_path_buf()));
+    let journal = ensure_journal(journal_dir, init)?;
+    let state = JournalState::open(journal)?;
+    state.sync()?;
 
-    // When a journal directory is supplied at startup, eagerly open it so the
-    // initial tools/list advertises the open-state tool set. Failures are
-    // logged but non-fatal: the server falls back to the closed-state list so
-    // the client can still run journal_init or journal_open.
-    if server.default_dir.is_some() {
-        if let Err(e) = server.reload_state(None) {
-            tracing::warn!("failed to open journal at startup: {e}");
-        }
+    let config = UserConfig::load()?;
+    if config
+        .cache
+        .retrieve
+        .embedding
+        .as_ref()
+        .map(|e| e.enabled)
+        .unwrap_or(false)
+    {
+        tokio::task::block_in_place(|| core_state::bootstrap_embedder(&state, &config))?;
     }
+
+    let server = ArchelonServer::new(state);
 
     // Spawn periodic git sync task if configured.
     let state_for_sync = Arc::clone(&server.state);
     let _sync_handle = {
-        let interval = UserConfig::load()
-            .ok()
-            .and_then(|c| c.sync_interval());
+        let interval = UserConfig::load().ok().and_then(|c| c.sync_interval());
         interval.map(|dur| {
             tokio::spawn(async move {
                 let mut ticker = time::interval(dur);
@@ -845,10 +693,8 @@ pub async fn run(journal_dir: Option<&Path>) -> anyhow::Result<()> {
                 loop {
                     ticker.tick().await;
                     let guard = state_for_sync.lock().unwrap();
-                    if let Some(state) = guard.as_ref() {
-                        if let Err(e) = state.git_sync() {
-                            eprintln!("[sapphire-journal] periodic git sync failed: {e}");
-                        }
+                    if let Err(e) = guard.git_sync() {
+                        eprintln!("[sapphire-journal] periodic git sync failed: {e}");
                     }
                     drop(guard);
                 }

@@ -206,14 +206,24 @@ The MCP (Model Context Protocol) server now ships as a separate `sapphire-journa
 ### Start the server
 
 ```bash
+# Open the journal found by walking up from the current directory
 sapphire-journal-mcp
+
+# Open an explicit journal path
+sapphire-journal-mcp --journal-dir /path/to/journal
+
+# Create the journal (and the directory itself) if it doesn't exist, then open it
+sapphire-journal-mcp --journal-dir /path/to/journal --init
 ```
 
-### Environment variables
+The server fails to start when the target directory is not a sapphire-journal — pass `--init` to have the server create one in place (no-op when one already exists there).
 
-| Variable | Description |
+### Flags and environment variables
+
+| Flag / Variable | Description |
 |---|---|
-| `SAPPHIRE_JOURNAL_DIR` | Path to the journal root. If not set, the server walks up from the current directory to find `.sapphire-journal/`. |
+| `--journal-dir <DIR>` / `SAPPHIRE_JOURNAL_DIR` | Path to the journal root. If not set, the server walks up from the current directory to find `.sapphire-journal/`. |
+| `--init` | Initialize the target directory as a sapphire-journal if it isn't one already (and create the directory itself if missing). |
 
 ### Example: Claude Desktop
 
@@ -234,7 +244,6 @@ sapphire-journal-mcp
 
 | Tool | Description |
 |---|---|
-| `journal_init` | Initialize a new sapphire-journal journal |
 | `entry_list` | List entries as JSON with filtering and sorting |
 | `entry_tree` | List entries as a nested JSON tree (parent-child hierarchy) |
 | `entry_show` | Show the contents of an entry by ID prefix or file path |
@@ -243,9 +252,11 @@ sapphire-journal-mcp
 | `entry_check` | Validate an entry's frontmatter and filename |
 | `entry_fix` | Rename an entry file to match its frontmatter |
 | `entry_remove` | Delete an entry file |
+| `entry_search` | Search entries (vector when embeddings are enabled, FTS otherwise) |
 | `cache_info` | Show cache status and statistics |
 | `cache_sync` | Incrementally update the SQLite cache |
 | `cache_rebuild` | Drop and rebuild the cache from scratch |
+| `git_sync` | Commit, fetch, merge, and push if a sync backend is configured |
 
 ### `entry_list` parameters
 
