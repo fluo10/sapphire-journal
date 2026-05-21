@@ -9251,6 +9251,7 @@ dependencies = [
  "chrono",
  "clap",
  "sapphire-journal-core",
+ "sapphire-journal-mcp",
  "serde",
  "serde_json",
  "tokio",
@@ -9314,7 +9315,6 @@ version = "0.11.1"
 dependencies = [
  "anyhow",
  "chrono",
- "clap",
  "rmcp",
  "sapphire-journal-core",
  "schemars 1.2.1",

@@ -39,6 +39,13 @@ enum Command {
         #[command(subcommand)]
         action: commands::config::ConfigCommand,
     },
+    /// Run as an MCP server over stdio (for AI agent integrations such as Claude Desktop / Claude Code)
+    Mcp {
+        /// Initialize the target directory as a sapphire-journal if it isn't one already.
+        /// Creates the directory itself if missing. No-op when a journal already exists there.
+        #[arg(long)]
+        init: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -51,6 +58,7 @@ fn main() -> Result<()> {
         Command::Entry { action } => commands::entry::run(cli.journal_dir.as_deref(), action)?,
         Command::Cache { action } => commands::cache::run(cli.journal_dir.as_deref(), action)?,
         Command::Config { action } => commands::config::run(cli.journal_dir.as_deref(), action)?,
+        Command::Mcp { init } => sapphire_journal_mcp::run(cli.journal_dir.as_deref(), init)?,
     }
 
     Ok(())
