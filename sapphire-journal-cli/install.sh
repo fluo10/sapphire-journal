@@ -3,7 +3,7 @@ set -eu
 
 REPO="fluo10/sapphire-journal"
 INSTALL_DIR="${HOME}/.local/bin"
-BINARY="sajo"
+BINARY="sapphire-journal"
 
 case "$(uname -s)" in
   Linux*)  OS="linux" ;;

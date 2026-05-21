@@ -9,7 +9,7 @@ categories = ["command-line-utilities", "text-processing"]
 keywords = ["markdown", "task-management", "notes", "cli", "mcp"]
 
 [[bin]]
-name = "sajo"
+name = "sapphire-journal"
 path = "src/main.rs"
 
 [features]
