@@ -1,13 +1,13 @@
-use anyhow::Result;
-use sapphire_journal_core::{
+use crate::{
+    error::{Error, Result},
     ops::{EntryFilter, FieldSelector, SortField, SortOrder},
     period::parse_period,
 };
 
 /// Frontend-neutral inputs for [`build_filter`].
 ///
-/// Both the CLI's clap-derived `EntryFilterArgs` and the MCP's serde-derived
-/// `EntryListParams` convert into this struct via `From`, so the actual filter
+/// Both the CLI's clap-derived filter arguments and the MCP's serde-derived
+/// list parameters convert into this struct via `From`, so the actual filter
 /// construction lives in one place.
 pub struct FilterInputs<'a> {
     pub period: Option<&'a str>,
@@ -25,7 +25,7 @@ pub struct FilterInputs<'a> {
 }
 
 pub fn build_filter(inputs: FilterInputs<'_>) -> Result<EntryFilter> {
-    let parse_p = |s: &str| parse_period(s).map_err(anyhow::Error::msg);
+    let parse_p = |s: &str| parse_period(s).map_err(Error::InvalidInput);
     let base = if inputs.active { FieldSelector::active() } else { FieldSelector::default() };
     Ok(EntryFilter {
         period: inputs.period.map(parse_p).transpose()?,
@@ -40,11 +40,11 @@ pub fn build_filter(inputs: FilterInputs<'_>) -> Result<EntryFilter> {
         task_status: inputs.task_status.to_vec(),
         tags: inputs.tags.to_vec(),
         sort_by: inputs.sort_by
-            .map(|s| s.parse::<SortField>().map_err(anyhow::Error::msg))
+            .map(|s| s.parse::<SortField>().map_err(Error::InvalidInput))
             .transpose()?
             .unwrap_or_default(),
         sort_order: inputs.sort_order
-            .map(|s| s.parse::<SortOrder>().map_err(anyhow::Error::msg))
+            .map(|s| s.parse::<SortOrder>().map_err(Error::InvalidInput))
             .transpose()?
             .unwrap_or_default(),
     })

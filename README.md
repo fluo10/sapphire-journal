@@ -122,7 +122,8 @@ Platform-specific VSIX files (with the CLI binary bundled) are also on the [Rele
 ```
 sapphire-journal/
 ├── sapphire-journal-core/     # Data model, Markdown parser/serializer, SQLite cache
-├── sapphire-journal-cli/      # Unified binary: CLI + MCP server (sajo mcp)
+├── sapphire-journal-cli/      # CLI binary (sajo)
+├── sapphire-journal-mcp/      # MCP server binary (sapphire-journal-mcp)
 ├── sapphire-journal-desktop/  # Desktop GUI (egui)
 └── sapphire-journal-vscode/   # VS Code extension
 ```

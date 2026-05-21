@@ -29,6 +29,9 @@ pub mod journal_state;
 pub mod ops;
 pub mod parser;
 pub mod period;
+pub mod state;
+#[cfg(feature = "text-input")]
+pub mod text_input;
 pub mod user_config;
 
 pub use journal_state::JournalState;

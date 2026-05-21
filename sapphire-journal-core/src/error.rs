@@ -38,6 +38,9 @@ pub enum Error {
     #[error("invalid config: {0}")]
     InvalidConfig(String),
 
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+
     #[error("cache error: {0}")]
     Cache(#[from] rusqlite::Error),
 
