@@ -18,6 +18,42 @@ pub struct Settings {
     /// `id` of the journal that was open when the app last exited.
     #[serde(default)]
     pub last_opened_journal_id: Option<Uuid>,
+
+    /// HTTP MCP server settings (for AI agent integrations).
+    #[serde(default)]
+    pub mcp_http: McpHttpSettings,
+}
+
+/// Configuration for the optional in-process MCP server exposed over HTTP.
+///
+/// Always binds to `127.0.0.1` — exposing the journal to other hosts on the
+/// network is not supported yet and would require an authentication layer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpHttpSettings {
+    /// Run an MCP HTTP server alongside the GUI whenever a journal is open.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// TCP port the server listens on (loopback only).
+    #[serde(default = "default_mcp_http_port")]
+    pub port: u16,
+}
+
+fn default_mcp_http_port() -> u16 {
+    3737
+}
+
+impl Default for McpHttpSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_mcp_http_port(),
+        }
+    }
+}
+
+impl McpHttpSettings {
+    pub const BIND: &'static str = "127.0.0.1";
 }
 
 impl Settings {

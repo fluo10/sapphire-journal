@@ -13,6 +13,7 @@ use sapphire_journal_core::{
 };
 
 use crate::app::App;
+use crate::settings::Settings;
 
 const DUP_TITLE_OPTIONS: &[&str] = &["allow", "warn", "error"];
 const SYNC_BACKEND_OPTIONS: &[&str] = &["auto", "none", "git"];
@@ -28,6 +29,10 @@ pub struct SettingsPanelState {
     // ── Global ─────────────────────────────────────────────────────────────
     sync_interval_minutes: String,
     sync_backend: String,
+
+    // ── MCP HTTP server (GUI-only setting) ─────────────────────────────────
+    mcp_http_enabled: bool,
+    mcp_http_port: String,
 
     error_msg: Option<String>,
     info_msg: Option<String>,
@@ -67,6 +72,10 @@ impl SettingsPanelState {
         }
         .to_string();
 
+        let gui_settings = Settings::load().unwrap_or_default();
+        let mcp_http_enabled = gui_settings.mcp_http.enabled;
+        let mcp_http_port = gui_settings.mcp_http.port.to_string();
+
         Self {
             journal_root,
             git_remote,
@@ -74,6 +83,8 @@ impl SettingsPanelState {
             entries_dir,
             sync_interval_minutes,
             sync_backend,
+            mcp_http_enabled,
+            mcp_http_port,
             error_msg: None,
             info_msg: None,
         }
@@ -88,6 +99,15 @@ impl SettingsPanelState {
             Err(_) => {
                 self.error_msg =
                     Some("Sync interval must be a non-negative integer (0 to disable).".to_string());
+                return false;
+            }
+        };
+
+        let mcp_port = match self.mcp_http_port.trim().parse::<u16>() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                self.error_msg =
+                    Some("MCP HTTP port must be an integer between 1 and 65535.".to_string());
                 return false;
             }
         };
@@ -136,6 +156,14 @@ impl SettingsPanelState {
             }
         }
 
+        let mut gui_settings = Settings::load().unwrap_or_default();
+        gui_settings.mcp_http.enabled = self.mcp_http_enabled;
+        gui_settings.mcp_http.port = mcp_port;
+        if let Err(e) = gui_settings.save() {
+            self.error_msg = Some(format!("Failed to save GUI settings: {e}"));
+            return false;
+        }
+
         self.info_msg = Some(if entries_dir_changed {
             "Saved. Restart or refresh to see entries from the new directory."
         } else {
@@ -179,13 +207,15 @@ fn set_git_remote(journal_root: &Path, url: &str) -> Result<(), String> {
 
 /// Render the panel.  No-op when `app.settings_panel` is `None`.
 pub fn show(app: &mut App, ctx: &egui::Context) {
+    // Take ownership so the in-window UI can borrow `state` mutably while
+    // the post-render reconciliation below freely mutates other fields on
+    // `app` (e.g. refreshing `app.settings` from disk after a Save).
+    let Some(mut state) = app.settings_panel.take() else {
+        return;
+    };
     let mut close = false;
     let mut do_save = false;
     let mut open_flag = true;
-
-    let Some(state) = app.settings_panel.as_mut() else {
-        return;
-    };
 
     egui::Window::new("Settings")
         .collapsible(false)
@@ -249,6 +279,24 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     }
                 });
 
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            ui.heading("MCP HTTP server");
+            ui.weak(
+                "Exposes the open journal to AI agents over localhost. \
+                 Toggling restarts the server while a journal is open.",
+            );
+            ui.add_space(4.0);
+
+            ui.checkbox(&mut state.mcp_http_enabled, "Enable MCP HTTP server");
+            ui.add_space(4.0);
+
+            ui.label("Port (loopback only)");
+            ui.add(egui::TextEdit::singleline(&mut state.mcp_http_port).desired_width(80.0));
+            ui.weak("Endpoint: http://127.0.0.1:<port>/mcp");
+
             if let Some(msg) = state.error_msg.clone() {
                 ui.add_space(8.0);
                 ui.colored_label(egui::Color32::LIGHT_RED, msg);
@@ -274,10 +322,14 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     if !open_flag {
         close = true;
     }
-    if do_save {
-        state.save();
+    if do_save && state.save() {
+        // Refresh the in-memory copy used by `App::reconcile_mcp_server` so
+        // the server starts/stops/restarts on the next frame.
+        if let Ok(s) = Settings::load() {
+            app.settings = s;
+        }
     }
-    if close {
-        app.settings_panel = None;
+    if !close {
+        app.settings_panel = Some(state);
     }
 }

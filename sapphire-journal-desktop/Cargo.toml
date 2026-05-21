@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.11.1" }
+sapphire-journal-mcp  = { path = "../sapphire-journal-mcp",  version = "0.11.1", default-features = false, features = ["sqlite-store", "lancedb-store", "fastembed-embed", "git-sync", "http-server"] }
 eframe = "0.34"
 egui = "0.34"
 egui_extras = { version = "0.34", features = ["svg"] }
@@ -19,4 +20,6 @@ grain-id = { version = "0.15" }
 serde = { workspace = true }
 toml = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }
+tokio-util = "0.7"
 chrono = { workspace = true }
+tracing = { workspace = true }
