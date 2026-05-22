@@ -1079,7 +1079,7 @@ fn filter_and_sort(home: &HomeState) -> Vec<EntryHeader> {
         if let Ok(period) = parse_period(home.period.trim()) {
             let filter = EntryFilter {
                 period: Some(period),
-                fields: FieldSelector::default(),
+                fields: FieldSelector::active(),
                 task_status: Vec::new(),
                 tags: Vec::new(),
                 sort_by: CoreSortField::Unsorted,
