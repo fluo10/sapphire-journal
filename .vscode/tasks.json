@@ -14,7 +14,7 @@
     {
       "label": "Copy binary to sapphire-journal-vscode/bin",
       "type": "shell",
-      "command": "mkdir -p sapphire-journal-vscode/bin && cp target/debug/sajo sapphire-journal-vscode/bin/sajo",
+      "command": "mkdir -p sapphire-journal-vscode/bin && cp target/debug/sapphire-journal sapphire-journal-vscode/bin/sapphire-journal",
       "options": {
         "cwd": "${workspaceFolder}"
       },
