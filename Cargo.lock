@@ -4419,9 +4419,19 @@ dependencies = [
  "libc",
  "libgit2-sys",
  "log",
- "openssl-probe 0.1.6",
- "openssl-sys",
  "url",
+]
+
+[[package]]
+name = "git2"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddddbf932745a6be37109b6112d3ee09696106f848449069d3a57bba937ab82e"
+dependencies = [
+ "bitflags 2.11.0",
+ "libc",
+ "libgit2-sys",
+ "log",
 ]
 
 [[package]]
@@ -6279,15 +6289,13 @@ dependencies = [
 
 [[package]]
 name = "libgit2-sys"
-version = "0.18.3+1.9.2"
+version = "0.18.4+1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9b3acc4b91781bb0b3386669d325163746af5f6e4f73e6d2d630e09a35f3487"
+checksum = "9b26f66f35e1871b22efcf7191564123d2a446ca0538cde63c23adfefa9b15b7"
 dependencies = [
  "cc",
  "libc",
- "libssh2-sys",
  "libz-sys",
- "openssl-sys",
  "pkg-config",
 ]
 
@@ -6336,20 +6344,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1f111c8c41e7c61a49cd34e44c7619462967221a6443b0ec299e0ac30cfb9b1"
 dependencies = [
  "cc",
- "pkg-config",
- "vcpkg",
-]
-
-[[package]]
-name = "libssh2-sys"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "220e4f05ad4a218192533b300327f5150e809b54c4ec83b5a1d91833601811b9"
-dependencies = [
- "cc",
- "libc",
- "libz-sys",
- "openssl-sys",
  "pkg-config",
  "vcpkg",
 ]
@@ -7011,7 +7005,7 @@ dependencies = [
  "libc",
  "log",
  "openssl",
- "openssl-probe 0.2.1",
+ "openssl-probe",
  "openssl-sys",
  "schannel",
  "security-framework",
@@ -7695,12 +7689,6 @@ dependencies = [
  "quote",
  "syn 2.0.117",
 ]
-
-[[package]]
-name = "openssl-probe"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
 
 [[package]]
 name = "openssl-probe"
@@ -9252,7 +9240,7 @@ version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "612460d5f7bea540c490b2b6395d8e34a953e52b491accd6c86c8164c5932a63"
 dependencies = [
- "openssl-probe 0.2.1",
+ "openssl-probe",
  "rustls-pki-types",
  "schannel",
  "security-framework",
@@ -9354,7 +9342,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_extras",
- "git2",
+ "git2 0.20.4",
  "grain-id",
  "rfd 0.15.4",
  "sapphire-journal-core",
@@ -9372,7 +9360,7 @@ name = "sapphire-journal-dioxus"
 version = "0.0.0"
 dependencies = [
  "dioxus",
- "git2",
+ "git2 0.20.4",
  "sapphire-journal-core",
  "serde",
  "tokio",
@@ -9401,9 +9389,9 @@ dependencies = [
 
 [[package]]
 name = "sapphire-retrieve"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ecf8664318f7ceaa575ef8fb505464c7c1ea7bc09bef5166bb905fd0db80cd"
+checksum = "b0edfee6ac7be799f7bdfc502b18be0e7151a2c71a897d027401ab24a8124ef7"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -9421,13 +9409,13 @@ dependencies = [
 
 [[package]]
 name = "sapphire-sync"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2059243db42f852bc6868018fe68606600b2550510b56d6bb28b8ed2390878d"
+checksum = "3145739c7819d3d921b4e9ed361b89449dc5e020f9022f16c645e61d4018b816"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
- "git2",
+ "git2 0.21.0",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -9437,9 +9425,9 @@ dependencies = [
 
 [[package]]
 name = "sapphire-workspace"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "964dddd10c9f8656c891c1f48afa7fb1cc3848da4d2f435951e29a82dd54454a"
+checksum = "adc078fda1d5dad8c675fea6e365c7921c27c8ae9069b4e215b4a059a9f13bfb"
 dependencies = [
  "chrono",
  "indexmap 2.14.0",
