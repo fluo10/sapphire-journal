@@ -1,6 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use chrono::{Duration, NaiveDate};
 use eframe::egui;
 use grain_id::GrainId;
 use uuid::Uuid;
@@ -16,11 +17,15 @@ use sapphire_journal_core::{
         remove_entry, update_entry,
     },
     parser::{read_entry, write_entry},
-    period::parse_period,
+    period::{Period, parse_period},
 };
 
 use crate::app::{App, AppState, EditorState, HomeState, ViewMode};
 use crate::icons;
+use crate::widgets::date_picker::date_picker_button;
+use crate::widgets::month_grid::{
+    self, MonthGrid, Selection, format_period_range, month_bounds, week_bounds,
+};
 
 pub fn show(app: &mut App, ui: &mut egui::Ui, journal_id: Uuid) {
     // ── Ensure HomeState matches the requested journal ────────────────────
@@ -87,6 +92,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, journal_id: Uuid) {
         });
 
     egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::Panel::top("home_calendar")
+            .resizable(false)
+            .show_inside(ui, |ui| {
+                draw_home_calendar(app, ui);
+            });
         draw_editor_panel(app, ui);
     });
 
@@ -209,18 +219,6 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
     if home.show_filters {
         ui.add_space(6.0);
 
-        // Filters: period + sort
-        ui.label("Period");
-        egui::ComboBox::from_id_salt("home_period")
-            .selected_text(period_label(&home.period))
-            .width(ui.available_width())
-            .show_ui(ui, |ui| {
-                for (value, label) in PERIOD_OPTIONS {
-                    ui.selectable_value(&mut home.period, (*value).to_string(), *label);
-                }
-            });
-
-        ui.add_space(4.0);
         ui.label("Sort by");
         egui::ComboBox::from_id_salt("home_sort_by")
             .selected_text(sort_label(&home.sort_by))
@@ -707,6 +705,123 @@ fn draw_entry_row(
     resp
 }
 
+// ── Home calendar (period picker) ────────────────────────────────────────────
+
+/// Renders the calendar above the editor.  Day / week / month clicks set
+/// `home.period` to a value `parse_period` understands.
+fn draw_home_calendar(app: &mut App, ui: &mut egui::Ui) {
+    let home = match app.home.as_mut() {
+        Some(h) => h,
+        None => return,
+    };
+
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        let caret = if home.show_calendar { "▾" } else { "▸" };
+        if ui
+            .add(egui::Button::new(format!("{caret} Calendar")).frame(false))
+            .clicked()
+        {
+            home.show_calendar = !home.show_calendar;
+        }
+        ui.weak(period_summary(&home.period));
+    });
+
+    if !home.show_calendar {
+        return;
+    }
+
+    // Pre-compute Bullet Journal-style entry counts for every cell on the
+    // displayed grid (6 weeks × 7 days, including spillover from adjacent
+    // months).  Mirrors the filter applied in `filter_and_sort` so the
+    // badge dots match what the user will see after clicking.
+    let grid_start = grid_start_for_month(home.calendar_cursor);
+    let mut counts: HashMap<NaiveDate, usize> = HashMap::new();
+    for offset in 0..42 {
+        let date = grid_start + Duration::days(offset);
+        let period = Period::Range(
+            date.and_hms_opt(0, 0, 0).unwrap(),
+            date.and_hms_opt(23, 59, 59).unwrap(),
+        );
+        let filter = EntryFilter {
+            period: Some(period),
+            fields: FieldSelector::active(),
+            task_status: Vec::new(),
+            tags: Vec::new(),
+            sort_by: CoreSortField::Unsorted,
+            sort_order: CoreSortOrder::Asc,
+        };
+        let n = home
+            .entries
+            .iter()
+            .filter(|e| filter.matches(e).0)
+            .count();
+        if n > 0 {
+            counts.insert(date, n);
+        }
+    }
+
+    // Highlight whatever period is currently active.  Falls back to no
+    // highlight when the string is empty or unparseable.
+    let selection = parse_period(home.period.trim())
+        .map(|p| month_grid::selection_from_period(&p))
+        .unwrap_or(Selection::None);
+
+    let counts_ref = &counts;
+    let resp = MonthGrid::new("home_calendar", &mut home.calendar_cursor)
+        .selection(selection)
+        .show_week_column(true)
+        .day_badge(&|d| counts_ref.get(&d).copied().unwrap_or(0))
+        .show(ui);
+
+    if let Some(d) = resp.day_clicked {
+        home.period = d.format("%Y-%m-%d").to_string();
+    } else if let Some(monday) = resp.week_clicked {
+        let (s, e) = week_bounds(monday);
+        home.period = format_period_range(s, e);
+    } else if let Some((y, m)) = resp.month_clicked {
+        let (s, e) = month_bounds(y, m);
+        home.period = format_period_range(s, e);
+    } else if resp.today_clicked {
+        home.period = "today".to_string();
+    } else if resp.clear_clicked {
+        home.period.clear();
+    }
+    ui.add_space(2.0);
+}
+
+/// Return the Monday at-or-before the 1st of the month containing `cursor` —
+/// matches the layout used by [`MonthGrid`] so we can pre-walk the grid here
+/// to compute badge counts.
+fn grid_start_for_month(cursor: NaiveDate) -> NaiveDate {
+    use chrono::Datelike as _;
+    let first = NaiveDate::from_ymd_opt(cursor.year(), cursor.month(), 1).unwrap();
+    let lead = first.weekday().num_days_from_monday() as i64;
+    first - Duration::days(lead)
+}
+
+/// Human-readable hint shown next to the calendar caret.  Best-effort —
+/// returns "All entries" when no period is set or the value can't be parsed.
+fn period_summary(period: &str) -> String {
+    let s = period.trim();
+    if s.is_empty() {
+        return "All entries".to_string();
+    }
+    match parse_period(s) {
+        Ok(Period::Range(start, end)) => {
+            let sd = start.date();
+            let ed = end.date();
+            if sd == ed {
+                sd.format("%Y-%m-%d").to_string()
+            } else {
+                format!("{} – {}", sd.format("%Y-%m-%d"), ed.format("%Y-%m-%d"))
+            }
+        }
+        Ok(Period::None) => "Unset field".to_string(),
+        Err(_) => s.to_string(),
+    }
+}
+
 // ── Editor panel ─────────────────────────────────────────────────────────────
 
 fn draw_editor_panel(app: &mut App, ui: &mut egui::Ui) {
@@ -806,11 +921,14 @@ fn draw_editor_panel_inner(home: &mut HomeState, ui: &mut egui::Ui) -> bool {
                         });
                         ui.vertical(|ui| {
                             ui.label("Due (YYYY-MM-DD)");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut editor.task_due)
-                                    .hint_text("2026-05-16")
-                                    .desired_width(160.0),
-                            );
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut editor.task_due)
+                                        .hint_text("2026-05-16")
+                                        .desired_width(140.0),
+                                );
+                                date_picker_button(ui, "task_due", &mut editor.task_due);
+                            });
                         });
                     });
                 }
@@ -824,17 +942,27 @@ fn draw_editor_panel_inner(home: &mut HomeState, ui: &mut egui::Ui) -> bool {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
                             ui.label("Start (YYYY-MM-DD)");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut editor.event_start)
-                                    .desired_width(160.0),
-                            );
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut editor.event_start)
+                                        .desired_width(140.0),
+                                );
+                                date_picker_button(
+                                    ui,
+                                    "event_start",
+                                    &mut editor.event_start,
+                                );
+                            });
                         });
                         ui.vertical(|ui| {
                             ui.label("End (YYYY-MM-DD)");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut editor.event_end)
-                                    .desired_width(160.0),
-                            );
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut editor.event_end)
+                                        .desired_width(140.0),
+                                );
+                                date_picker_button(ui, "event_end", &mut editor.event_end);
+                            });
                         });
                     });
                 }
@@ -1412,27 +1540,6 @@ fn tree_toggle(ui: &mut egui::Ui, src: egui::ImageSource<'static>) -> egui::Resp
         [TREE_TOGGLE_SIZE, TREE_TOGGLE_SIZE],
         egui::Button::image(img).frame(false),
     )
-}
-
-const PERIOD_OPTIONS: &[(&str, &str)] = &[
-    ("", "All"),
-    ("today", "Today"),
-    ("yesterday", "Yesterday"),
-    ("tomorrow", "Tomorrow"),
-    ("this_week", "This week"),
-    ("last_week", "Last week"),
-    ("next_week", "Next week"),
-    ("this_month", "This month"),
-    ("last_month", "Last month"),
-    ("next_month", "Next month"),
-];
-
-fn period_label(value: &str) -> &'static str {
-    PERIOD_OPTIONS
-        .iter()
-        .find(|(v, _)| *v == value)
-        .map(|(_, l)| *l)
-        .unwrap_or("All")
 }
 
 const SORT_OPTIONS: &[(&str, &str)] = &[

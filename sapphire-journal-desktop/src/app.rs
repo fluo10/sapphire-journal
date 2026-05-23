@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use chrono::NaiveDate;
 use eframe::egui;
 use grain_id::GrainId;
 use sapphire_journal_core::{JournalState, entry::EntryHeader, user_config::UserConfig};
@@ -147,8 +148,16 @@ pub struct HomeState {
 
     // ── Sidebar filter / sort state ─────────────────────────────────────────
     pub filter_text: String,
-    /// Period preset (empty = all). One of "" | "today" | "yesterday" | ...
+    /// Active period filter, serialised as a [`sapphire_journal_core::period`] string.
+    /// Empty = no filter (all entries). Day click writes `YYYY-MM-DD`, week / month
+    /// clicks write `YYYY-MM-DD/YYYY-MM-DD`, the calendar's "Today" shortcut writes
+    /// `today`.
     pub period: String,
+    /// The month currently displayed in the home-screen calendar widget.  Mutated
+    /// by the calendar's ◀ / ▶ arrows and reset to today by the "Today" shortcut.
+    pub calendar_cursor: NaiveDate,
+    /// Whether the home-screen calendar is visible (toggled by its caret).
+    pub show_calendar: bool,
     /// Sort field. One of "updated_at" | "created_at" | "title" | "id"
     /// | "task_due" | "event_start".
     pub sort_by: String,
@@ -176,6 +185,8 @@ impl HomeState {
             show_filters: false,
             filter_text: String::new(),
             period: String::new(),
+            calendar_cursor: chrono::Local::now().date_naive(),
+            show_calendar: true,
             sort_by: "updated_at".to_string(),
             sort_order: "desc".to_string(),
             confirm_delete_entry: false,

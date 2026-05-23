@@ -10,6 +10,7 @@ mod icons;
 mod registry;
 mod screens;
 mod settings;
+mod widgets;
 
 use app::App;
 
