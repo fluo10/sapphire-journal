@@ -4367,19 +4367,6 @@ dependencies = [
 
 [[package]]
 name = "git2"
-version = "0.20.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b88256088d75a56f8ecfa070513a775dd9107f6530ef14919dac831af9cfe2b"
-dependencies = [
- "bitflags 2.11.0",
- "libc",
- "libgit2-sys",
- "log",
- "url",
-]
-
-[[package]]
-name = "git2"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ddddbf932745a6be37109b6112d3ee09696106f848449069d3a57bba937ab82e"
@@ -9277,7 +9264,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_extras",
- "git2 0.20.4",
+ "git2",
  "grain-id",
  "rfd",
  "sapphire-journal-core",
@@ -9295,7 +9282,7 @@ name = "sapphire-journal-dioxus"
 version = "0.0.0"
 dependencies = [
  "dioxus",
- "git2 0.20.4",
+ "git2",
  "sapphire-journal-core",
  "serde",
  "tokio",
@@ -9350,7 +9337,7 @@ checksum = "3145739c7819d3d921b4e9ed361b89449dc5e020f9022f16c645e61d4018b816"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
- "git2 0.21.0",
+ "git2",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
