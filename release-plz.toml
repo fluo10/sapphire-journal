@@ -22,7 +22,3 @@ git_release_name = "mcp-v{{ version }}"
 name = "sapphire-journal-desktop"
 git_tag_name = "desktop-v{{ version }}"
 git_release_name = "desktop-v{{ version }}"
-
-[[package]]
-name = "sapphire-journal-dioxus"
-release = false

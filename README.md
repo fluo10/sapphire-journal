@@ -140,7 +140,6 @@ This repository contains components under different licenses:
 |-----------|---------|
 | `sapphire-journal-core` | MIT OR Apache-2.0 |
 | `sapphire-journal` | MIT OR Apache-2.0 |
-| `sapphire-journal-dioxus` | GPL-3.0-or-later |
 | `sapphire-journal-vscode` | MIT |
 
 See the `LICENSE` (or `LICENSE-MIT` / `LICENSE-APACHE`) file in each component's directory for the full license text.
