@@ -56,7 +56,7 @@ impl SettingsPanelState {
             .and_then(|repo| {
                 repo.find_remote("origin")
                     .ok()
-                    .and_then(|r| r.url().map(str::to_owned))
+                    .and_then(|r| r.url().ok().map(str::to_owned))
             })
             .unwrap_or_default();
 
