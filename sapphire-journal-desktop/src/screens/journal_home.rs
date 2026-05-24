@@ -33,7 +33,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, journal_id: Uuid) {
     if needs_init {
         match app.registry.journals.iter().find(|e| e.id == journal_id).cloned() {
             Some(entry) => {
-                app.home = Some(HomeState::new(entry));
+                app.home = Some(HomeState::new(entry, &app.settings));
                 app.remember_last_opened(Some(journal_id));
             }
             None => {
@@ -64,6 +64,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, journal_id: Uuid) {
     }
 
     // ── Layout: top header + left sidebar + central editor ───────────────
+    let mut toggle_right_sidebar = false;
     egui::Panel::top("home_header")
         .resizable(false)
         .show_inside(ui, |ui| {
@@ -72,12 +73,31 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, journal_id: Uuid) {
                 draw_journal_switcher(app, ui, journal_id);
                 if let Some(home) = &app.home {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let active = home.show_right_sidebar;
+                        let tooltip = if active {
+                            "Hide right sidebar"
+                        } else {
+                            "Show right sidebar"
+                        };
+                        if icon_toggle_btn(ui, icons::panel_right(), active, tooltip).clicked() {
+                            toggle_right_sidebar = true;
+                        }
                         ui.small(home.journal_root.display().to_string());
                     });
                 }
             });
             ui.add_space(4.0);
         });
+
+    if toggle_right_sidebar {
+        if let Some(home) = app.home.as_mut() {
+            home.show_right_sidebar = !home.show_right_sidebar;
+            app.settings.right_sidebar.visible = home.show_right_sidebar;
+            if let Err(e) = app.settings.save() {
+                home.error_msg = Some(format!("Failed to save settings: {e}"));
+            }
+        }
+    }
 
     if app.home.is_none() {
         return;
@@ -91,6 +111,36 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, journal_id: Uuid) {
             draw_sidebar(app, ui);
         });
 
+    // Decide whether the right sidebar fits as a panel or needs to overlay.
+    // Threshold mirrors keeping left(280) + center(340) + right(280) usable.
+    let show_right = app
+        .home
+        .as_ref()
+        .is_some_and(|h| h.show_right_sidebar);
+    let overlay = ui.available_width() < 900.0;
+    let tab_before = app.home.as_ref().map(|h| h.right_sidebar_tab);
+
+    if show_right && !overlay {
+        let initial_width = app
+            .home
+            .as_ref()
+            .map(|h| h.right_sidebar_width)
+            .unwrap_or(280.0);
+        egui::Panel::right("metadata_sidebar")
+            .resizable(true)
+            .default_size(initial_width)
+            .size_range(220.0..=480.0)
+            .show_inside(ui, |ui| {
+                if let Some(home) = app.home.as_mut() {
+                    crate::screens::right_sidebar::draw(home, ui);
+                }
+            });
+    }
+
+    // Capture the y where the central panel starts so the overlay can sit
+    // flush under the top header.
+    let overlay_top = ui.cursor().min.y;
+
     egui::CentralPanel::default().show_inside(ui, |ui| {
         egui::Panel::top("home_calendar")
             .resizable(false)
@@ -99,6 +149,26 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, journal_id: Uuid) {
             });
         draw_editor_panel(app, ui);
     });
+
+    if show_right && overlay {
+        if let Some(home) = app.home.as_mut() {
+            crate::screens::right_sidebar::draw_overlay(ui.ctx(), home, overlay_top);
+        }
+    }
+
+    if show_right {
+        let tab_after = app.home.as_ref().map(|h| h.right_sidebar_tab);
+        if tab_before != tab_after {
+            if let Some(tab) = tab_after {
+                app.settings.right_sidebar.active_tab = tab;
+                if let Err(e) = app.settings.save() {
+                    if let Some(home) = app.home.as_mut() {
+                        home.error_msg = Some(format!("Failed to save settings: {e}"));
+                    }
+                }
+            }
+        }
+    }
 
     // Confirm-delete-entry inline dialog
     if app

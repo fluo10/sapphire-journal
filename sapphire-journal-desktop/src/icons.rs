@@ -25,6 +25,7 @@ pub fn chevron_right() -> egui::ImageSource<'static> { icon!("chevron-right") }
 pub fn funnel() -> egui::ImageSource<'static> { icon!("funnel") }
 pub fn list_view() -> egui::ImageSource<'static> { icon!("list") }
 pub fn tree_view() -> egui::ImageSource<'static> { icon!("folder-tree") }
+pub fn panel_right() -> egui::ImageSource<'static> { icon!("panel-right") }
 pub fn plus() -> egui::ImageSource<'static> { icon!("plus") }
 pub fn refresh() -> egui::ImageSource<'static> { icon!("refresh-cw") }
 pub fn trash() -> egui::ImageSource<'static> { icon!("trash-2") }
