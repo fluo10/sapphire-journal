@@ -12,13 +12,16 @@ git_release_name = "core-v{{ version }}"
 name = "sapphire-journal-cli"
 git_tag_name = "cli-v{{ version }}"
 git_release_name = "cli-v{{ version }}"
+release = false
 
 [[package]]
 name = "sapphire-journal-mcp"
 git_tag_name = "mcp-v{{ version }}"
 git_release_name = "mcp-v{{ version }}"
+release = false
 
 [[package]]
 name = "sapphire-journal-desktop"
 git_tag_name = "desktop-v{{ version }}"
 git_release_name = "desktop-v{{ version }}"
+release = false
