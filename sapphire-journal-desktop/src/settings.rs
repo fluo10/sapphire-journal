@@ -22,6 +22,45 @@ pub struct Settings {
     /// HTTP MCP server settings (for AI agent integrations).
     #[serde(default)]
     pub mcp_http: McpHttpSettings,
+
+    /// Right metadata sidebar (Obsidian-style) preferences.
+    #[serde(default)]
+    pub right_sidebar: RightSidebarSettings,
+}
+
+/// Persisted state of the right metadata sidebar.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RightSidebarSettings {
+    #[serde(default)]
+    pub visible: bool,
+    #[serde(default = "default_right_sidebar_width")]
+    pub width: f32,
+    #[serde(default)]
+    pub active_tab: RightTab,
+}
+
+impl Default for RightSidebarSettings {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            width: default_right_sidebar_width(),
+            active_tab: RightTab::default(),
+        }
+    }
+}
+
+fn default_right_sidebar_width() -> f32 {
+    280.0
+}
+
+/// Which tab is currently selected in the right metadata sidebar.
+///
+/// Only one tab exists today; the enum is laid out so future tabs (outline,
+/// backlinks, etc.) can be added without breaking the on-disk format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum RightTab {
+    #[default]
+    Metadata,
 }
 
 /// Configuration for the optional in-process MCP server exposed over HTTP.
