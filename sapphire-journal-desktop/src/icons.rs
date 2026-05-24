@@ -20,6 +20,7 @@ macro_rules! icon {
 // ── Toolbar / chrome ───────────────────────────────────────────────────────
 
 pub fn arrow_left() -> egui::ImageSource<'static> { icon!("arrow-left") }
+pub fn calendar() -> egui::ImageSource<'static> { icon!("calendar") }
 pub fn chevron_down() -> egui::ImageSource<'static> { icon!("chevron-down") }
 pub fn chevron_right() -> egui::ImageSource<'static> { icon!("chevron-right") }
 pub fn funnel() -> egui::ImageSource<'static> { icon!("funnel") }
