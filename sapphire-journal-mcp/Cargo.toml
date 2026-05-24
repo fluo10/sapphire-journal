@@ -20,7 +20,7 @@ git-sync = ["sapphire-journal-core/git-sync"]
 http-server = ["rmcp/transport-streamable-http-server", "dep:axum", "dep:tokio-util"]
 
 [dependencies]
-sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.11.1", default-features = false, features = ["text-input"] }
+sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.12.0", default-features = false, features = ["text-input"] }
 rmcp.workspace = true
 tokio = { workspace = true, features = ["full"] }
 serde.workspace = true
