@@ -73,6 +73,9 @@ pub enum AppEvent {
     /// Sent by the periodic-sync task after a successful sync so the UI can
     /// reload entries that may have been added or modified by `git pull`.
     EntriesNeedReload,
+    /// Sent when the user-triggered "Sync now" task completes (or times out).
+    /// `Ok(())` triggers a reload; `Err(msg)` is surfaced as a home error banner.
+    SyncFinished(std::result::Result<(), String>),
 }
 
 pub struct App {
@@ -168,6 +171,9 @@ pub struct HomeState {
     pub error_msg: Option<String>,
     pub info_msg: Option<String>,
 
+    /// `true` while a user-triggered "Sync now" task is running. Used to
+    /// short-circuit duplicate clicks and to render a spinner in the header.
+    pub sync_in_progress: bool,
     /// Whether the Obsidian-style right metadata sidebar is currently shown.
     /// Toggled by the panel icon in the top header; persisted in [`Settings`].
     pub show_right_sidebar: bool,
@@ -202,6 +208,7 @@ impl HomeState {
             confirm_delete_entry: false,
             error_msg: None,
             info_msg: None,
+            sync_in_progress: false,
             show_right_sidebar: settings.right_sidebar.visible,
             right_sidebar_tab: settings.right_sidebar.active_tab,
             right_sidebar_width: settings.right_sidebar.width,
@@ -279,7 +286,8 @@ impl App {
 
         // Periodic background sync: cache + retrieve refresh + git pull/push,
         // mirroring the cadence used by the MCP server.  Skips ticks when no
-        // journal is open.
+        // journal is open. Each tick runs on a blocking worker with a
+        // timeout so a hung libgit2 fetch can't stall every future tick.
         if let Some(interval) = UserConfig::load().ok().and_then(|c| c.sync_interval()) {
             let state_arc = Arc::clone(&journal_state);
             let tx = event_tx.clone();
@@ -289,27 +297,45 @@ impl App {
                 ticker.tick().await; // skip the immediate first tick
                 loop {
                     ticker.tick().await;
-                    let did_sync = {
-                        let guard = state_arc.lock().unwrap();
-                        match guard.as_ref() {
-                            Some(state) => {
-                                if let Err(e) = state.sync() {
-                                    let _ = tx.send(AppEvent::Error(format!(
-                                        "Periodic cache sync failed: {e}"
-                                    )));
-                                }
-                                if let Err(e) = state.git_sync() {
-                                    let _ = tx.send(AppEvent::Error(format!(
-                                        "Periodic git sync failed: {e}"
-                                    )));
-                                }
-                                true
-                            }
-                            None => false,
+                    let state_arc_inner = Arc::clone(&state_arc);
+                    let handle = tokio::task::spawn_blocking(move || {
+                        let guard = state_arc_inner.lock().unwrap();
+                        let Some(state) = guard.as_ref() else {
+                            return Ok::<bool, String>(false);
+                        };
+                        state.sync().map_err(|e| format!("cache sync: {e}"))?;
+                        state.git_sync().map_err(|e| format!("git sync: {e}"))?;
+                        Ok(true)
+                    });
+                    let outcome = tokio::time::timeout(
+                        std::time::Duration::from_secs(120),
+                        handle,
+                    )
+                    .await;
+                    match outcome {
+                        Ok(Ok(Ok(true))) => {
+                            let _ = tx.send(AppEvent::EntriesNeedReload);
                         }
-                    };
-                    if did_sync {
-                        let _ = tx.send(AppEvent::EntriesNeedReload);
+                        Ok(Ok(Ok(false))) => {
+                            // No journal open this tick — nothing to do.
+                        }
+                        Ok(Ok(Err(msg))) => {
+                            let _ = tx.send(AppEvent::Error(format!(
+                                "Periodic sync failed: {msg}"
+                            )));
+                        }
+                        Ok(Err(join_err)) => {
+                            let _ = tx.send(AppEvent::Error(format!(
+                                "Periodic sync task panicked: {join_err}"
+                            )));
+                        }
+                        Err(_elapsed) => {
+                            let _ = tx.send(AppEvent::Error(
+                                "Periodic sync timed out after 120s — \
+                                 git fetch may be hanging on SSH or network."
+                                    .to_string(),
+                            ));
+                        }
                     }
                     // Wake the UI thread so the event is processed promptly
                     // even if the window has no pending input.
@@ -433,7 +459,15 @@ impl App {
                     self.dialog = None;
                 }
                 AppEvent::Error(msg) => {
-                    self.error_msg = Some(msg);
+                    // Sync / journal-state errors are user-facing — show them
+                    // on the home banner when a journal is open so they're
+                    // not silently swallowed (the app-level banner only
+                    // renders on the journal-list screen).
+                    if let Some(home) = self.home.as_mut() {
+                        home.error_msg = Some(msg);
+                    } else {
+                        self.error_msg = Some(msg);
+                    }
                     self.dialog = None;
                 }
                 AppEvent::CleanupAndError {
@@ -447,6 +481,19 @@ impl App {
                 AppEvent::EntriesNeedReload => {
                     if let Some(home) = self.home.as_mut() {
                         home.needs_reload = true;
+                    }
+                }
+                AppEvent::SyncFinished(result) => {
+                    if let Some(home) = self.home.as_mut() {
+                        home.sync_in_progress = false;
+                        match result {
+                            Ok(()) => {
+                                home.needs_reload = true;
+                            }
+                            Err(msg) => {
+                                home.error_msg = Some(msg);
+                            }
+                        }
                     }
                 }
             }
