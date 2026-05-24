@@ -4,11 +4,10 @@ permissions:
   pull-requests: write
   contents: write
 
-# Auto-trigger disabled until the missing crates have been manually
-# published to crates.io for the first time (see issue #225).
-# Re-enable by restoring `push: branches: [main]` once initial
-# publishes are done.
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
