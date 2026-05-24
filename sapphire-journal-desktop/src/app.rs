@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use chrono::NaiveDate;
@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::registry::{JournalRegistry, RegistryEntry};
 use crate::screens;
 use crate::screens::settings_panel::SettingsPanelState;
-use crate::settings::{McpHttpSettings, Settings};
+use crate::settings::{McpHttpSettings, RightTab, Settings};
 
 #[derive(Clone, PartialEq)]
 pub enum AppState {
@@ -174,10 +174,19 @@ pub struct HomeState {
     /// `true` while a user-triggered "Sync now" task is running. Used to
     /// short-circuit duplicate clicks and to render a spinner in the header.
     pub sync_in_progress: bool,
+    /// Whether the Obsidian-style right metadata sidebar is currently shown.
+    /// Toggled by the panel icon in the top header; persisted in [`Settings`].
+    pub show_right_sidebar: bool,
+    /// Active tab within the right sidebar (only `Metadata` exists today,
+    /// but the field is kept so future tabs can be added without UI churn).
+    pub right_sidebar_tab: RightTab,
+    /// User-resized width of the right sidebar in panel mode. Saved back to
+    /// [`Settings`] when the drag ends.
+    pub right_sidebar_width: f32,
 }
 
 impl HomeState {
-    pub fn new(entry: RegistryEntry) -> Self {
+    pub fn new(entry: RegistryEntry, settings: &Settings) -> Self {
         Self {
             journal_id: entry.id,
             journal_root: entry.storage_path,
@@ -200,7 +209,18 @@ impl HomeState {
             error_msg: None,
             info_msg: None,
             sync_in_progress: false,
+            show_right_sidebar: settings.right_sidebar.visible,
+            right_sidebar_tab: settings.right_sidebar.active_tab,
+            right_sidebar_width: settings.right_sidebar.width,
         }
+    }
+
+    /// Look up the cached header for the currently-selected entry.
+    pub fn active_header(&self) -> Option<&EntryHeader> {
+        let path = self.selected_path.as_ref()?;
+        self.entries
+            .iter()
+            .find(|h| Path::new(&h.path) == path.as_path())
     }
 }
 
@@ -254,7 +274,10 @@ impl App {
         {
             Some(entry) => {
                 let id = entry.id;
-                (AppState::Home { journal_id: id }, Some(HomeState::new(entry)))
+                (
+                    AppState::Home { journal_id: id },
+                    Some(HomeState::new(entry, &settings)),
+                )
             }
             None => (AppState::List, None),
         };
