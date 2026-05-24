@@ -7,6 +7,8 @@
 use chrono::NaiveDate;
 use eframe::egui;
 
+use crate::icons;
+
 use super::month_grid::{MonthGrid, Selection};
 
 const DATE_FMT: &str = "%Y-%m-%d";
@@ -16,14 +18,17 @@ const DATE_FMT: &str = "%Y-%m-%d";
 #[derive(Clone, Copy)]
 struct CursorMem(NaiveDate);
 
-/// Shows a "📅" button.  When clicked, opens a popup containing a month
-/// grid; clicking a day writes the formatted date into `buf`.
+/// Shows a calendar-icon button.  When clicked, opens a popup containing a
+/// month grid; clicking a day writes the formatted date into `buf`.
 pub fn date_picker_button(
     ui: &mut egui::Ui,
     id_salt: &str,
     buf: &mut String,
 ) -> egui::Response {
-    let button = ui.small_button("📅");
+    let icon = egui::Image::new(icons::calendar())
+        .fit_to_exact_size(egui::vec2(14.0, 14.0))
+        .tint(ui.visuals().text_color());
+    let button = ui.add(egui::Button::image(icon).small());
     let popup_id = button.id.with(("date_picker", id_salt));
 
     egui::Popup::from_toggle_button_response(&button)

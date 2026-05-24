@@ -753,7 +753,7 @@ fn draw_entry_row(
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
-                    let tint = ui.visuals().text_color();
+                    let tint = ui.visuals().strong_text_color();
                     for &flag in &header.flags {
                         ui.add(
                             egui::Image::new(icons::flag_icon(flag))
@@ -795,9 +795,16 @@ fn draw_home_calendar(app: &mut App, ui: &mut egui::Ui) {
 
     ui.add_space(2.0);
     ui.horizontal(|ui| {
-        let caret = if home.show_calendar { "▾" } else { "▸" };
+        let caret_src = if home.show_calendar {
+            icons::chevron_down()
+        } else {
+            icons::chevron_right()
+        };
+        let caret = egui::Image::new(caret_src)
+            .fit_to_exact_size(egui::vec2(14.0, 14.0))
+            .tint(ui.visuals().text_color());
         if ui
-            .add(egui::Button::new(format!("{caret} Calendar")).frame(false))
+            .add(egui::Button::image_and_text(caret, "Calendar").frame(false))
             .clicked()
         {
             home.show_calendar = !home.show_calendar;
@@ -1478,7 +1485,10 @@ fn draw_journal_switcher(app: &mut App, ui: &mut egui::Ui, current_id: Uuid) {
     let mut sync_now = false;
     let mut open_settings = false;
 
-    let response = ui.menu_button(format!("{current_name} ▾"), |ui| {
+    let caret = egui::Image::new(icons::chevron_down())
+        .fit_to_exact_size(egui::vec2(14.0, 14.0))
+        .tint(ui.visuals().text_color());
+    let response = ui.menu_button((current_name, caret), |ui| {
         if !others.is_empty() {
             ui.label("Other journals");
             for (id, name) in &others {
