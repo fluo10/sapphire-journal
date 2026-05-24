@@ -71,6 +71,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, journal_id: Uuid) {
             ui.horizontal(|ui| {
                 draw_journal_switcher(app, ui, journal_id);
                 if let Some(home) = &app.home {
+                    if home.sync_in_progress {
+                        ui.add(egui::Spinner::new().size(14.0));
+                        ui.small("Syncing…");
+                        // While a sync is running, keep painting so the
+                        // spinner animates even without user input.
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_millis(100));
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.small(home.journal_root.display().to_string());
                     });
@@ -1446,14 +1454,35 @@ fn draw_journal_switcher(app: &mut App, ui: &mut egui::Ui, current_id: Uuid) {
     }
 }
 
+/// Time budget for a single manual sync. libgit2 itself has no fetch
+/// timeout, so SSH/network hangs would otherwise stall the worker thread
+/// (and the `journal_state` mutex it holds) indefinitely. After this
+/// elapses we report a timeout error to the UI; the worker thread keeps
+/// running and will eventually release the lock when libgit2 finally
+/// errors out or completes.
+const MANUAL_SYNC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Run cache + git sync once, off-thread, and report success/failure via
 /// `AppEvent`.  Lets the user verify sync independently of the 10-minute
 /// periodic tick.
 fn trigger_manual_sync(app: &mut App) {
+    // Guard against duplicate clicks: a previous Sync now may still be
+    // blocked on the journal_state mutex (e.g. libgit2 fetch hanging).
+    // Without this, every additional click leaks another tokio task that
+    // also waits forever on the same mutex.
+    if let Some(home) = app.home.as_mut() {
+        if home.sync_in_progress {
+            home.error_msg = Some("Sync already in progress".to_string());
+            return;
+        }
+        home.sync_in_progress = true;
+        home.error_msg = None;
+    }
+
     let state_arc = std::sync::Arc::clone(&app.journal_state);
     let tx = app.event_tx.clone();
     app.runtime.spawn(async move {
-        let result = tokio::task::spawn_blocking(move || {
+        let handle = tokio::task::spawn_blocking(move || {
             let guard = state_arc.lock().unwrap();
             let Some(state) = guard.as_ref() else {
                 return Err("no journal is open".to_string());
@@ -1461,23 +1490,21 @@ fn trigger_manual_sync(app: &mut App) {
             state.sync().map_err(|e| format!("cache sync: {e}"))?;
             state.git_sync().map_err(|e| format!("git sync: {e}"))?;
             Ok::<(), String>(())
-        })
-        .await;
-        match result {
-            Ok(Ok(())) => {
-                let _ = tx.send(crate::app::AppEvent::EntriesNeedReload);
-            }
-            Ok(Err(msg)) => {
-                let _ = tx.send(crate::app::AppEvent::Error(format!(
-                    "Sync failed: {msg}"
-                )));
-            }
-            Err(join_err) => {
-                let _ = tx.send(crate::app::AppEvent::Error(format!(
-                    "Sync task panicked: {join_err}"
-                )));
-            }
-        }
+        });
+
+        let outcome = match tokio::time::timeout(MANUAL_SYNC_TIMEOUT, handle).await {
+            Ok(Ok(inner)) => inner,
+            Ok(Err(join_err)) => Err(format!("Sync task panicked: {join_err}")),
+            Err(_elapsed) => Err(format!(
+                "Sync timed out after {}s — git fetch may be hanging on SSH or network. \
+                 Check that `git pull` works in this repo from the terminal.",
+                MANUAL_SYNC_TIMEOUT.as_secs()
+            )),
+        };
+
+        let _ = tx.send(crate::app::AppEvent::SyncFinished(
+            outcome.map_err(|msg| format!("Sync failed: {msg}")),
+        ));
     });
 }
 
