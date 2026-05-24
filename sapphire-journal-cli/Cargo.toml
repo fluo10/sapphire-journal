@@ -21,7 +21,7 @@ git-sync        = ["sapphire-journal-core/git-sync",        "sapphire-journal-mc
 
 [dependencies]
 clap.workspace = true
-sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.11.1", default-features = false, features = ["text-input"] }
+sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.12.0", default-features = false, features = ["text-input"] }
 sapphire-journal-mcp  = { path = "../sapphire-journal-mcp",  version = "0.11.1", default-features = false }
 tokio = { workspace = true, features = ["rt"] }
 serde.workspace = true

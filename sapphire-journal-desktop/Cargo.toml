@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 repository.workspace = true
 
 [dependencies]
-sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.11.1" }
+sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.12.0" }
 sapphire-journal-mcp  = { path = "../sapphire-journal-mcp",  version = "0.11.1", default-features = false, features = ["sqlite-store", "lancedb-store", "fastembed-embed", "git-sync", "http-server"] }
 eframe = "0.34"
 egui = "0.34"
