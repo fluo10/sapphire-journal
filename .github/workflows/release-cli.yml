@@ -1,32 +1,60 @@
-name: Release CLI Binaries
+name: Release CLI binaries
 
+# Builds the cross-platform sapphire-journal-cli binaries and uploads
+# them as release assets onto an existing GitHub release.
+#
+# Triggered as a reusable workflow from release-plz.yml (right after
+# the tag + release are created) plus workflow_dispatch for retroactive
+# uploads / manual recovery. `push: tags` is intentionally omitted
+# because release-plz's GITHUB_TOKEN tag pushes don't fire downstream
+# workflows.
 on:
-  push:
-    tags:
-      - 'cli-v*'
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+        description: 'Existing release tag to attach binaries to (e.g. cli-v0.11.1).'
+  workflow_dispatch:
+    inputs:
+      tag:
+        required: true
+        type: string
+        description: 'Existing release tag to attach binaries to (e.g. cli-v0.11.1).'
 
 jobs:
   build:
+    continue-on-error: ${{ matrix.continue-on-error }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             binary: sapphire-journal
             asset_name: sapphire-journal-linux-x86_64
-          - os: macos-latest
-            binary: sapphire-journal
-            asset_name: sapphire-journal-macos-aarch64
-          - os: windows-latest
-            binary: sapphire-journal.exe
-            asset_name: sapphire-journal-windows-x86_64.exe
+            continue-on-error: false
           - os: ubuntu-24.04-arm
             binary: sapphire-journal
             asset_name: sapphire-journal-linux-aarch64
+            continue-on-error: false
+          - os: macos-latest
+            binary: sapphire-journal
+            asset_name: sapphire-journal-macos-aarch64
+            continue-on-error: true
+          - os: windows-latest
+            binary: sapphire-journal.exe
+            asset_name: sapphire-journal-windows-x86_64.exe
+            continue-on-error: true
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+
       - name: Install protoc (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -36,34 +64,15 @@ jobs:
       - name: Install protoc (Windows)
         if: runner.os == 'Windows'
         run: choco install protoc
-      - run: cargo build --release -p sapphire-journal-cli
 
-      - name: Rename binary (Unix)
-        if: runner.os != 'Windows'
+      - run: cargo build --release --package sapphire-journal-cli
+
+      - name: Rename binary
+        shell: bash
         run: cp target/release/${{ matrix.binary }} ${{ matrix.asset_name }}
 
-      - name: Rename binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: Copy-Item target/release/${{ matrix.binary }} ${{ matrix.asset_name }}
-
-      - uses: actions/upload-artifact@v7
+      - name: Upload to release
+        uses: softprops/action-gh-release@v3
         with:
-          name: ${{ matrix.asset_name }}
-          path: ${{ matrix.asset_name }}
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ github.ref_name }}
-          files: artifacts/*
+          tag_name: ${{ inputs.tag }}
+          files: ${{ matrix.asset_name }}

@@ -49,14 +49,29 @@ jobs:
     if: needs.release-plz-release.outputs.releases_created == 'true'
     runs-on: ubuntu-latest
     outputs:
+      cli_tag: ${{ steps.parse.outputs.cli_tag }}
       desktop_tag: ${{ steps.parse.outputs.desktop_tag }}
     steps:
       - id: parse
         env:
           RELEASES: ${{ needs.release-plz-release.outputs.releases }}
         run: |
+          cli_tag=$(jq -r '.[] | select(.package_name == "sapphire-journal-cli") | .tag // empty' <<<"$RELEASES")
           desktop_tag=$(jq -r '.[] | select(.package_name == "sapphire-journal-desktop") | .tag // empty' <<<"$RELEASES")
-          echo "desktop_tag=$desktop_tag" >> "$GITHUB_OUTPUT"
+          {
+            echo "cli_tag=$cli_tag"
+            echo "desktop_tag=$desktop_tag"
+          } >> "$GITHUB_OUTPUT"
+
+  build-cli:
+    name: Build sapphire-journal-cli binaries
+    needs: parse-releases
+    if: needs.parse-releases.outputs.cli_tag != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-cli.yml
+    with:
+      tag: ${{ needs.parse-releases.outputs.cli_tag }}
 
   build-desktop:
     name: Build sapphire-journal-desktop binaries
