@@ -18,7 +18,6 @@ release = false
 name = "sapphire-journal-mcp"
 git_tag_name = "mcp-v{{ version }}"
 git_release_name = "mcp-v{{ version }}"
-release = false
 
 [[package]]
 name = "sapphire-journal-desktop"
