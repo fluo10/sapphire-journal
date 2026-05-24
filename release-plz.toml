@@ -19,8 +19,14 @@ name = "sapphire-journal-mcp"
 git_tag_name = "mcp-v{{ version }}"
 git_release_name = "mcp-v{{ version }}"
 
+# GitHub-release-only binary crate. `release = true` is load-bearing:
+# release-plz silently skips any crate whose Cargo.toml has
+# `publish = false` unless this is set, so without it no `desktop-v*`
+# tag or GH release would ever be created. See sapphire-agent's
+# release-plz.toml for the original write-up of this behaviour.
 [[package]]
 name = "sapphire-journal-desktop"
 git_tag_name = "desktop-v{{ version }}"
 git_release_name = "desktop-v{{ version }}"
-release = false
+publish = false
+release = true

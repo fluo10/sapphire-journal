@@ -1,0 +1,81 @@
+name: Release desktop binaries
+
+# Builds the cross-platform sapphire-journal-desktop binaries and
+# uploads them as release assets onto an existing GitHub release.
+#
+# Triggered as a reusable workflow from release-plz.yml (right after
+# the tag + release are created) plus workflow_dispatch for retroactive
+# uploads. `push: tags` is intentionally omitted because release-plz's
+# GITHUB_TOKEN tag pushes don't fire downstream workflows.
+#
+# The desktop crate is `publish = false`, so this workflow is the only
+# delivery path — users install via `gh release download`, not
+# `cargo install`.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+        description: 'Existing release tag to attach binaries to (e.g. desktop-v0.1.0).'
+  workflow_dispatch:
+    inputs:
+      tag:
+        required: true
+        type: string
+        description: 'Existing release tag to attach binaries to (e.g. desktop-v0.1.0).'
+
+jobs:
+  build:
+    continue-on-error: ${{ matrix.continue-on-error }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            binary: sapphire-journal-desktop
+            asset_name: sapphire-journal-desktop-linux-x86_64
+            continue-on-error: false
+          - os: ubuntu-24.04-arm
+            binary: sapphire-journal-desktop
+            asset_name: sapphire-journal-desktop-linux-aarch64
+            continue-on-error: false
+          - os: macos-latest
+            binary: sapphire-journal-desktop
+            asset_name: sapphire-journal-desktop-macos-aarch64
+            continue-on-error: true
+          - os: windows-latest
+            binary: sapphire-journal-desktop.exe
+            asset_name: sapphire-journal-desktop-windows-x86_64.exe
+            continue-on-error: true
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install protoc and GTK/WebKit deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libxdo-dev
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        run: choco install protoc
+
+      - run: cargo build --release --package sapphire-journal-desktop
+
+      - name: Rename binary
+        shell: bash
+        run: cp target/release/${{ matrix.binary }} ${{ matrix.asset_name }}
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: ${{ matrix.asset_name }}

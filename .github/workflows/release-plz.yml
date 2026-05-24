@@ -17,6 +17,9 @@ jobs:
     concurrency:
       group: release-plz-release
       cancel-in-progress: false
+    outputs:
+      releases: ${{ steps.release.outputs.releases }}
+      releases_created: ${{ steps.release.outputs.releases_created }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -24,12 +27,46 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - uses: release-plz/action@v0.5.129
+      - id: release
+        uses: release-plz/action@v0.5.129
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Fan out to per-package binary build workflows. Each runs only when
+  # release-plz reported a release for that package on this push.
+  #
+  # Why this isn't done via `on: push: tags` in the build workflows:
+  # release-plz pushes the per-package tags using GITHUB_TOKEN, and
+  # GitHub Actions does not fire downstream workflows on tags pushed
+  # by GITHUB_TOKEN. workflow_call (this fan-out) is the cleanest way
+  # to chain the builds without provisioning a PAT.
+  parse-releases:
+    name: Parse release-plz output
+    needs: release-plz-release
+    if: needs.release-plz-release.outputs.releases_created == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      desktop_tag: ${{ steps.parse.outputs.desktop_tag }}
+    steps:
+      - id: parse
+        env:
+          RELEASES: ${{ needs.release-plz-release.outputs.releases }}
+        run: |
+          desktop_tag=$(jq -r '.[] | select(.package_name == "sapphire-journal-desktop") | .tag // empty' <<<"$RELEASES")
+          echo "desktop_tag=$desktop_tag" >> "$GITHUB_OUTPUT"
+
+  build-desktop:
+    name: Build sapphire-journal-desktop binaries
+    needs: parse-releases
+    if: needs.parse-releases.outputs.desktop_tag != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      tag: ${{ needs.parse-releases.outputs.desktop_tag }}
 
   release-plz-pr:
     name: Release-plz PR
