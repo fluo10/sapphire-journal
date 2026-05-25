@@ -1,0 +1,75 @@
+# cargo-deny config. Run locally with `cargo deny check`.
+# Reference: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Restrict the dep graph to the platforms we actually publish binaries for
+# (see release-cli.yml / release-desktop.yml). This drops UEFI/WASM-only
+# transitive deps like `r-efi` so we don't need to allow their licenses.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+all-features = true
+
+[advisories]
+yanked = "warn"
+# Transitive `unmaintained` advisories we can't act on without replacing
+# major deps (lance/lancedb, image/rav1e, git2, lindera). Re-evaluate when
+# those crates' upstreams move off the unmaintained package, or when a
+# *vulnerability* (not just unmaintained) advisory is filed for any of them.
+ignore = [
+    { id = "RUSTSEC-2025-0141", reason = "bincode 2.x is unmaintained but used transitively via lindera → lance; no safe upgrade exists." },
+    { id = "RUSTSEC-2026-0105", reason = "core2 is unmaintained and yanked but pulled in via image → rav1e → bitstream-io." },
+    { id = "RUSTSEC-2021-0153", reason = "encoding crate is unmaintained but pulled in via lindera → lance." },
+    { id = "RUSTSEC-2025-0119", reason = "number_prefix is unmaintained but pulled in via indicatif → hf-hub → fastembed." },
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained but pulled in via many proc-macro consumers; no drop-in replacement." },
+]
+
+[licenses]
+# Permissive SPDX identifiers actually present in the resolved graph.
+# Re-survey with `cargo deny list --layout license` before widening.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "NCSA",
+    "OFL-1.1",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.93
+
+# Per-crate carve-outs for licenses we don't want to globally allow.
+exceptions = [
+    # Our own GPL-3.0-or-later desktop crate (with App Store exception, see
+    # sapphire-journal-desktop/LICENSE.App-Store-Exception). Scoping it here
+    # prevents other GPL-3.0 deps from silently slipping in.
+    { name = "sapphire-journal-desktop", allow = ["GPL-3.0-or-later"] },
+    # `epaint_default_fonts` ships the Ubuntu font under the Ubuntu Font
+    # Licence 1.0 — fine for redistribution but not worth globally allowing.
+    { name = "epaint_default_fonts", allow = ["Ubuntu-font-1.0"] },
+]
+
+[bans]
+# Duplicate-version warnings are too noisy in real Rust workspaces (every
+# transitively-pulled `syn`/`bitflags`/`hashbrown` version trips it).
+multiple-versions = "allow"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
