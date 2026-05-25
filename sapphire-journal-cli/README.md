@@ -29,6 +29,21 @@ cargo install sapphire-journal
 cargo install --path .
 ```
 
+### Uninstall
+
+The CLI is a single binary and stores no global state outside your journal directories. Removing the binary is enough — your journals (`.sapphire-journal/` inside each project) are untouched.
+
+```sh
+# Linux / macOS (install script location)
+rm ~/.local/bin/sapphire-journal
+
+# Windows (PowerShell, install script location)
+Remove-Item "$HOME\.local\bin\sapphire-journal.exe"
+
+# cargo-installed
+cargo uninstall sapphire-journal-cli
+```
+
 ---
 
 ## CLI usage
