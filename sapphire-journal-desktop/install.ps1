@@ -2,10 +2,10 @@ $ErrorActionPreference = 'Stop'
 
 $Repo = 'fluo10/sapphire-journal'
 $InstallDir = Join-Path $HOME '.local\bin'
-$Binary = 'sapphire-journal'
+$Binary = 'sapphire-journal-desktop'
 
 $Releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases"
-$Version = ($Releases | Where-Object { $_.tag_name -like 'cli-v*' -and $_.tag_name -notlike 'retrieve-cli-v*' } | Select-Object -First 1).tag_name
+$Version = ($Releases | Where-Object { $_.tag_name -like 'desktop-v*' } | Select-Object -First 1).tag_name
 if (-not $Version) {
     Write-Error 'Failed to fetch latest version.'
     exit 1

@@ -139,7 +139,9 @@ This repository contains components under different licenses:
 | Component | License |
 |-----------|---------|
 | `sapphire-journal-core` | MIT OR Apache-2.0 |
-| `sapphire-journal` | MIT OR Apache-2.0 |
+| `sapphire-journal-cli` | MIT OR Apache-2.0 |
+| `sapphire-journal-mcp` | MIT OR Apache-2.0 |
+| `sapphire-journal-desktop` | GPL-3.0-or-later, with [App Store marketplace exception](sapphire-journal-desktop/LICENSE.App-Store-Exception) |
 | `sapphire-journal-vscode` | MIT |
 
 See the `LICENSE` (or `LICENSE-MIT` / `LICENSE-APACHE`) file in each component's directory for the full license text.
