@@ -69,4 +69,6 @@ The desktop app embeds the [`sapphire-journal-mcp`](../sapphire-journal-mcp/) HT
 
 ## License
 
-GPL-3.0-or-later
+GPL-3.0-or-later, with an additional [App Store / marketplace compatibility exception](LICENSE.App-Store-Exception) that permits distribution through official application marketplaces (Apple App Store, Google Play, Microsoft Store, etc.) whose standard terms would otherwise conflict with GPL §6/§7.
+
+See [LICENSE](LICENSE) for the full GPL-3.0 text.
