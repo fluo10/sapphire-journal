@@ -1,7 +1,7 @@
 [package]
 name = "sapphire-journal-desktop"
 version = "0.1.0"
-authors = ["fluo10 <fluo10.dev@fireturtle.net>"]
+authors = ["fluo10 <fluo10@fireturtle.net>"]
 edition.workspace = true
 description.workspace = true
 license = "GPL-3.0-or-later"
