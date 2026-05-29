@@ -498,9 +498,14 @@ impl SapphireJournalServer {
         .map_err(|e| e.to_string())
     }
 
+    // Zero-argument tools use `Parameters<EmptyObject>` rather than
+    // `Parameters<serde_json::Value>`: the latter renders as `{"title":"AnyValue"}`
+    // with no top-level `type`, which strict MCP clients reject — Anthropic returns
+    // `tools.<N>.custom.input_schema.type: Field required` (400).
+    // See https://github.com/fluo10/sapphire-agent/issues/155.
     #[tool(description = "Run a full git sync cycle: commit staged changes, fetch and merge from \
         remote, then push. No-op when no git repository is found or sync is disabled.")]
-    fn git_sync(&self, _: Parameters<serde_json::Value>) -> Result<String, String> {
+    fn git_sync(&self, _: Parameters<EmptyObject>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             self.with_state(|s| {
                 if !s.has_sync_backend() {
@@ -514,7 +519,7 @@ impl SapphireJournalServer {
     }
 
     #[tool(description = "Show cache location, schema version, and entry/tag counts.")]
-    fn cache_info(&self, _: Parameters<serde_json::Value>) -> Result<String, String> {
+    fn cache_info(&self, _: Parameters<EmptyObject>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             self.with_state(|s| {
                 let info = s.cache_info()?;
@@ -535,7 +540,7 @@ impl SapphireJournalServer {
     #[tool(description = "Incrementally sync the cache with the current journal state. \
         Re-indexes files whose mtime has changed and removes entries for deleted files. \
         Returns the number of entries in the cache after sync.")]
-    fn cache_sync(&self, _: Parameters<serde_json::Value>) -> Result<String, String> {
+    fn cache_sync(&self, _: Parameters<EmptyObject>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             self.with_state(|s| {
                 s.sync()?;
@@ -550,7 +555,7 @@ impl SapphireJournalServer {
         Use this after updating sapphire-journal when the schema has changed, \
         or when the cache has become inconsistent. \
         Returns the number of entries indexed.")]
-    fn cache_rebuild(&self, _: Parameters<serde_json::Value>) -> Result<String, String> {
+    fn cache_rebuild(&self, _: Parameters<EmptyObject>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let mut guard = self.state.lock().unwrap();
             let journal_root = guard.journal.root.clone();
@@ -735,4 +740,46 @@ pub async fn run(journal_dir: Option<&Path>, init: bool) -> anyhow::Result<()> {
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Zero-argument tools use `EmptyObject`, which must advertise a top-level `type: object`.
+    /// `serde_json::Value` used to render as `{"title":"AnyValue"}` (no `type`), which Anthropic
+    /// rejects with `tools.<N>.custom.input_schema.type: Field required`. See
+    /// https://github.com/fluo10/sapphire-agent/issues/155.
+    #[test]
+    fn empty_object_schema_has_object_type() {
+        let schema = schemars::schema_for!(EmptyObject);
+        let value = serde_json::to_value(&schema).unwrap();
+
+        assert_eq!(
+            value.get("type").and_then(|t| t.as_str()),
+            Some("object"),
+            "EmptyObject schema must declare type=object, got: {value}"
+        );
+        // Must not regress to the schemaless `serde_json::Value` shape.
+        assert_ne!(
+            value.get("title").and_then(|t| t.as_str()),
+            Some("AnyValue"),
+            "EmptyObject must not render as the schemaless AnyValue shape"
+        );
+    }
+
+    /// Guard the generated input schema for every registered tool so a future tool added
+    /// with `Parameters<serde_json::Value>` can't silently reintroduce the missing-`type` bug.
+    #[test]
+    fn all_tool_input_schemas_declare_object_type() {
+        for tool in SapphireJournalServer::tool_router().list_all() {
+            let schema = &tool.input_schema;
+            assert_eq!(
+                schema.get("type").and_then(|t| t.as_str()),
+                Some("object"),
+                "tool `{}` input_schema must declare type=object, got: {schema:?}",
+                tool.name,
+            );
+        }
+    }
 }
