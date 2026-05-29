@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.12.0" }
-sapphire-journal-mcp  = { path = "../sapphire-journal-mcp",  version = "0.1.0", default-features = false, features = ["sqlite-store", "lancedb-store", "fastembed-embed", "git-sync", "http-server"] }
+sapphire-journal-mcp  = { path = "../sapphire-journal-mcp", version = "0.1.1", default-features = false, features = ["sqlite-store", "lancedb-store", "fastembed-embed", "git-sync", "http-server"] }
 eframe = "0.34"
 egui = "0.34"
 egui_extras = { version = "0.34", features = ["svg"] }
