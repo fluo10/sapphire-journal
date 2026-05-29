@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/fluo10/sapphire-journal/compare/mcp-v0.1.0...mcp-v0.1.1) - 2026-05-29
+
+### Fixed
+
+- *(mcp)* use EmptyObject for zero-arg tool input schemas
+
+### Other
+
+- *(mcp)* add LICENSE-MIT and LICENSE-APACHE files
+- *(sapphire-journal-mcp)* release v0.1.0
+
 ## [0.1.0](https://github.com/fluo10/sapphire-journal/releases/tag/mcp-v0.1.0) - 2026-05-24
 
 ### Added

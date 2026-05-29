@@ -2,6 +2,12 @@
 
 All notable changes to `sapphire-journal` and `sapphire-journal-core` are documented here.
 
+## [0.12.1](https://github.com/fluo10/sapphire-journal/compare/cli-v0.12.0...cli-v0.12.1) - 2026-05-29
+
+### Other
+
+- *(cli)* fix install.ps1 binary name and document uninstall
+
 ## [0.11.1] - 2026-04-13
 
 ### Fixed
