@@ -28,7 +28,7 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - id: release
-        uses: release-plz/action@v0.5.129
+        uses: release-plz/action@v0.5.130
         with:
           command: release
         env:
@@ -96,7 +96,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - uses: release-plz/action@v0.5.129
+      - uses: release-plz/action@v0.5.130
         with:
           command: release-pr
         env:
