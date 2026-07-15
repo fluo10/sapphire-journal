@@ -362,7 +362,7 @@ impl SapphireJournalServer {
                 s.sync()?;
                 let dest = ops::create_entry(s, fields)?;
                 if let Ok(conn) = s.open_conn() {
-                    let _ = cache::upsert_entry_from_path(&conn, &dest, s.retrieve_db());
+                    let _ = cache::upsert_entry_from_path(&conn, &dest, s.retrieve_db(), s.track());
                 }
                 let _ = s.on_file_updated(&dest);
                 Ok(format!("created: {}", dest.display()))
@@ -410,13 +410,13 @@ impl SapphireJournalServer {
                 let conn = s.open_conn()?;
                 let path = ops::resolve_entry(&p.entry, &conn)?;
                 let msg = if let Some(new_path) = ops::update_entry(&path, &conn, fields)? {
-                    let _ = cache::upsert_entry_from_path(&conn, &new_path, s.retrieve_db());
+                    let _ = cache::upsert_entry_from_path(&conn, &new_path, s.retrieve_db(), s.track());
                     // File was renamed: remove old path and stage new path
                     let _ = s.on_file_deleted(&path);
                     let _ = s.on_file_updated(&new_path);
                     format!("updated and renamed: {}", new_path.display())
                 } else {
-                    let _ = cache::upsert_entry_from_path(&conn, &path, s.retrieve_db());
+                    let _ = cache::upsert_entry_from_path(&conn, &path, s.retrieve_db(), s.track());
                     let _ = s.on_file_updated(&path);
                     format!("updated: {}", path.display())
                 };
@@ -490,7 +490,7 @@ impl SapphireJournalServer {
                 let conn = s.open_conn()?;
                 let path = ops::resolve_entry(&p.entry, &conn)?;
                 ops::remove_entry(&path)?;
-                let _ = cache::remove_from_cache(&conn, &path, s.retrieve_db());
+                let _ = cache::remove_from_cache(&conn, &path, s.retrieve_db(), s.track());
                 let _ = s.on_file_deleted(&path);
                 Ok(format!("removed: {}", path.display()))
             })

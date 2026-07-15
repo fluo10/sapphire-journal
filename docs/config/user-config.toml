@@ -10,8 +10,8 @@
 
 # ── Retrieve cache ───────────────────────────────────────────────────────────
 [cache.retrieve]
-# "none" | "sqlite_vec" | "lancedb"
-db = "sqlite_vec"
+# "none" | "redb" | "lancedb"
+db = "redb"
 
 # How often to refresh the retrieve cache (full-text + vector index).
 # Omit or set to 0 to disable periodic refresh.

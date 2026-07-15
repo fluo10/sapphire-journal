@@ -33,6 +33,8 @@ pub struct JournalState {
     pub journal: Journal,
     /// Always-present retrieve database (FTS + optional vector backend).
     retrieve_db: RetrieveDb,
+    /// mtime snapshot used to detect which files changed since the last sync.
+    track: sapphire_track::RedbTrackStore,
     embedder: OnceCell<Option<Box<dyn Embedder + Send + Sync>>>,
     /// Optional sync backend (e.g. git) for staging file changes and running
     /// periodic sync cycles.
@@ -49,9 +51,11 @@ impl JournalState {
         let conn = cache::open_cache(&journal)?;
         drop(conn);
         let retrieve_db = RetrieveDb::open(&journal.retrieve_db_path()?)?;
+        let track = sapphire_track::open_redb(&journal.track_db_path()?)?;
         let mut state = Self {
             journal,
             retrieve_db,
+            track,
             embedder: OnceCell::new(),
             sync_backend: None,
         };
@@ -72,9 +76,15 @@ impl JournalState {
             use sapphire_workspace::lancedb_store;
             let _ = std::fs::remove_dir_all(lancedb_store::data_dir(&journal.cache_dir()?));
         }
+        // Drop the mtime snapshot too: a stale snapshot paired with a freshly
+        // emptied retrieve index would make changed files look unchanged.
+        let track_path = journal.track_db_path()?;
+        let _ = std::fs::remove_file(&track_path);
+        let track = sapphire_track::open_redb(&track_path)?;
         let mut state = Self {
             journal,
             retrieve_db,
+            track,
             embedder: OnceCell::new(),
             sync_backend: None,
         };
@@ -95,12 +105,17 @@ impl JournalState {
         &self.retrieve_db
     }
 
+    /// Borrow the mtime change-detection store.
+    pub fn track(&self) -> &dyn sapphire_track::TrackStore {
+        &self.track
+    }
+
     /// Incrementally sync the cache with the current on-disk journal state.
     ///
     /// Also syncs documents into the retrieve database (FTS index).
     pub fn sync(&self) -> Result<()> {
         let conn = self.open_conn()?;
-        cache::sync_cache(&self.journal, &conn, &self.retrieve_db)
+        cache::sync_cache(&self.journal, &conn, &self.retrieve_db, &self.track)
     }
 
     /// Sync the cache and, when embedding is enabled, embed any pending chunks.
@@ -109,7 +124,7 @@ impl JournalState {
     /// disabled or nothing was pending).
     pub async fn sync_and_embed(&self, config: &UserConfig) -> Result<usize> {
         let conn = self.open_conn()?;
-        cache::sync_cache(&self.journal, &conn, &self.retrieve_db)?;
+        cache::sync_cache(&self.journal, &conn, &self.retrieve_db, &self.track)?;
         drop(conn);
 
         let embed_cfg = config.cache.retrieve.embedding.as_ref();
@@ -129,7 +144,7 @@ impl JournalState {
     /// Return cache statistics (path, schema version, entry count, etc.).
     pub fn cache_info(&self) -> Result<cache::CacheInfo> {
         let conn = self.open_conn()?;
-        cache::cache_info(&self.journal, &conn, &self.retrieve_db)
+        cache::cache_info(&self.journal, &conn, &self.track)
     }
 
     // ── vector backend ────────────────────────────────────────────────────────
@@ -169,12 +184,12 @@ impl JournalState {
     fn init_vector_backend(&self, vector_db: VectorDb, dim: u32) -> Result<()> {
         match vector_db {
             VectorDb::None => {}
-            VectorDb::SqliteVec => {
-                #[cfg(feature = "sqlite-store")]
-                self.retrieve_db.init_sqlite_vec(dim)?;
-                #[cfg(not(feature = "sqlite-store"))]
+            VectorDb::Redb => {
+                #[cfg(feature = "redb-store")]
+                self.retrieve_db.init_redb_vec(dim)?;
+                #[cfg(not(feature = "redb-store"))]
                 return Err(crate::error::Error::InvalidConfig(
-                    "sqlite-vec support is not compiled in (enable the `sqlite-store` feature)".into(),
+                    "redb support is not compiled in (enable the `redb-store` feature)".into(),
                 ));
             }
             #[cfg(feature = "lancedb-store")]
