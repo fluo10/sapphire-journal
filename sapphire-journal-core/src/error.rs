@@ -44,6 +44,14 @@ pub enum Error {
     #[error("cache error: {0}")]
     Cache(#[from] rusqlite::Error),
 
+    /// Failure from the framework's pure-Rust retrieve backend (redb/tantivy).
+    #[error("retrieve cache error: {0}")]
+    RetrieveCache(String),
+
+    /// Failure from the mtime change-detection store.
+    #[error("track store error: {0}")]
+    Track(#[from] sapphire_track::Error),
+
     #[error("embedding error: {0}")]
     Embed(String),
 
@@ -64,8 +72,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 impl From<sapphire_workspace::RetrieveError> for Error {
     fn from(e: sapphire_workspace::RetrieveError) -> Self {
         match e {
-            #[cfg(feature = "sqlite-store")]
-            sapphire_workspace::RetrieveError::Sqlite(e) => Error::Cache(e),
+            #[cfg(feature = "redb-store")]
+            sapphire_workspace::RetrieveError::Redb(s) => Error::RetrieveCache(s),
+            #[cfg(feature = "redb-store")]
+            sapphire_workspace::RetrieveError::Tantivy(s) => Error::RetrieveCache(s),
             sapphire_workspace::RetrieveError::Embed(s) => Error::Embed(s),
             sapphire_workspace::RetrieveError::Io(e) => Error::Io(e),
             sapphire_workspace::RetrieveError::SchemaTooNew { db_version, app_version } => {

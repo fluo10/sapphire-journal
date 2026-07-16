@@ -33,6 +33,7 @@ use std::{
 
 use grain_id::GrainId;
 use rusqlite::{params, Connection, OptionalExtension as _};
+use sapphire_track::TrackStore;
 use sapphire_workspace::RetrieveDb;
 
 use crate::{
@@ -114,11 +115,15 @@ pub struct CacheInfo {
 }
 
 /// Collect cache statistics for display.
-pub fn cache_info(journal: &Journal, conn: &Connection, retrieve: &RetrieveDb) -> Result<CacheInfo> {
+pub fn cache_info(
+    journal: &Journal,
+    conn: &Connection,
+    track: &dyn TrackStore,
+) -> Result<CacheInfo> {
     let db_path = db_path(&journal.cache_dir()?);
     let schema_version =
         conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i32>(0))?;
-    let file_count = retrieve.file_count()?;
+    let file_count = track.count()?;
     let entry_count =
         conn.query_row("SELECT COUNT(*) FROM entries", [], |row| row.get::<_, i64>(0))? as u64;
     let unique_tag_count =
@@ -168,6 +173,7 @@ pub fn sync_cache(
     journal: &Journal,
     conn: &Connection,
     retrieve: &RetrieveDb,
+    track: &dyn TrackStore,
 ) -> Result<()> {
     let disk_files = collect_with_mtime(journal)?;
     let disk_paths: HashSet<String> = disk_files
@@ -175,7 +181,7 @@ pub fn sync_cache(
         .map(|(p, _)| p.to_string_lossy().into_owned())
         .collect();
 
-    let db_files = retrieve.file_mtimes()?;
+    let db_files = track.mtimes()?;
 
     conn.execute_batch("PRAGMA defer_foreign_keys=ON; BEGIN")?;
 
@@ -192,7 +198,7 @@ pub fn sync_cache(
                 )
                 .ok();
             conn.execute("DELETE FROM entries WHERE path = ?1", [db_path])?;
-            let _ = retrieve.remove_file(db_path);
+            let _ = track.remove(db_path);
             if let Some(id) = entry_id {
                 let _ = retrieve.remove_document(id);
             }
@@ -212,13 +218,13 @@ pub fn sync_cache(
                     let entry = increment_until_free(conn, entry)?;
                     let final_mtime = file_mtime(&entry.path)?;
                     let final_str = entry.path.to_string_lossy();
-                    let _ = retrieve.upsert_file(final_str.as_ref(), final_mtime);
+                    let _ = track.upsert(final_str.as_ref(), final_mtime);
                     upsert_entry(conn, &entry)?;
                     let doc = entry_to_document(&entry);
                     let _ = retrieve.upsert_document(&doc);
                 }
                 Err(e) => {
-                    let _ = retrieve.upsert_file(path_str.as_ref(), *mtime);
+                    let _ = track.upsert(path_str.as_ref(), *mtime);
                     conn.execute(
                         "DELETE FROM entries WHERE path = ?1",
                         [path_str.as_ref()],
@@ -406,6 +412,7 @@ pub fn remove_from_cache(
     conn: &Connection,
     path: &Path,
     retrieve: &RetrieveDb,
+    track: &dyn TrackStore,
 ) -> Result<()> {
     let path_str = path.to_string_lossy();
 
@@ -418,7 +425,7 @@ pub fn remove_from_cache(
         .ok();
 
     conn.execute("DELETE FROM entries WHERE path = ?1", [path_str.as_ref()])?;
-    let _ = retrieve.remove_file(path_str.as_ref());
+    let _ = track.remove(path_str.as_ref());
 
     if let Some(id) = entry_id {
         let _ = retrieve.remove_document(id);
@@ -435,12 +442,13 @@ pub fn upsert_entry_from_path(
     conn: &Connection,
     path: &Path,
     retrieve: &RetrieveDb,
+    track: &dyn TrackStore,
 ) -> Result<()> {
     let entry = read_entry(path)?;
     let entry = increment_until_free(conn, entry)?;
     let mtime = file_mtime(&entry.path)?;
     let path_str = entry.path.to_string_lossy();
-    retrieve.upsert_file(path_str.as_ref(), mtime)?;
+    track.upsert(path_str.as_ref(), mtime)?;
     upsert_entry(conn, &entry)?;
     let doc = entry_to_document(&entry);
     let _ = retrieve.upsert_document(&doc);

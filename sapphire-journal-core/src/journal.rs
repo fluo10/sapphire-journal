@@ -181,17 +181,20 @@ impl Journal {
 
     /// Path to the retrieve database (FTS + vector index) for this journal.
     ///
-    /// Resolves to `{cache_dir}/retrieve_v1.db`.
+    /// Resolves to `{cache_dir}/retrieve.db`. The redb backend derives its own
+    /// store directory (`retrieve.redb/`) from this path.
     pub fn retrieve_db_path(&self) -> Result<PathBuf> {
-        #[cfg(feature = "sqlite-store")]
-        {
-            use sapphire_workspace::RETRIEVE_SCHEMA_VERSION;
-            return Ok(self.cache_dir()?.join(format!("retrieve_v{}.db", RETRIEVE_SCHEMA_VERSION)));
-        }
-        #[cfg(not(feature = "sqlite-store"))]
         Ok(self.cache_dir()?.join("retrieve.db"))
     }
 
+    /// Path to the mtime change-detection store for this journal.
+    ///
+    /// The filename is versioned so an incompatible redb format bump orphans
+    /// the old file rather than failing to open; the store is a rebuildable
+    /// cache.
+    pub fn track_db_path(&self) -> Result<PathBuf> {
+        Ok(self.cache_dir()?.join("track_v1.redb"))
+    }
 }
 
 fn collect_md_in(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
