@@ -18,15 +18,29 @@ deleted APIs. journal keeps **git deps** (no crates.io release yet) — a
 coordinated release of framework + journal + agent comes only after both
 consumers are verified against the framework API.
 
-### Decision: drop git auto-sync now
+### Decision: drop journal's git auto-sync now — a deferral, not a permanent stance
 
 journal's multi-device sync today is git: `JournalState::git_sync()`
 (commit → pull → push via the framework's `GitSync`), the MCP
 `spawn_periodic_git_sync` task + `git_sync` tool, and the desktop periodic
-sync + sync button; edits are staged via `stage_file`. Per the framework's
-direction and the user's decision, journal **drops automated git sync**. Git
-remains available manually (journals are still git repositories), until journal
-later adopts remote-workspace sync.
+sync + sync button; edits are staged via `stage_file`. This migration
+**removes journal's automated git sync** to land on framework `main`; git stays
+available manually (journals remain git repositories).
+
+This is a deferral, not a verdict that git sync is gone for good. The intended
+sync tiers are:
+
+- **General users** — plain Markdown files in a folder synced by an external
+  service (Google Drive, Dropbox, …). No git, no server; the lowest hurdle.
+- **Middle tier** — git-based local-workspace sync: sturdier than a synced
+  folder, still no server to run. We are deliberately **not** closing the door
+  on this. The framework may reintroduce a git sync (framework #91,
+  "GUI-integrated git, rebuilt from zero"), at which point journal can re-adopt
+  a *framework-provided* git sync rather than vendoring its own.
+- **Advanced / concurrent editing** — a self-hosted remote-workspace server.
+
+The immediate priority is remote-workspace sync, but a framework-provided git
+sync stays a planned middle-tier option; journal's removal here is temporary.
 
 Note: journal's git **repository** lifecycle is unaffected — `registry.rs`
 `init_journal` and the clone dialog use `git2` **directly**, not the framework's
@@ -50,6 +64,8 @@ re-indexing keeps the search cache in step with edits made outside the app.
 - Keep git deps; build/test/run journal against framework `main`.
 
 **Out of scope (later / separate)**
+- Re-introducing git sync. It is deferred to a future **framework-provided**
+  middle-tier option (framework #91), not vendored into journal now.
 - Adopting the remote server / remote workspaces as journal's sync.
 - Adopting the shared `WorkspaceRegistry` / `WorkspaceManager` (journal keeps
   its own `JournalRegistry` for now).
