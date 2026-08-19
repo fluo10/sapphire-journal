@@ -9,12 +9,11 @@ categories = ["text-processing", "filesystem", "data-structures"]
 keywords = ["markdown", "task-management", "notes", "frontmatter", "plain-text"]
 
 [features]
-default = ["redb-store", "fastembed-embed", "git-sync"]
+default = ["redb-store", "fastembed-embed"]
 # Pure-Rust cache backend (redb + tantivy). Default; no SQLite/libsqlite3-sys.
 redb-store      = ["sapphire-workspace/redb-store"]
 lancedb-store   = ["sapphire-workspace/lancedb-store"]
 fastembed-embed = ["sapphire-workspace/fastembed-embed"]
-git-sync        = ["sapphire-workspace/git-sync"]
 # Text-frontend helpers: converters from CLI/MCP-style string inputs into the
 # strongly-typed values consumed by `ops`. GUIs that build typed values
 # directly from widgets should leave this disabled.
