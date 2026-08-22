@@ -31,8 +31,8 @@ serde_json.workspace = true
 schemars.workspace = true
 uuid = { version = "1", features = ["v4", "serde"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
-sapphire-workspace = { package = "sapphire-framework-workspace", git = "https://github.com/fluo10/sapphire-framework", branch = "feat/framework-migration", default-features = false }
+sapphire-workspace = { package = "sapphire-framework-workspace", git = "https://github.com/fluo10/sapphire-framework", branch = "main", default-features = false }
 # mtime change-detection, split out of the retrieve store in framework PR #75.
-sapphire-track = { package = "sapphire-framework-track", git = "https://github.com/fluo10/sapphire-framework", branch = "feat/framework-migration" }
+sapphire-track = { package = "sapphire-framework-track", git = "https://github.com/fluo10/sapphire-framework", branch = "main" }
 grain-id = { version = "0.15", features = ["serde", "rusqlite", "schemars"] }
 dirs = { workspace = true }

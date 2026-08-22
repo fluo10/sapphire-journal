@@ -1088,7 +1088,7 @@ version = "3.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dee98b0db6a962de883bf5d20362dee4d7ca0d12fe39a7c6c73c844e1cd7c1f"
 dependencies = [
- "darling 0.20.11",
+ "darling 0.23.0",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -7708,7 +7708,7 @@ dependencies = [
 [[package]]
 name = "sapphire-framework-retrieve"
 version = "0.1.0"
-source = "git+https://github.com/fluo10/sapphire-framework?branch=feat%2Fframework-migration#5b5d82666fa632faca15c52e5d13eab219f2cb4f"
+source = "git+https://github.com/fluo10/sapphire-framework?branch=main#432edb5d2faca6f63655f0eaedf1522ce45d9513"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -7725,22 +7725,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "sapphire-framework-sync"
-version = "0.1.0"
-source = "git+https://github.com/fluo10/sapphire-framework?branch=feat%2Fframework-migration#5b5d82666fa632faca15c52e5d13eab219f2cb4f"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "sapphire-framework-track"
 version = "0.1.0"
-source = "git+https://github.com/fluo10/sapphire-framework?branch=feat%2Fframework-migration#5b5d82666fa632faca15c52e5d13eab219f2cb4f"
+source = "git+https://github.com/fluo10/sapphire-framework?branch=main#432edb5d2faca6f63655f0eaedf1522ce45d9513"
 dependencies = [
  "redb",
  "thiserror 2.0.18",
@@ -7750,13 +7737,12 @@ dependencies = [
 [[package]]
 name = "sapphire-framework-workspace"
 version = "0.1.0"
-source = "git+https://github.com/fluo10/sapphire-framework?branch=feat%2Fframework-migration#5b5d82666fa632faca15c52e5d13eab219f2cb4f"
+source = "git+https://github.com/fluo10/sapphire-framework?branch=main#432edb5d2faca6f63655f0eaedf1522ce45d9513"
 dependencies = [
  "chrono",
  "indexmap 2.14.0",
  "md-5 0.11.0",
  "sapphire-framework-retrieve",
- "sapphire-framework-sync",
  "sapphire-framework-track",
  "serde",
  "thiserror 2.0.18",
@@ -10055,7 +10041,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
