@@ -13,10 +13,6 @@
 # "none" | "redb" | "lancedb"
 db = "redb"
 
-# How often to refresh the retrieve cache (full-text + vector index).
-# Omit or set to 0 to disable periodic refresh.
-# sync_interval_minutes = 15
-
 [cache.retrieve.embedding]
 enabled     = true
 provider    = "openai"
@@ -30,17 +26,8 @@ api_key_env = "OPENAI_API_KEY"
 # dimension = 768
 # base_url  = "http://localhost:11434"
 
-# ── Git sync ─────────────────────────────────────────────────────────────────
-[sync]
-# "auto" | "git" | "none"
-backend = "git"
-remote  = "origin"
-branch  = "main"
-
-# Run a full sync cycle (commit → fetch → merge → push) every N minutes.
-# Picked up by the MCP server's periodic sync task.
-# Omit or set to 0 to disable periodic sync.
+# ── Periodic re-index ────────────────────────────────────────────────────────
+# How often to refresh the cache + retrieve index (full-text + vector), in
+# minutes. Picked up by the MCP server's and desktop app's periodic re-index
+# task. Omit or set to 0 to disable periodic re-index.
 sync_interval_minutes = 30
-
-# Optional stable device identifier used in auto-generated commit messages.
-# device_id = "laptop-home"
