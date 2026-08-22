@@ -8,12 +8,10 @@ use crate::error::{Error, Result};
 
 pub use sapphire_workspace::{EmbeddingConfig, RetrieveConfig, VectorDb};
 
-/// Default cadence (minutes) for periodic sync when nothing is configured.
+/// Default cadence (minutes) for periodic re-indexing of changed files.
 ///
-/// Periodic sync is enabled by default at this interval. The MCP server
-/// also drives an incremental cache + retrieve refresh on the same tick, so
-/// even workspaces without a git sync backend benefit from having it on.
-/// Set `sync_interval_minutes = 0` to opt out.
+/// Long-running frontends re-index at this interval; it also triggers an incremental
+/// cache + retrieve refresh on the same tick. Set `sync_interval_minutes = 0` to disable.
 const DEFAULT_SYNC_INTERVAL_MINUTES: u32 = 10;
 
 fn default_sync_interval_minutes() -> Option<u32> {

@@ -271,7 +271,6 @@ The server fails to start when the target directory is not a sapphire-journal â€
 | `cache_info` | Show cache status and statistics |
 | `cache_sync` | Incrementally update the SQLite cache |
 | `cache_rebuild` | Drop and rebuild the cache from scratch |
-| `git_sync` | Commit, fetch, merge, and push if a sync backend is configured |
 
 ### `entry_list` parameters
 
