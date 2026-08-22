@@ -533,7 +533,6 @@ fn new(state: &JournalState, fields: EntryFields) -> Result<()> {
     if let Ok(conn) = state.open_conn() {
         let _ = cache::upsert_entry_from_path(&conn, &dest, state.retrieve_db(), state.track());
     }
-    let _ = state.on_file_updated(&dest);
     println!("created: {}", dest.display());
     Ok(())
 }
@@ -560,10 +559,6 @@ fn edit(path: &Path, state: &JournalState) -> Result<()> {
     if let Ok(conn) = state.open_conn() {
         let _ = cache::upsert_entry_from_path(&conn, &final_path, state.retrieve_db(), state.track());
     }
-    if renamed.is_some() {
-        let _ = state.on_file_deleted(path);
-    }
-    let _ = state.on_file_updated(&final_path);
     Ok(())
 }
 
@@ -588,10 +583,6 @@ fn edit_new(state: &JournalState) -> Result<()> {
     if let Ok(conn) = state.open_conn() {
         let _ = cache::upsert_entry_from_path(&conn, &final_path, state.retrieve_db(), state.track());
     }
-    if renamed.is_some() {
-        let _ = state.on_file_deleted(&path);
-    }
-    let _ = state.on_file_updated(&final_path);
     Ok(())
 }
 
@@ -622,12 +613,9 @@ fn set(state: &JournalState, path: &Path, fields: EntryFields, no_parent: bool) 
     let new_path_opt = ops::update_entry(path, &conn, core_fields)?;
     if let Some(new_path) = new_path_opt {
         let _ = cache::upsert_entry_from_path(&conn, &new_path, state.retrieve_db(), state.track());
-        let _ = state.on_file_deleted(path);
-        let _ = state.on_file_updated(&new_path);
         println!("updated and renamed: {}", new_path.display());
     } else {
         let _ = cache::upsert_entry_from_path(&conn, path, state.retrieve_db(), state.track());
-        let _ = state.on_file_updated(path);
         println!("updated: {}", path.display());
     }
     Ok(())
@@ -657,8 +645,6 @@ fn fix(state: &JournalState, entry: &str) -> Result<()> {
             if let Ok(conn) = state.open_conn() {
                 let _ = cache::upsert_entry_from_path(&conn, &new_path, state.retrieve_db(), state.track());
             }
-            let _ = state.on_file_deleted(&path);
-            let _ = state.on_file_updated(&new_path);
             println!(
                 "renamed: {} → {}",
                 path.file_name().unwrap_or_default().to_string_lossy(),
@@ -666,7 +652,6 @@ fn fix(state: &JournalState, entry: &str) -> Result<()> {
             );
         }
         None => {
-            let _ = state.on_file_updated(&path);
             println!("ok: {} (already correct)", path.display());
         }
     }
@@ -703,7 +688,6 @@ fn remove(state: &JournalState, entry: &str) -> Result<()> {
     if let Ok(conn) = state.open_conn() {
         let _ = cache::remove_from_cache(&conn, &path, state.retrieve_db(), state.track());
     }
-    let _ = state.on_file_deleted(&path);
     println!("removed: {}", path.display());
     Ok(())
 }
