@@ -364,7 +364,6 @@ impl SapphireJournalServer {
                 if let Ok(conn) = s.open_conn() {
                     let _ = cache::upsert_entry_from_path(&conn, &dest, s.retrieve_db(), s.track());
                 }
-                let _ = s.on_file_updated(&dest);
                 Ok(format!("created: {}", dest.display()))
             })
         })()
@@ -411,13 +410,9 @@ impl SapphireJournalServer {
                 let path = ops::resolve_entry(&p.entry, &conn)?;
                 let msg = if let Some(new_path) = ops::update_entry(&path, &conn, fields)? {
                     let _ = cache::upsert_entry_from_path(&conn, &new_path, s.retrieve_db(), s.track());
-                    // File was renamed: remove old path and stage new path
-                    let _ = s.on_file_deleted(&path);
-                    let _ = s.on_file_updated(&new_path);
                     format!("updated and renamed: {}", new_path.display())
                 } else {
                     let _ = cache::upsert_entry_from_path(&conn, &path, s.retrieve_db(), s.track());
-                    let _ = s.on_file_updated(&path);
                     format!("updated: {}", path.display())
                 };
                 Ok(msg)
@@ -458,25 +453,12 @@ impl SapphireJournalServer {
                 ops::resolve_entry(&p.entry, &conn).map_err(Into::into)
             })?;
             match ops::fix_entry(&path)? {
-                Some(new_path) => {
-                    self.with_state(|s| {
-                        let _ = s.on_file_deleted(&path);
-                        let _ = s.on_file_updated(&new_path);
-                        Ok(())
-                    })?;
-                    Ok(format!(
-                        "renamed: {} → {}",
-                        path.file_name().unwrap_or_default().to_string_lossy(),
-                        new_path.file_name().unwrap_or_default().to_string_lossy(),
-                    ))
-                }
-                None => {
-                    self.with_state(|s| {
-                        let _ = s.on_file_updated(&path);
-                        Ok(())
-                    })?;
-                    Ok(format!("ok: {} (already correct)", path.display()))
-                }
+                Some(new_path) => Ok(format!(
+                    "renamed: {} → {}",
+                    path.file_name().unwrap_or_default().to_string_lossy(),
+                    new_path.file_name().unwrap_or_default().to_string_lossy(),
+                )),
+                None => Ok(format!("ok: {} (already correct)", path.display())),
             }
         })()
         .map_err(|e| e.to_string())
@@ -491,7 +473,6 @@ impl SapphireJournalServer {
                 let path = ops::resolve_entry(&p.entry, &conn)?;
                 ops::remove_entry(&path)?;
                 let _ = cache::remove_from_cache(&conn, &path, s.retrieve_db(), s.track());
-                let _ = s.on_file_deleted(&path);
                 Ok(format!("removed: {}", path.display()))
             })
         })()
@@ -503,21 +484,6 @@ impl SapphireJournalServer {
     // with no top-level `type`, which strict MCP clients reject — Anthropic returns
     // `tools.<N>.custom.input_schema.type: Field required` (400).
     // See https://github.com/fluo10/sapphire-agent/issues/155.
-    #[tool(description = "Run a full git sync cycle: commit staged changes, fetch and merge from \
-        remote, then push. No-op when no git repository is found or sync is disabled.")]
-    fn git_sync(&self, _: Parameters<EmptyObject>) -> Result<String, String> {
-        (|| -> anyhow::Result<String> {
-            self.with_state(|s| {
-                if !s.has_sync_backend() {
-                    return Ok("skipped: no sync backend configured".to_owned());
-                }
-                s.git_sync()?;
-                Ok("sync complete".to_owned())
-            })
-        })()
-        .map_err(|e| e.to_string())
-    }
-
     #[tool(description = "Show cache location, schema version, and entry/tag counts.")]
     fn cache_info(&self, _: Parameters<EmptyObject>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
@@ -704,11 +670,11 @@ pub(crate) fn prepare_state(
     Ok(state)
 }
 
-/// Spawn the periodic git sync task on the current tokio runtime when the
+/// Spawn the periodic re-index task on the current tokio runtime when the
 /// user config sets a non-zero `sync_interval_minutes`. Returns `None` when
 /// disabled. The returned [`JoinHandle`] can be `.abort()`ed by the caller
 /// (e.g. when the HTTP transport shuts down) to stop the task.
-pub(crate) fn spawn_periodic_git_sync(
+pub(crate) fn spawn_periodic_reindex(
     state: Arc<Mutex<JournalState>>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let interval = UserConfig::load().ok().and_then(|c| c.sync_interval())?;
@@ -718,8 +684,8 @@ pub(crate) fn spawn_periodic_git_sync(
         loop {
             ticker.tick().await;
             let guard = state.lock().unwrap();
-            if let Err(e) = guard.git_sync() {
-                eprintln!("[sapphire-journal] periodic git sync failed: {e}");
+            if let Err(e) = guard.sync() {
+                eprintln!("[sapphire-journal] periodic re-index failed: {e}");
             }
             drop(guard);
         }
@@ -735,7 +701,7 @@ pub async fn run(journal_dir: Option<&Path>, init: bool) -> anyhow::Result<()> {
 
     let state = prepare_state(journal_dir, init)?;
     let server = SapphireJournalServer::new(state);
-    let _sync_handle = spawn_periodic_git_sync(server.shared_state());
+    let _sync_handle = spawn_periodic_reindex(server.shared_state());
 
     let service = server.serve(stdio()).await?;
     service.waiting().await?;

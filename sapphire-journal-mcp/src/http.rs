@@ -21,11 +21,11 @@ use rmcp::transport::streamable_http_server::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::server::{prepare_state, spawn_periodic_git_sync, SapphireJournalServer};
+use crate::server::{prepare_state, spawn_periodic_reindex, SapphireJournalServer};
 
 /// Bind an HTTP MCP server to `bind:port`, serving the journal at
 /// `journal_dir`. Runs until `cancel` is triggered, at which point active
-/// connections are gracefully drained and the periodic git-sync task is
+/// connections are gracefully drained and the periodic re-index task is
 /// aborted.
 ///
 /// `journal_dir` is opened directly; the upward-search fallback used by the
@@ -62,7 +62,7 @@ pub async fn serve_http(
         .with_context(|| format!("failed to bind MCP HTTP server to {addr}"))?;
     tracing::info!("MCP HTTP server listening on http://{addr}/mcp");
 
-    let sync_handle = spawn_periodic_git_sync(shared_state);
+    let sync_handle = spawn_periodic_reindex(shared_state);
 
     let serve_result = axum::serve(listener, router)
         .with_graceful_shutdown(async move { cancel.cancelled().await })
