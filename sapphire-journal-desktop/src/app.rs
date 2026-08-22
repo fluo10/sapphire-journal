@@ -88,9 +88,9 @@ pub struct App {
     /// When the user went to the journal-list screen from an open journal,
     /// this records that journal so the list can offer a "back" button.
     pub previous_journal_id: Option<Uuid>,
-    /// Currently-open journal's [`JournalState`] (cache DB + retrieve DB +
-    /// optional git-sync backend).  `None` when no journal is open.  Shared
-    /// with the background-sync tokio task, hence `Arc<Mutex<…>>`.
+    /// Currently-open journal's [`JournalState`] (cache DB + retrieve DB).
+    /// `None` when no journal is open.  Shared with the background re-index
+    /// tokio task, hence `Arc<Mutex<…>>`.
     pub journal_state: Arc<Mutex<Option<JournalState>>>,
     /// When `Some`, the Settings window is shown on top of the current
     /// screen.  Opened from the journal switcher menu.
@@ -284,10 +284,10 @@ impl App {
 
         let journal_state: Arc<Mutex<Option<JournalState>>> = Arc::new(Mutex::new(None));
 
-        // Periodic background sync: cache + retrieve refresh + git pull/push,
-        // mirroring the cadence used by the MCP server.  Skips ticks when no
-        // journal is open. Each tick runs on a blocking worker with a
-        // timeout so a hung libgit2 fetch can't stall every future tick.
+        // Periodic background re-index: cache + retrieve refresh, mirroring
+        // the cadence used by the MCP server.  Skips ticks when no journal is
+        // open. Each tick runs on a blocking worker with a timeout so a hung
+        // sync can't stall every future tick.
         if let Some(interval) = UserConfig::load().ok().and_then(|c| c.sync_interval()) {
             let state_arc = Arc::clone(&journal_state);
             let tx = event_tx.clone();
@@ -303,8 +303,7 @@ impl App {
                         let Some(state) = guard.as_ref() else {
                             return Ok::<bool, String>(false);
                         };
-                        state.sync().map_err(|e| format!("cache sync: {e}"))?;
-                        state.git_sync().map_err(|e| format!("git sync: {e}"))?;
+                        state.sync().map_err(|e| format!("re-index: {e}"))?;
                         Ok(true)
                     });
                     let outcome = tokio::time::timeout(
@@ -321,19 +320,17 @@ impl App {
                         }
                         Ok(Ok(Err(msg))) => {
                             let _ = tx.send(AppEvent::Error(format!(
-                                "Periodic sync failed: {msg}"
+                                "Periodic re-index failed: {msg}"
                             )));
                         }
                         Ok(Err(join_err)) => {
                             let _ = tx.send(AppEvent::Error(format!(
-                                "Periodic sync task panicked: {join_err}"
+                                "Periodic re-index task panicked: {join_err}"
                             )));
                         }
                         Err(_elapsed) => {
                             let _ = tx.send(AppEvent::Error(
-                                "Periodic sync timed out after 120s — \
-                                 git fetch may be hanging on SSH or network."
-                                    .to_string(),
+                                "Periodic re-index timed out after 120s.".to_string(),
                             ));
                         }
                     }
