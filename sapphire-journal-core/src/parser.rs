@@ -31,20 +31,33 @@ fn split_frontmatter<'a>(_path: &Path, source: &'a str) -> Result<(Frontmatter, 
         return Err(Error::InvalidEntry("missing frontmatter block".into()));
     };
 
-    // The opening `---` must be followed by a newline.
-    let Some(rest) = rest.strip_prefix('\n') else {
+    // The opening `---` must be followed by a newline (LF or CRLF).
+    let Some(rest) = rest
+        .strip_prefix('\n')
+        .or_else(|| rest.strip_prefix("\r\n"))
+    else {
         return Err(Error::InvalidEntry("missing frontmatter block".into()));
     };
 
-    let Some(end) = rest.find(&format!("\n{FENCE}")) else {
+    // The closing fence is a line holding only `---`, with either line ending.
+    let mut offset = 0;
+    let mut fence = None;
+    for line in rest.split_inclusive('\n') {
+        if line.trim_end_matches(['\n', '\r']) == FENCE {
+            fence = Some((offset, line.len()));
+            break;
+        }
+        offset += line.len();
+    }
+    let Some((end, fence_len)) = fence else {
         return Err(Error::InvalidEntry(
             "frontmatter block is not closed".into(),
         ));
     };
 
     let yaml = &rest[..end];
-    let body = &rest[end + 1 + FENCE.len()..]; // skip `\n---`
-    let body = body.trim_start_matches('\n');
+    let body = &rest[end + fence_len..];
+    let body = body.trim_start_matches(['\n', '\r']);
 
     let frontmatter: Frontmatter = serde_yaml::from_str(yaml)?;
     Ok((frontmatter, body))
@@ -92,6 +105,16 @@ mod tests {
         assert_eq!(entry.frontmatter.title, "Hello");
         assert_eq!(entry.frontmatter.tags, vec!["rust", "cli"]);
         assert_eq!(entry.body, "some body\n");
+    }
+
+    #[test]
+    fn parses_entry_with_crlf_frontmatter() {
+        let src =
+            "---\r\nid: '0000000'\r\ntitle: Hello\r\ntags: [rust, cli]\r\n---\r\nsome body\r\n";
+        let entry = parse_entry(&managed_path(), src).unwrap();
+        assert_eq!(entry.frontmatter.title, "Hello");
+        assert_eq!(entry.frontmatter.tags, vec!["rust", "cli"]);
+        assert_eq!(entry.body, "some body\r\n");
     }
 
     #[test]
