@@ -13,11 +13,10 @@ name = "sapphire-journal"
 path = "src/main.rs"
 
 [features]
-default = ["redb-store", "fastembed-embed", "git-sync"]
+default = ["redb-store", "fastembed-embed"]
 redb-store      = ["sapphire-journal-core/redb-store",      "sapphire-journal-mcp/redb-store"]
 lancedb-store   = ["sapphire-journal-core/lancedb-store",  "sapphire-journal-mcp/lancedb-store"]
 fastembed-embed = ["sapphire-journal-core/fastembed-embed", "sapphire-journal-mcp/fastembed-embed"]
-git-sync        = ["sapphire-journal-core/git-sync",        "sapphire-journal-mcp/git-sync"]
 
 [dependencies]
 clap.workspace = true

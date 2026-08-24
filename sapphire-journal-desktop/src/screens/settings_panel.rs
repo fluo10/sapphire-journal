@@ -9,14 +9,13 @@ use eframe::egui;
 
 use sapphire_journal_core::{
     journal::{DuplicateTitlePolicy, Journal, JournalConfig},
-    user_config::{SyncBackendKind, UserConfig},
+    user_config::UserConfig,
 };
 
 use crate::app::App;
 use crate::settings::Settings;
 
 const DUP_TITLE_OPTIONS: &[&str] = &["allow", "warn", "error"];
-const SYNC_BACKEND_OPTIONS: &[&str] = &["auto", "none", "git"];
 
 pub struct SettingsPanelState {
     journal_root: PathBuf,
@@ -28,7 +27,6 @@ pub struct SettingsPanelState {
 
     // ── Global ─────────────────────────────────────────────────────────────
     sync_interval_minutes: String,
-    sync_backend: String,
 
     // ── MCP HTTP server (GUI-only setting) ─────────────────────────────────
     mcp_http_enabled: bool,
@@ -65,12 +63,6 @@ impl SettingsPanelState {
             .sync_interval_minutes
             .map(|n| n.to_string())
             .unwrap_or_else(|| "10".to_string());
-        let sync_backend = match user_cfg.sync.backend {
-            SyncBackendKind::Auto => "auto",
-            SyncBackendKind::None => "none",
-            SyncBackendKind::Git => "git",
-        }
-        .to_string();
 
         let gui_settings = Settings::load().unwrap_or_default();
         let mcp_http_enabled = gui_settings.mcp_http.enabled;
@@ -82,7 +74,6 @@ impl SettingsPanelState {
             duplicate_title,
             entries_dir,
             sync_interval_minutes,
-            sync_backend,
             mcp_http_enabled,
             mcp_http_port,
             error_msg: None,
@@ -114,11 +105,6 @@ impl SettingsPanelState {
 
         let mut user_cfg = UserConfig::load().unwrap_or_default();
         user_cfg.sync_interval_minutes = Some(interval);
-        user_cfg.sync.backend = match self.sync_backend.as_str() {
-            "none" => SyncBackendKind::None,
-            "git" => SyncBackendKind::Git,
-            _ => SyncBackendKind::Auto,
-        };
         if let Err(e) = write_user_config(&user_cfg) {
             self.error_msg = Some(format!("Failed to save user config: {e}"));
             return false;
@@ -262,22 +248,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             ui.weak("Applies to all journals — takes effect on next launch.");
             ui.add_space(4.0);
 
-            ui.label("Sync interval (minutes; 0 to disable)");
+            ui.label("Re-index interval (minutes; 0 to disable)");
             ui.add(
                 egui::TextEdit::singleline(&mut state.sync_interval_minutes)
                     .desired_width(80.0),
             );
-            ui.add_space(6.0);
-
-            ui.label("Sync backend");
-            egui::ComboBox::from_id_salt("settings_sync_backend")
-                .selected_text(&state.sync_backend)
-                .width(ui.available_width())
-                .show_ui(ui, |ui| {
-                    for v in SYNC_BACKEND_OPTIONS {
-                        ui.selectable_value(&mut state.sync_backend, (*v).to_string(), *v);
-                    }
-                });
 
             ui.add_space(10.0);
             ui.separator();

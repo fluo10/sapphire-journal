@@ -6,14 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
-pub use sapphire_workspace::{EmbeddingConfig, RetrieveConfig, SyncBackendKind, SyncConfig, VectorDb};
+pub use sapphire_workspace::{EmbeddingConfig, RetrieveConfig, VectorDb};
 
-/// Default cadence (minutes) for periodic sync when nothing is configured.
+/// Default cadence (minutes) for periodic re-indexing of changed files.
 ///
-/// Periodic sync is enabled by default at this interval. The MCP server
-/// also drives an incremental cache + retrieve refresh on the same tick, so
-/// even workspaces without a git sync backend benefit from having it on.
-/// Set `sync_interval_minutes = 0` to opt out.
+/// Long-running frontends re-index at this interval; it also triggers an incremental
+/// cache + retrieve refresh on the same tick. Set `sync_interval_minutes = 0` to disable.
 const DEFAULT_SYNC_INTERVAL_MINUTES: u32 = 10;
 
 fn default_sync_interval_minutes() -> Option<u32> {
@@ -31,10 +29,6 @@ pub struct UserConfig {
     #[serde(default)]
     pub cache: CacheConfig,
 
-    /// Sync backend configuration (`[sync]` section).
-    #[serde(default)]
-    pub sync: SyncConfig,
-
     /// How often to run periodic sync, in minutes.
     ///
     /// Defaults to 10 minutes. Set to `0` to disable.
@@ -46,7 +40,6 @@ impl Default for UserConfig {
     fn default() -> Self {
         Self {
             cache: CacheConfig::default(),
-            sync: SyncConfig::default(),
             sync_interval_minutes: default_sync_interval_minutes(),
         }
     }
@@ -83,7 +76,6 @@ impl UserConfig {
     /// | `SAPPHIRE_JOURNAL_CACHE_EMBEDDING_API_KEY_ENV` | `cache.retrieve.embedding.api_key_env` |
     /// | `SAPPHIRE_JOURNAL_CACHE_EMBEDDING_BASE_URL` | `cache.retrieve.embedding.base_url` |
     /// | `SAPPHIRE_JOURNAL_CACHE_EMBEDDING_DIMENSION` | `cache.retrieve.embedding.dimension` |
-    /// | `SAPPHIRE_JOURNAL_SYNC_BACKEND` | `sync.backend` (`auto`/`none`/`git`) |
     /// | `SAPPHIRE_JOURNAL_SYNC_INTERVAL_MINUTES` | `sync_interval_minutes` |
     pub fn load() -> Result<Self> {
         let path = Self::path();
@@ -135,26 +127,11 @@ impl UserConfig {
             if let Some(v) = dimension { embed.dimension = Some(v); }
         }
 
-        if let Ok(v) = std::env::var("SAPPHIRE_JOURNAL_SYNC_BACKEND") {
-            if let Some(backend) = parse_sync_backend(&v) {
-                self.sync.backend = backend;
-            }
-        }
         if let Ok(v) = std::env::var("SAPPHIRE_JOURNAL_SYNC_INTERVAL_MINUTES") {
             if let Ok(n) = v.parse::<u32>() {
                 self.sync_interval_minutes = Some(n);
             }
         }
-    }
-}
-
-fn parse_sync_backend(s: &str) -> Option<sapphire_workspace::SyncBackendKind> {
-    use sapphire_workspace::SyncBackendKind;
-    match s {
-        "auto" => Some(SyncBackendKind::Auto),
-        "none" => Some(SyncBackendKind::None),
-        "git" => Some(SyncBackendKind::Git),
-        _ => None,
     }
 }
 

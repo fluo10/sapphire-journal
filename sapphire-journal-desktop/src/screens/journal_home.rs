@@ -74,8 +74,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, journal_id: Uuid) {
                 if let Some(home) = &app.home {
                     if home.sync_in_progress {
                         ui.add(egui::Spinner::new().size(14.0));
-                        ui.small("Syncing…");
-                        // While a sync is running, keep painting so the
+                        ui.small("Refreshing…");
+                        // While a refresh is running, keep painting so the
                         // spinner animates even without user input.
                         ui.ctx()
                             .request_repaint_after(std::time::Duration::from_millis(100));
@@ -220,7 +220,6 @@ fn show_journal_missing(app: &mut App, ui: &mut egui::Ui) {
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 
 fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
-    let mut new_entry_path: Option<PathBuf> = None;
     let home = match app.home.as_mut() {
         Some(h) => h,
         None => return,
@@ -242,7 +241,6 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
                             }
                         };
                         home.needs_reload = true;
-                        new_entry_path = Some(path);
                     }
                     Err(e) => home.error_msg = Some(e.to_string()),
                 },
@@ -400,7 +398,6 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
                             }
                         };
                         home.needs_reload = true;
-                        new_entry_path = Some(path);
                     }
                     Err(e) => home.error_msg = Some(e.to_string()),
                 },
@@ -424,11 +421,6 @@ fn draw_sidebar(app: &mut App, ui: &mut egui::Ui) {
         None => {}
     }
 
-    // Stage the freshly-created entry file with the sync backend (if any).
-    // Done after the `home` borrow ends so we can take `&mut app` here.
-    if let Some(path) = new_entry_path {
-        notify_file_updated(app, &path);
-    }
     if let Some((source_path, new_parent)) = reparent_action {
         apply_reparent(app, source_path, new_parent);
     }
@@ -708,12 +700,6 @@ fn apply_reparent(app: &mut App, source_path: PathBuf, new_parent: Option<GrainI
         home.needs_reload = true;
         home.info_msg = Some("Reparented.".to_string());
     }
-    if let Some(new_path) = renamed.as_ref() {
-        if new_path != &source_path {
-            notify_file_deleted(app, &source_path);
-        }
-    }
-    notify_file_updated(app, &final_path);
 }
 
 fn draw_entry_row(
@@ -1097,7 +1083,6 @@ fn draw_confirm_delete_entry(app: &mut App, ctx: &egui::Context) {
         cancel = true;
     }
 
-    let mut deleted_path: Option<PathBuf> = None;
     {
         let home = match app.home.as_mut() {
             Some(h) => h,
@@ -1116,16 +1101,11 @@ fn draw_confirm_delete_entry(app: &mut App, ctx: &egui::Context) {
                         home.editor = None;
                         home.info_msg = None;
                         home.needs_reload = true;
-                        deleted_path = Some(path);
                     }
                     Err(e) => home.error_msg = Some(e.to_string()),
                 }
             }
         }
-    }
-
-    if let Some(path) = deleted_path {
-        notify_file_deleted(app, &path);
     }
 }
 
@@ -1256,8 +1236,6 @@ fn load_editor(path: &std::path::Path) -> Result<EditorState, String> {
 }
 
 fn save_current_entry(app: &mut App) {
-    let mut updated_path: Option<PathBuf> = None;
-    let mut renamed_from: Option<PathBuf> = None;
     {
         let home = match app.home.as_mut() {
             Some(h) => h,
@@ -1365,12 +1343,7 @@ fn save_current_entry(app: &mut App) {
 
         match fix_entry(&entry.path) {
             Ok(maybe_new) => {
-                let final_path = maybe_new.clone().unwrap_or(entry.path.clone());
-                if let Some(new_path) = maybe_new.as_ref() {
-                    if new_path != &entry.path {
-                        renamed_from = Some(entry.path.clone());
-                    }
-                }
+                let final_path = maybe_new.unwrap_or(entry.path.clone());
                 home.selected_path = Some(final_path.clone());
                 home.editor = match load_editor(&final_path) {
                     Ok(e) => Some(e),
@@ -1381,30 +1354,20 @@ fn save_current_entry(app: &mut App) {
                 };
                 home.info_msg = Some("Saved.".to_string());
                 home.needs_reload = true;
-                updated_path = Some(final_path);
             }
             Err(e) => home.error_msg = Some(format!("fix failed: {e}")),
         }
-    }
-
-    // Notify the sync backend (outside the home borrow).  When `fix_entry`
-    // renamed the file we also untrack the previous path.
-    if let Some(old) = renamed_from {
-        notify_file_deleted(app, &old);
-    }
-    if let Some(path) = updated_path {
-        notify_file_updated(app, &path);
     }
 }
 
 // ── Journal-state lifecycle ────────────────────────────────────────────────
 
-/// Open the journal's [`JournalState`] (cache DB + retrieve DB + sync backend)
-/// and stash it in `app.journal_state` so the periodic-sync task can use it.
+/// Open the journal's [`JournalState`] (cache DB + retrieve DB) and stash it
+/// in `app.journal_state` so the periodic re-index task can use it.
 /// Idempotent: re-opening for the same `journal_root` is a no-op.
 ///
 /// On a successful transition (None → Some, or different journal → this one)
-/// kicks off an initial sync so the user gets fresh remote state immediately
+/// kicks off an initial re-index so the user gets fresh state immediately
 /// rather than waiting up to `sync_interval_minutes` for the first tick.
 fn ensure_journal_state(app: &mut App, journal_root: &std::path::Path) {
     let already_open = {
@@ -1434,33 +1397,6 @@ fn ensure_journal_state(app: &mut App, journal_root: &std::path::Path) {
     }
 }
 
-/// Notify the sync backend that `path` was created or modified.
-/// Failures are reported to the home error banner.
-fn notify_file_updated(app: &mut App, path: &std::path::Path) {
-    let result = {
-        let guard = app.journal_state.lock().unwrap();
-        guard.as_ref().map(|s| s.on_file_updated(path))
-    };
-    if let Some(Err(e)) = result {
-        if let Some(home) = app.home.as_mut() {
-            home.error_msg = Some(format!("Failed to stage file: {e}"));
-        }
-    }
-}
-
-/// Notify the sync backend that `path` was deleted.
-fn notify_file_deleted(app: &mut App, path: &std::path::Path) {
-    let result = {
-        let guard = app.journal_state.lock().unwrap();
-        guard.as_ref().map(|s| s.on_file_deleted(path))
-    };
-    if let Some(Err(e)) = result {
-        if let Some(home) = app.home.as_mut() {
-            home.error_msg = Some(format!("Failed to unstage file: {e}"));
-        }
-    }
-}
-
 // ── Journal switcher ────────────────────────────────────────────────────────
 
 /// Top-left "current journal" dropdown.  Shows other registered journals as
@@ -1482,7 +1418,7 @@ fn draw_journal_switcher(app: &mut App, ui: &mut egui::Ui, current_id: Uuid) {
 
     let mut switch_to: Option<Uuid> = None;
     let mut go_manage = false;
-    let mut sync_now = false;
+    let mut refresh_now = false;
     let mut open_settings = false;
 
     let caret = egui::Image::new(icons::chevron_down())
@@ -1499,8 +1435,8 @@ fn draw_journal_switcher(app: &mut App, ui: &mut egui::Ui, current_id: Uuid) {
             }
             ui.separator();
         }
-        if ui.button("Sync now").clicked() {
-            sync_now = true;
+        if ui.button("Refresh").clicked() {
+            refresh_now = true;
             ui.close();
         }
         if ui.button("Settings…").clicked() {
@@ -1522,7 +1458,7 @@ fn draw_journal_switcher(app: &mut App, ui: &mut egui::Ui, current_id: Uuid) {
     } else if go_manage {
         app.previous_journal_id = Some(current_id);
         app.screen = AppState::List;
-    } else if sync_now {
+    } else if refresh_now {
         trigger_manual_sync(app);
     } else if open_settings {
         if let Some(home) = app.home.as_ref() {
@@ -1534,25 +1470,22 @@ fn draw_journal_switcher(app: &mut App, ui: &mut egui::Ui, current_id: Uuid) {
     }
 }
 
-/// Time budget for a single manual sync. libgit2 itself has no fetch
-/// timeout, so SSH/network hangs would otherwise stall the worker thread
-/// (and the `journal_state` mutex it holds) indefinitely. After this
-/// elapses we report a timeout error to the UI; the worker thread keeps
-/// running and will eventually release the lock when libgit2 finally
-/// errors out or completes.
+/// Time budget for a single manual re-index. After this elapses we report a
+/// timeout error to the UI; the worker thread keeps running and will
+/// eventually release the `journal_state` mutex when it finally completes.
 const MANUAL_SYNC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
-/// Run cache + git sync once, off-thread, and report success/failure via
-/// `AppEvent`.  Lets the user verify sync independently of the 10-minute
+/// Run a cache re-index once, off-thread, and report success/failure via
+/// `AppEvent`.  Lets the user refresh independently of the 10-minute
 /// periodic tick.
 fn trigger_manual_sync(app: &mut App) {
-    // Guard against duplicate clicks: a previous Sync now may still be
-    // blocked on the journal_state mutex (e.g. libgit2 fetch hanging).
-    // Without this, every additional click leaks another tokio task that
-    // also waits forever on the same mutex.
+    // Guard against duplicate clicks: a previous Refresh may still be
+    // blocked on the journal_state mutex. Without this, every additional
+    // click leaks another tokio task that also waits forever on the same
+    // mutex.
     if let Some(home) = app.home.as_mut() {
         if home.sync_in_progress {
-            home.error_msg = Some("Sync already in progress".to_string());
+            home.error_msg = Some("Refresh already in progress".to_string());
             return;
         }
         home.sync_in_progress = true;
@@ -1567,23 +1500,21 @@ fn trigger_manual_sync(app: &mut App) {
             let Some(state) = guard.as_ref() else {
                 return Err("no journal is open".to_string());
             };
-            state.sync().map_err(|e| format!("cache sync: {e}"))?;
-            state.git_sync().map_err(|e| format!("git sync: {e}"))?;
+            state.sync().map_err(|e| format!("re-index: {e}"))?;
             Ok::<(), String>(())
         });
 
         let outcome = match tokio::time::timeout(MANUAL_SYNC_TIMEOUT, handle).await {
             Ok(Ok(inner)) => inner,
-            Ok(Err(join_err)) => Err(format!("Sync task panicked: {join_err}")),
+            Ok(Err(join_err)) => Err(format!("Refresh task panicked: {join_err}")),
             Err(_elapsed) => Err(format!(
-                "Sync timed out after {}s — git fetch may be hanging on SSH or network. \
-                 Check that `git pull` works in this repo from the terminal.",
+                "Refresh timed out after {}s.",
                 MANUAL_SYNC_TIMEOUT.as_secs()
             )),
         };
 
         let _ = tx.send(crate::app::AppEvent::SyncFinished(
-            outcome.map_err(|msg| format!("Sync failed: {msg}")),
+            outcome.map_err(|msg| format!("Refresh failed: {msg}")),
         ));
     });
 }
