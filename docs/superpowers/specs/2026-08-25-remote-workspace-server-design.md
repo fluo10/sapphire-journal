@@ -48,8 +48,14 @@ sapphire-journal-server（1 プロセス / 1 ポート / 1 axum アプリ）
 - origin = **実在の journal ルート**（`.sapphire-journal/` を含む）。
   framework 側の `WsStoreConfig` に、この origin と journal 自身の retrieve ストアを注入する。
   そうしないと同じファイル群にインデックスが 2 つできる。
-- `accept` で `.sapphire-journal/` 配下を同期対象から外す。
-- change log / track db は `.sapphire-journal/cache/` 配下（ユーザデータではないので同期対象外）。
+- change log / track db / blob は `Journal::cache_dir()` 配下、すなわち
+  `~/.cache/sapphire-journal/{uuid}/`（プラットフォーム毎のアプリキャッシュ）に置く。
+  ここは journal ルートの外で、`journal.rs` の doc コメントが明記している通り
+  git / Syncthing / Nextcloud に同期されない。
+- **同期対象を絞る除外設定は持たない。** ワークスペース内に同期対象外のファイルを置かない
+  運用のため。`.sapphire-journal/config.toml` はワークスペースレベルの設定なので、
+  **同期されるのが正しい**（端末間で共有したい）。
+- 整合スキャンだけは `.git/` を固定で無視する（journal ルートを外部で git 管理する運用向け）。
 
 `sapphire-journal-mcp` の `serve_http` は Router を内部で組んで自分でリッスンしてしまうため
 （`http.rs`）、**Router（`StreamableHttpService`）を返すアクセサを追加**する。
