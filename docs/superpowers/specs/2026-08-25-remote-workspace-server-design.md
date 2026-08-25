@@ -187,3 +187,32 @@ label を変えても紐づけは切れない。**ユーザー一覧の設計そ
 - TLS / OAuth / インターネット公開
 - 同一エントリの文字単位マージ（CRDT）
 - ledger・timer への展開
+
+## framework 側の実装から引き継ぐ注意点
+
+framework 側（`feat/app-service-coexistence`）の実装と全体レビューで判明した、この spec の
+実装時に効く事項。いずれも framework 側では意図的に保留した。
+
+- **`ServerState::workspace()` を使って同じ `Arc<WsStore>` を掴むこと。** 自前で
+  `WsStore::with_config` を呼ぶと、同じディレクトリに対して change log が 2 つでき（あるいは
+  redb のファイルロックで衝突し）ます。MCP ハンドラと `/rpc` は同一インスタンスを共有する必要が
+  あります。
+- **`workspace()` は `workspaces` の `Mutex` を握ったまま解決関数を呼びます。** 解決関数が
+  panic するとマップが poison し、以後の `workspace()` が全て panic します。また `open_ws` は
+  `spawn_blocking` の外なので、解決関数と redb のオープンが async executor 上で走ります。
+  解決関数は軽く、panic しない実装にすること。
+- **`with_resolver` の戻り値型は `Result<WsStoreConfig>`** で、framework の `Error` が大きい
+  ため消費側のクロージャが `result_large_err` を踏みます。最初の resolver を書くのがこの
+  spec の実装なので、`Box<dyn Error>` へ変える価値があるならその時が最も安いタイミングです。
+- **Windows のファイル名に注意。** `is_syncable` の `:` 判定は `<letter>:` プレフィクスだけを
+  弾く形に絞られたため、`a:b.md` のような名前が通ります。NTFS はこれを代替データストリーム
+  指定と解釈し、`fs::write` はサイズ 0 のファイル `a` とストリーム `b.md` を作ります。
+  `track` の走査はストリームを列挙しないので、reconcile が change log と食い違います。
+  エントリのスラグ生成が `:` を落とすことを確認すること（fluo10 の開発機は Windows）。
+- **`RemoteBackend` は `snapshot` を呼ばない**ため、常に `generation: None` を送り、
+  `GENERATION_MISMATCH` が発火しません。世代チェックを実際に効かせるには、
+  `RemoteBackend` が初回に snapshot し、`(generation, cursor)` を対で永続化する必要が
+  あります（framework 側の別変更）。
+- **`insecure_for_tests()` は無印の `pub`** です。テスト以外から呼ばないこと。
+- **`reconcile` は `Utc::now()` を `updated_at` に打ちます**（観測した mtime ではなく）。
+  遅れて発見した編集ほどサーバ側が LWW で勝ちます。
