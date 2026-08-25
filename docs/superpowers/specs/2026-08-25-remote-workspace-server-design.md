@@ -116,9 +116,10 @@ journal キャッシュ更新と change log 追記の両方を行う。MCP の�
   `protect()` を通す。
 - rmcp は既定で `Host` ヘッダをループバックに制限している（`http.rs` の注記）。bind アドレスに
   合わせて許可リストを広げるが、**認証層とセットでしか触らない**。片方だけ緩めると素通しになる。
-- トークンのプレフィクスは journal では **`journal_`**。プロジェクトに短縮名の慣習が無い
-  （バイナリ名は全て `sapphire-*` のフルネーム）ため、復号表の要る 3 文字コードではなく
-  アプリ名をそのまま使う。ledger・timer も同様に `ledger_` / `timer_`。
+- トークンのプレフィクスは journal では **`sjt_`**（sapphire-journal token）。API キーの
+  一般的な慣習（Synapse `syt_`、GitHub `ghp_`、Stripe `sk_live_`、Anthropic `sk-ant-`）に
+  倣い、略語＋用途の 1 文字とする。`sj` 単体だとアプリ名なのかトークンなのか読み取れない。
+  他アプリも機械的に `slt_` / `stt_` / `sat_` と伸ばせる。
 - TLS / OAuth は範囲外。**プライベート網（VPN / Tailscale / LAN）前提**であることを
   README と起動ログに明記する。
 
