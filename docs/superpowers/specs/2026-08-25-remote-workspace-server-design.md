@@ -30,10 +30,17 @@
    サーバの変更で CLI のバージョンを上げたくない。
 4. **既存パターンと揃う**。`sapphire-journal-mcp` が lib、CLI が薄い入口、という形が既にある。
 
+依存は**ファサード crate 経由**にする — `sapphire-framework = { features = ["remote-server"] }`
+を使い、`sapphire_framework::remote_server::{...}` を呼ぶ。`sapphire-timer-server` が既に
+この形（サブクレートを直接参照していない）。
+
 `sapphire-journal-server` は **lib + bin**。lib は `Router` を組み立てて返し、bin は設定を
 読んで listen するだけ。lib を分けておくと desktop に埋め込む余地が残る。
 
-ledger・timer も後追いで同じ形の server crate を持つ。**プロセスは別、ポートも別**。
+**先例がある**: `sapphire-timer-server` が既に独立 crate として存在し、framework の
+remote-server をそのまま起動している（ただし MCP は載せていない）。本 spec はその形に
+MCP エンドポイントと書き込み経路を足したもの。ledger も後追いで同じ形になる。
+**プロセスは別、ポートも別**。
 各アプリのサーバが固有の MCP エンドポイントを持つため、1 プロセスへの相乗りはしない。
 
 ## 構成
@@ -109,17 +116,23 @@ journal キャッシュ更新と change log 追記の両方を行う。MCP の�
   `protect()` を通す。
 - rmcp は既定で `Host` ヘッダをループバックに制限している（`http.rs` の注記）。bind アドレスに
   合わせて許可リストを広げるが、**認証層とセットでしか触らない**。片方だけ緩めると素通しになる。
-- トークンのプレフィクスは journal では `sjj_`。
+- トークンのプレフィクスは journal では **`journal_`**。プロジェクトに短縮名の慣習が無い
+  （バイナリ名は全て `sapphire-*` のフルネーム）ため、復号表の要る 3 文字コードではなく
+  アプリ名をそのまま使う。ledger・timer も同様に `ledger_` / `timer_`。
 - TLS / OAuth は範囲外。**プライベート網（VPN / Tailscale / LAN）前提**であることを
   README と起動ログに明記する。
 
 ### サブコマンド
 
 `serve` は既定動作なのでサブコマンド無しで起動する（clap の `Option<Subcommand>`、
-`None` なら serve）。
+`None` なら serve）。既存の `sapphire-timer-server` もサブコマンド無しの serve のみで、
+これに揃う。
+
+引数の形も timer-server に合わせる: `--addr` は `SocketAddr` を 1 本で受け（`--bind` と
+`--port` に分けない）、環境変数は `SAPPHIRE_JOURNAL_SERVER_*` を使う。
 
 ```
-sapphire-journal-server [--journal-dir …] [--bind …] [--port …] [--keys …]
+sapphire-journal-server [--journal-dir …] [--addr …] [--keys …]
 sapphire-journal-server gen-key ["label"] [--expires-in 90d]
 sapphire-journal-server list-keys
 sapphire-journal-server revoke-key <uuid|label>
