@@ -59,10 +59,11 @@ sapphire-journal-server（1 プロセス / 1 ポート / 1 axum アプリ）
   `~/.cache/sapphire-journal/{uuid}/`（プラットフォーム毎のアプリキャッシュ）に置く。
   ここは journal ルートの外で、`journal.rs` の doc コメントが明記している通り
   git / Syncthing / Nextcloud に同期されない。
-- **同期対象を絞る除外設定は持たない。** ワークスペース内に同期対象外のファイルを置かない
-  運用のため。`.sapphire-journal/config.toml` はワークスペースレベルの設定なので、
-  **同期されるのが正しい**（端末間で共有したい）。
-- 整合スキャンだけは `.git/` を固定で無視する（journal ルートを外部で git 管理する運用向け）。
+- `.sapphire-journal/config.toml` はワークスペースレベルの設定なので、**同期されるのが
+  正しい**（端末間で共有したい）。これが `app_dir` を名指しする理由。
+- **同期対象は許可制。** 隠しファイル・隠しディレクトリは原則すべて除外し、
+  `WsStoreConfig.app_dir` に `".sapphire-journal"` を指定して**そこだけ**通す。
+  journal ルートを外部ツールで git 管理していても `.git/` は自然に外れる。
 
 `sapphire-journal-mcp` の `serve_http` は Router を内部で組んで自分でリッスンしてしまうため
 （`http.rs`）、**Router（`StreamableHttpService`）を返すアクセサを追加**する。
