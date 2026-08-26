@@ -107,14 +107,29 @@ pub fn build_router(
 /// 1 回の呼び出しが 1 バッチなので、リネームの旧・新はここで 1 回にまとまる
 /// （通知側が 1 回で渡してくる）。
 ///
-/// `pub` なのは `build_router` に加えてテストハーネスも、同じ配線を
-/// `SapphireJournalServer` へ直接付け替えて使うため — 別のオブザーバを
-/// 自作すると、この関数自体が正しく組み立てられているかを検証できなくなる。
-pub fn write_observer(store: Arc<WsStore>, origin: PathBuf) -> sapphire_journal_mcp::WriteObserver {
+/// **`origin` は MCP 側が journal ルートに使っているのと綴りが完全に一致して
+/// いること。** `strip_prefix` は純粋な文字列比較で、`Journal::from_root` は
+/// 正規化（大文字小文字の統一やシンボリックリンク解決など）を一切しない
+/// ため、綴りが少しでもずれるとそのパスは黙って「origin の外」判定され、
+/// 書き込みが change log に載らない。
+fn write_observer(store: Arc<WsStore>, origin: PathBuf) -> sapphire_journal_mcp::server::WriteObserver {
     Arc::new(move |paths: &[PathBuf]| {
         let rel: Vec<String> = paths
             .iter()
-            .filter_map(|p| p.strip_prefix(&origin).ok())
+            .filter_map(|p| match p.strip_prefix(&origin) {
+                Ok(rel) => Some(rel),
+                Err(_) => {
+                    // 黙って捨てない。origin の綴りがずれている、あるいは
+                    // ツールが journal の外に書いた徴候 — どちらも見えないと
+                    // 原因調査ができない。
+                    tracing::warn!(
+                        path = %p.display(),
+                        origin = %origin.display(),
+                        "MCP write path is outside origin; dropping it from the change log"
+                    );
+                    None
+                }
+            })
             .map(|p| {
                 p.components()
                     .map(|c| c.as_os_str().to_string_lossy())
@@ -123,6 +138,10 @@ pub fn write_observer(store: Arc<WsStore>, origin: PathBuf) -> sapphire_journal_
             })
             .collect();
         if rel.is_empty() {
+            tracing::warn!(
+                paths = ?paths,
+                "MCP write batch had no recordable path; nothing sent to the change log"
+            );
             return;
         }
         if let Err(e) = store.record_local_write(&rel, chrono::Utc::now()) {
