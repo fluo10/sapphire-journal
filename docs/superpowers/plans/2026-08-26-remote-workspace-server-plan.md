@@ -932,11 +932,21 @@ pub fn run(command: Command, keys_path: &Path) -> anyhow::Result<()> {
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
     let cli = Cli::parse();
-    let keys_path = resolve_keys_path(&cli)?;   // Task 6 で journal の cache dir 由来にする
+    let keys_path = resolve_keys_path(&cli)?;
     match cli.command {
         Some(command) => sapphire_journal_server::keys::run(command, &keys_path),
         None => todo!("serve — Task 6"),
     }
+}
+
+/// 鍵ファイルの位置を決める。
+///
+/// このタスクの時点では `--keys` が必須。Task 6 で `None` の分岐を journal の
+/// キャッシュディレクトリ既定に差し替える（`Journal` をここで引き込みたくない）。
+fn resolve_keys_path(cli: &Cli) -> anyhow::Result<PathBuf> {
+    cli.keys
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("--keys is required (a default arrives with the serve path)"))
 }
 ```
 
@@ -1282,8 +1292,17 @@ pub async fn run(
 `main` は `#[tokio::main]` にする必要がある（Task 4 では同期の `fn main` にしてある）。
 鍵サブコマンドは同期のままでよいので、`serve` の分岐だけランタイム上で走らせる形にする。
 
-既定の鍵ファイルパスは `serve::default_keys_path(&cli.journal_dir)?`。`--keys` が
-与えられていればそちらを使う。
+Task 5 で置いた `resolve_keys_path` の `None` 分岐を差し替える — エラーではなく
+`serve::default_keys_path(&cli.journal_dir)?` を返す:
+
+```rust
+fn resolve_keys_path(cli: &Cli) -> anyhow::Result<PathBuf> {
+    match &cli.keys {
+        Some(p) => Ok(p.clone()),
+        None => sapphire_journal_server::serve::default_keys_path(&cli.journal_dir),
+    }
+}
+```
 
 - [ ] **Step 5: テストが通ることを確認する**
 
