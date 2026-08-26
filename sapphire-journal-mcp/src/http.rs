@@ -21,7 +21,39 @@ use rmcp::transport::streamable_http_server::{
 };
 use tokio_util::sync::CancellationToken;
 
+use sapphire_journal_core::JournalState;
+
 use crate::server::{prepare_state, spawn_periodic_reindex, SapphireJournalServer};
+
+/// MCP を `/mcp` に載せた [`axum::Router`] を返す。
+///
+/// 認証は**かけない**。呼び出し側が framework の `protect()` などで包むこと
+/// （`sapphire-journal-server` がそうしている）。単体で外に晒すと、rmcp 既定の
+/// ループバック制限しか守るものが無い。
+pub fn mcp_router(
+    shared_state: Arc<std::sync::Mutex<JournalState>>,
+    cancel: CancellationToken,
+    observer: Option<crate::server::WriteObserver>,
+) -> axum::Router {
+    let factory_state = Arc::clone(&shared_state);
+    let factory = move || {
+        let server = SapphireJournalServer::from_shared(Arc::clone(&factory_state));
+        // セッションごとに新しいサーバが作られるので、オブザーバは毎回付け直す。
+        Ok(match &observer {
+            Some(o) => server.with_write_observer(Arc::clone(o)),
+            None => server,
+        })
+    };
+
+    let config = StreamableHttpServerConfig::default().with_cancellation_token(cancel);
+    let http_service = StreamableHttpService::new(
+        factory,
+        Arc::new(LocalSessionManager::default()),
+        config,
+    );
+
+    axum::Router::new().route_service("/mcp", http_service)
+}
 
 /// Bind an HTTP MCP server to `bind:port`, serving the journal at
 /// `journal_dir`. Runs until `cancel` is triggered, at which point active
@@ -44,18 +76,7 @@ pub async fn serve_http(
 
     let state = prepare_state(Some(journal_dir), false)?;
     let shared_state = Arc::new(std::sync::Mutex::new(state));
-
-    let factory_state = Arc::clone(&shared_state);
-    let factory = move || Ok(SapphireJournalServer::from_shared(Arc::clone(&factory_state)));
-
-    let config = StreamableHttpServerConfig::default().with_cancellation_token(cancel.clone());
-    let http_service = StreamableHttpService::new(
-        factory,
-        Arc::new(LocalSessionManager::default()),
-        config,
-    );
-
-    let router = axum::Router::new().route_service("/mcp", http_service);
+    let router = mcp_router(Arc::clone(&shared_state), cancel.clone(), None);
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
