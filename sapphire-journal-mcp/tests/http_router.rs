@@ -16,7 +16,8 @@ async fn mcp_router_serves_the_mcp_path() {
         sapphire_journal_core::journal_state::JournalState::open(journal).unwrap(),
     ));
 
-    let router = sapphire_journal_mcp::http::mcp_router(state, CancellationToken::new(), None);
+    let router =
+        sapphire_journal_mcp::http::mcp_router(state, CancellationToken::new(), None, &[]);
 
     // GET /mcp は streamable-http では SSE ストリームの購読。405 でも 400 でもなく、
     // 「そのルートが存在する」ことだけをここでは確かめる。

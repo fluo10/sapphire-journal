@@ -30,6 +30,17 @@ pub struct Cli {
     #[arg(long, env = "SAPPHIRE_JOURNAL_SERVER_KEYS", value_name = "FILE")]
     pub keys: Option<PathBuf>,
 
+    /// A hostname clients use to reach `/mcp`, e.g. `box.tailnet.ts.net` or
+    /// `nas.local:8080`. Repeatable. Loopback and `--addr` are always allowed;
+    /// anything else must be named here or MCP answers it with 403.
+    #[arg(
+        long = "allowed-host",
+        env = "SAPPHIRE_JOURNAL_SERVER_ALLOWED_HOSTS",
+        value_delimiter = ',',
+        value_name = "HOST"
+    )]
+    pub allowed_host: Vec<String>,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -68,6 +79,36 @@ mod tests {
         let cli =
             Cli::try_parse_from(["sapphire-journal-server", "--addr", "0.0.0.0:9000"]).unwrap();
         assert_eq!(cli.addr.to_string(), "0.0.0.0:9000");
+    }
+
+    #[test]
+    fn allowed_host_is_repeatable_and_defaults_to_empty() {
+        let cli = Cli::try_parse_from(["sapphire-journal-server"]).unwrap();
+        assert!(cli.allowed_host.is_empty());
+
+        let cli = Cli::try_parse_from([
+            "sapphire-journal-server",
+            "--allowed-host",
+            "box.tailnet.ts.net",
+            "--allowed-host",
+            "nas.local:8080",
+        ])
+        .unwrap();
+        assert_eq!(cli.allowed_host, ["box.tailnet.ts.net", "nas.local:8080"]);
+    }
+
+    #[test]
+    fn allowed_host_also_splits_a_comma_separated_value() {
+        // 環境変数（`SAPPHIRE_JOURNAL_SERVER_ALLOWED_HOSTS`）は 1 本の文字列
+        // でしか渡せないので、区切り文字が効いていないと service unit から
+        // 複数指定できない。
+        let cli = Cli::try_parse_from([
+            "sapphire-journal-server",
+            "--allowed-host",
+            "a.example,b.example",
+        ])
+        .unwrap();
+        assert_eq!(cli.allowed_host, ["a.example", "b.example"]);
     }
 
     #[test]

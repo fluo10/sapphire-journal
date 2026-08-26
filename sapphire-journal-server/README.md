@@ -32,6 +32,38 @@ can also come from the `SAPPHIRE_JOURNAL_SERVER_DIR` environment variable,
 and `--addr` from `SAPPHIRE_JOURNAL_SERVER_ADDR`, which is usually more
 convenient for a service unit or a container than repeating flags.
 
+### If you widen `--addr`, name the hostnames too
+
+Binding beyond loopback is only half the job. `/mcp` sits behind rmcp's
+DNS-rebinding guard, which checks the `Host` header of every request against
+an allowlist that starts out holding loopback and the bind address only. A
+client that reaches the server as `http://box.tailnet.ts.net:8080/mcp` sends
+`Host: box.tailnet.ts.net:8080`, which is on no list, and gets `403
+Forbidden` — no matter how valid its token is.
+
+So name each hostname your clients actually type:
+
+```sh
+sapphire-journal-server --journal-dir /path/to/your/journal \
+  --addr 0.0.0.0:8080 \
+  --allowed-host box.tailnet.ts.net --allowed-host nas.local
+```
+
+`--allowed-host` is repeatable, accepts either `host` or `host:port` (the
+bare form matches any port), and can also come from
+`SAPPHIRE_JOURNAL_SERVER_ALLOWED_HOSTS` as a comma-separated list. Loopback
+stays allowed whatever you pass, so adding names never breaks a local
+client.
+
+**What it looks like when you forget:** sync keeps working and only the AI
+side breaks. `/rpc` has no `Host` check, so a synced client pulls and pushes
+happily while every MCP client gets `403 Forbidden: Host header is not
+allowed` — often reported as "the agent can't see my journal" rather than as
+a server problem. The server logs a warning at startup when it binds beyond
+loopback with no `--allowed-host`, and rmcp logs `rejected request with
+disallowed Host header` for each such request; the startup line also prints
+the full allowlist it ended up with.
+
 The server refuses to bind at all if it has no usable API key configured —
 see the next section. There is no "start it open and lock it down later";
 an unauthenticated listener is never a state this process will sit in.

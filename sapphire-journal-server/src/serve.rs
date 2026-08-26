@@ -96,7 +96,41 @@ pub fn build_state(
     Ok(Arc::new(state))
 }
 
+/// bind アドレスと `--allowed-host` から、MCP に渡す `Host` 許可リストを作る。
+///
+/// rmcp は `Host` ヘッダを許可リストで検査する（DNS リバインディング対策）。
+/// `--addr 0.0.0.0:8080` で待ち受けても、クライアントが送ってくる `Host` は
+/// `0.0.0.0` ではなく **そのクライアントが URL に書いた名前** —— `10.0.0.5:8080`
+/// だったり `box.tailnet.ts.net` だったり —— なので、bind アドレスから機械的に
+/// 導けるのはせいぜい「同じマシンから bind アドレスを直接叩く」場合だけ。残りは
+/// 運用者が `--allowed-host` で名指しするしかない。だから両方を足す。
+///
+/// ループバックは [`sapphire_journal_mcp::http::mcp_router`] が常に足すので
+/// ここには入れない。
+pub fn allowed_hosts(addr: std::net::SocketAddr, extra: &[String]) -> Vec<String> {
+    let mut hosts = vec![
+        // ホスト単体（ポート無し）は rmcp では任意ポートに一致し、`host:port`
+        // は完全一致。両方入れておくと、リバースプロキシがポートを書き換えた
+        // 場合も、書き換えない場合も通る。
+        addr.ip().to_string(),
+        addr.to_string(),
+    ];
+    hosts.extend(
+        extra
+            .iter()
+            .map(|h| h.trim())
+            .filter(|h| !h.is_empty())
+            .map(str::to_owned),
+    );
+    hosts.dedup();
+    hosts
+}
+
 /// `/rpc` と `/mcp` を 1 つの Router に束ね、両方に同じ鍵をかける。
+///
+/// `allowed_hosts` は MCP の `Host` 許可リストの追加分（[`allowed_hosts`]
+/// が組み立てる）。`/rpc` 側にこの検査は無いので、ここを空のままにすると
+/// 「同期は通るが `/mcp` だけ 403」という片肺状態になる。
 ///
 /// MCP の書き込みを change log に載せるオブザーバもここで繋ぐ — `mcp_router`
 /// がセッションごとにファクトリで `SapphireJournalServer` を作る以上、外から
@@ -106,6 +140,7 @@ pub fn build_router(
     journal_state: Arc<Mutex<JournalState>>,
     journal_dir: &Path,
     cancel: CancellationToken,
+    allowed_hosts: &[String],
 ) -> anyhow::Result<Router> {
     let ws = workspace_id(journal_dir)?;
     // /rpc と同じインスタンス。ここで with_config を自分で呼ぶと change log が 2 本になる。
@@ -113,7 +148,8 @@ pub fn build_router(
     let origin = Journal::from_root(journal_dir.to_path_buf())?.root;
     let observer = write_observer(store, origin);
 
-    let mcp = sapphire_journal_mcp::http::mcp_router(journal_state, cancel, Some(observer));
+    let mcp =
+        sapphire_journal_mcp::http::mcp_router(journal_state, cancel, Some(observer), allowed_hosts);
     // `router()` は認証適用済み。`/mcp` は自分で protect に通す — 片方だけ
     // 守られている状態を作らない。
     Ok(router(Arc::clone(&state)).merge(protect(state, mcp)))
@@ -250,6 +286,7 @@ pub async fn run(
     keys_path: &Path,
     state: Arc<ServerState>,
     journal_state: Arc<Mutex<JournalState>>,
+    extra_allowed_hosts: &[String],
 ) -> anyhow::Result<()> {
     match state.keys() {
         Some(keys) if keys.has_usable_key() => {}
@@ -269,7 +306,14 @@ pub async fn run(
     }
 
     let cancel = CancellationToken::new();
-    let app = build_router(Arc::clone(&state), Arc::clone(&journal_state), journal_dir, cancel.clone())?;
+    let mcp_hosts = allowed_hosts(addr, extra_allowed_hosts);
+    let app = build_router(
+        Arc::clone(&state),
+        Arc::clone(&journal_state),
+        journal_dir,
+        cancel.clone(),
+        &mcp_hosts,
+    )?;
 
     // build_router がこの ws に対する WsStore を既に開いている
     // (`ServerState::workspace` はワークスペースごとにメモ化する) ので、ここで
@@ -308,9 +352,18 @@ pub async fn run(
         journal = %journal_dir.display(),
         keys = %keys_path.display(),
         tick_interval_secs = interval.as_secs(),
+        mcp_allowed_hosts = ?mcp_hosts,
         "sapphire-journal-server listening on /rpc and /mcp — private network only: \
          no TLS, no OAuth, tokens are stored in plaintext"
     );
+    if extra_allowed_hosts.is_empty() && !addr.ip().is_loopback() {
+        tracing::warn!(
+            %addr,
+            "listening beyond loopback with no --allowed-host: /rpc will answer any client, \
+             but /mcp rejects every request whose Host header is not loopback or the bind \
+             address itself (403 Forbidden). Pass --allowed-host for each name clients use."
+        );
+    }
 
     let result = axum::serve(listener, app)
         .with_graceful_shutdown(async move { cancel.cancelled().await })
@@ -319,4 +372,48 @@ pub async fn run(
 
     tick_handle.abort();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allowed_hosts_covers_the_bind_address_with_and_without_its_port() {
+        let hosts = allowed_hosts("10.0.0.5:8080".parse().unwrap(), &[]);
+        assert!(hosts.contains(&"10.0.0.5".to_owned()));
+        assert!(hosts.contains(&"10.0.0.5:8080".to_owned()));
+    }
+
+    #[test]
+    fn allowed_hosts_keeps_the_names_the_operator_named() {
+        let hosts = allowed_hosts(
+            "0.0.0.0:8080".parse().unwrap(),
+            &["box.tailnet.ts.net".to_owned(), "nas.local:8080".to_owned()],
+        );
+        assert!(hosts.contains(&"box.tailnet.ts.net".to_owned()));
+        assert!(hosts.contains(&"nas.local:8080".to_owned()));
+    }
+
+    #[test]
+    fn allowed_hosts_drops_blank_entries() {
+        // `--allowed-host ""` や `SAPPHIRE_JOURNAL_SERVER_ALLOWED_HOSTS=a,,b`
+        // で空文字が混ざる。rmcp 側は空文字を無視するが、許可リストの中身は
+        // 起動ログに出るので、ここで落としておく。
+        let hosts = allowed_hosts(
+            "127.0.0.1:8080".parse().unwrap(),
+            &[String::new(), "  ".to_owned(), " keep.example ".to_owned()],
+        );
+        assert!(hosts.iter().all(|h| !h.trim().is_empty()));
+        assert!(hosts.contains(&"keep.example".to_owned()), "{hosts:?}");
+    }
+
+    #[test]
+    fn allowed_hosts_uses_the_bare_form_for_ipv6() {
+        // rmcp は `Host: [::1]:8080` の角括弧を外して比較するので、許可リスト
+        // 側も角括弧なしの形が要る。`SocketAddr::to_string` は角括弧つきの形
+        // しか返さないため、`ip()` 側を別に入れておく必要がある。
+        let hosts = allowed_hosts("[::1]:8080".parse().unwrap(), &[]);
+        assert!(hosts.contains(&"::1".to_owned()), "{hosts:?}");
+    }
 }

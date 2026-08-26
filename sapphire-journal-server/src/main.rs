@@ -18,7 +18,15 @@ async fn main() -> anyhow::Result<()> {
             })?;
             let journal_state = serve::open_journal_state(&journal_dir)?;
             let state = serve::build_state(&journal_dir, &keys_path, Arc::clone(&journal_state))?;
-            serve::run(cli.addr, &journal_dir, &keys_path, state, journal_state).await
+            serve::run(
+                cli.addr,
+                &journal_dir,
+                &keys_path,
+                state,
+                journal_state,
+                &cli.allowed_host,
+            )
+            .await
         }
     }
 }

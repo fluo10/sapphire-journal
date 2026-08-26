@@ -27,8 +27,9 @@ async fn run_refuses_to_start_with_no_usable_key() {
     .unwrap();
 
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let result = sapphire_journal_server::serve::run(addr, &journal_dir, &keys_path, state, journal_state)
-        .await;
+    let result =
+        sapphire_journal_server::serve::run(addr, &journal_dir, &keys_path, state, journal_state, &[])
+            .await;
 
     assert!(
         result.is_err(),

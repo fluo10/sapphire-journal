@@ -1,4 +1,10 @@
 //! テスト用に journal を 1 つ作り、鍵を 1 本発行してサーバを組み立てる。
+//!
+//! このファイルは `tests/*.rs` の**すべて**にコンパイルされるので、どのヘルパ
+//! も「自分を使っていないテストバイナリ」から見れば未使用になる。`dead_code`
+//! を許可しておかないと、1 つのテストでしか使わないヘルパを足すたびに他の
+//! バイナリで警告が出る。
+#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -30,9 +36,22 @@ pub struct Harness {
     /// ので、テストの検証も change log(`workspace.snapshot`)側で行うこと。
     store: Arc<WsStore>,
     journal_state: Arc<Mutex<JournalState>>,
+    /// Every `/mcp` request this harness sends carries this as its `Host`.
+    /// rmcp rejects a `Host` that is not on the router's allowlist, so this
+    /// is what makes the allowlist observable from a test.
+    mcp_host: String,
 }
 
 pub async fn spawn() -> Harness {
+    spawn_with_allowed_hosts(&[], "localhost").await
+}
+
+/// Build the server with `allowed_hosts` widening the MCP `Host` allowlist,
+/// and send every `/mcp` request with `Host: {mcp_host}`.
+///
+/// `spawn()` is this with an empty list and a loopback `Host` — i.e. rmcp's
+/// own default, which is what a server bound to `127.0.0.1` wants.
+pub async fn spawn_with_allowed_hosts(allowed_hosts: &[String], mcp_host: &str) -> Harness {
     let tmp = tempfile::tempdir().unwrap();
     let journal_dir = tmp.path().join("journal");
     sapphire_journal_core::init_app_context();
@@ -58,6 +77,7 @@ pub async fn spawn() -> Harness {
         Arc::clone(&journal_state),
         &journal_dir,
         CancellationToken::new(),
+        allowed_hosts,
     )
     .unwrap();
     // `build_router` が `state.workspace(&ws)` で既に開いている。`workspace`
@@ -75,6 +95,7 @@ pub async fn spawn() -> Harness {
         journal_dir,
         store,
         journal_state,
+        mcp_host: mcp_host.to_owned(),
     };
     h.mcp_session = h.mcp_initialize().await;
     h
@@ -184,8 +205,10 @@ impl Harness {
             .header(header::ACCEPT, "application/json, text/event-stream")
             .header(header::AUTHORIZATION, format!("Bearer {}", self.token))
             // rmcp's DNS-rebinding guard rejects requests with no Host (or an
-            // unlisted one); `oneshot()` doesn't synthesize one.
-            .header(header::HOST, "localhost");
+            // unlisted one); `oneshot()` doesn't synthesize one. Which Host
+            // this is comes from `spawn_with_allowed_hosts` — the whole point
+            // of `allowed_hosts.rs` is that a non-loopback one gets through.
+            .header(header::HOST, &self.mcp_host);
         if let Some(session) = session {
             builder = builder.header("Mcp-Session-Id", session);
         }
@@ -199,6 +222,67 @@ impl Harness {
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let text = String::from_utf8_lossy(&bytes).into_owned();
         (status, headers, text)
+    }
+
+    /// An authenticated `initialize` to `/mcp` carrying `host` as its `Host`
+    /// header, returning only the transport status.
+    ///
+    /// The token is valid, so a non-`OK` status here is rmcp's `Host`
+    /// allowlist talking and not the auth layer.
+    pub async fn mcp_initialize_status_with_host(&self, host: &str) -> (StatusCode, String) {
+        let response = self
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::ACCEPT, "application/json, text/event-stream")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", self.token))
+                    .header(header::HOST, host)
+                    .body(Body::from(
+                        serde_json::to_vec(&serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": 0,
+                            "method": "initialize",
+                            "params": {
+                                "protocolVersion": "2025-06-18",
+                                "capabilities": {},
+                                "clientInfo": {"name": "host-allowlist-probe", "version": "0.0.0"}
+                            }
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// The same probe against `/rpc`, so a test can show that the two routes
+    /// disagree about the very same request.
+    pub async fn rpc_status_with_host(&self, host: &str) -> StatusCode {
+        let body = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "method": "workspace.snapshot", "params": {"ws": self.ws()}
+        });
+        self.router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/rpc")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", self.token))
+                    .header(header::HOST, host)
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status()
     }
 
     /// Complete the MCP handshake (`initialize` then `notifications/initialized`)
