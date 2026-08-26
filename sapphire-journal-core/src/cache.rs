@@ -546,6 +546,15 @@ fn increment_until_free(
                 |row| row.get(0),
             )
             .optional()?;
+        // A cache row for this id at a *different* path isn't necessarily a
+        // real collision: `entries.id` is the primary key, so re-upserting
+        // under the same id (e.g. after `update_entry`/`fix_entry` renamed
+        // the file) simply replaces that one row — no second entry is ever
+        // created. The row this query just found is stale (the entry's own
+        // pre-rename location) unless a file still exists there, in which
+        // case it really is a second, unrelated entry that happens to share
+        // an id (e.g. a copy-pasted `.md` file) and does need a new one.
+        let conflict = conflict.filter(|p| Path::new(p).exists());
         if conflict.is_none() {
             break;
         }
