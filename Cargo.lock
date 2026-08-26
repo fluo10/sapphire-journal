@@ -848,6 +848,7 @@ checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core",
  "bytes",
+ "form_urlencoded",
  "futures-util",
  "http",
  "http-body",
@@ -861,11 +862,15 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "serde_core",
+ "serde_json",
+ "serde_path_to_error",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tower",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -884,6 +889,7 @@ dependencies = [
  "sync_wrapper",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -7706,9 +7712,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "sapphire-framework"
+version = "0.1.0"
+source = "git+https://github.com/fluo10/sapphire-framework?branch=main#34ba131c6caa16032d77ead03ea264546dd20ac0"
+dependencies = [
+ "sapphire-framework-blob",
+ "sapphire-framework-remote-server",
+ "sapphire-framework-rpc",
+]
+
+[[package]]
+name = "sapphire-framework-blob"
+version = "0.1.0"
+source = "git+https://github.com/fluo10/sapphire-framework?branch=main#34ba131c6caa16032d77ead03ea264546dd20ac0"
+dependencies = [
+ "sha2",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "sapphire-framework-remote-server"
+version = "0.1.0"
+source = "git+https://github.com/fluo10/sapphire-framework?branch=main#34ba131c6caa16032d77ead03ea264546dd20ac0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "getrandom 0.2.17",
+ "redb",
+ "sapphire-framework-blob",
+ "sapphire-framework-retrieve",
+ "sapphire-framework-rpc",
+ "sapphire-framework-track",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "sapphire-framework-retrieve"
 version = "0.1.0"
-source = "git+https://github.com/fluo10/sapphire-framework?branch=main#432edb5d2faca6f63655f0eaedf1522ce45d9513"
+source = "git+https://github.com/fluo10/sapphire-framework?branch=main#34ba131c6caa16032d77ead03ea264546dd20ac0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -7725,9 +7773,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sapphire-framework-rpc"
+version = "0.1.0"
+source = "git+https://github.com/fluo10/sapphire-framework?branch=main#34ba131c6caa16032d77ead03ea264546dd20ac0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "sapphire-framework-track"
 version = "0.1.0"
-source = "git+https://github.com/fluo10/sapphire-framework?branch=main#432edb5d2faca6f63655f0eaedf1522ce45d9513"
+source = "git+https://github.com/fluo10/sapphire-framework?branch=main#34ba131c6caa16032d77ead03ea264546dd20ac0"
 dependencies = [
  "redb",
  "thiserror 2.0.18",
@@ -7737,7 +7796,7 @@ dependencies = [
 [[package]]
 name = "sapphire-framework-workspace"
 version = "0.1.0"
-source = "git+https://github.com/fluo10/sapphire-framework?branch=main#432edb5d2faca6f63655f0eaedf1522ce45d9513"
+source = "git+https://github.com/fluo10/sapphire-framework?branch=main#34ba131c6caa16032d77ead03ea264546dd20ac0"
 dependencies = [
  "chrono",
  "indexmap 2.14.0",
@@ -7826,6 +7885,27 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "sapphire-journal-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "clap",
+ "http-body-util",
+ "sapphire-framework",
+ "sapphire-journal-core",
+ "sapphire-journal-mcp",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
  "tower",
  "tracing",
  "tracing-subscriber",
@@ -7996,6 +8076,17 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_path_to_error"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
+dependencies = [
+ "itoa",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -9083,6 +9174,7 @@ dependencies = [
  "tokio",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -10043,7 +10135,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
