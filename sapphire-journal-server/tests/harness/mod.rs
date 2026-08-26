@@ -122,6 +122,17 @@ impl Harness {
         &self.ws
     }
 
+    /// `path`（journal 内の絶対パス）を、change log / RPC が使うワークスペース
+    /// 相対の POSIX パスに直す。
+    pub fn relative(&self, path: &Path) -> String {
+        path.strip_prefix(&self.journal_dir)
+            .unwrap_or_else(|_| panic!("{path:?} is not under the journal dir {:?}", self.journal_dir))
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+
     /// Task 8 の `tick_once`(journal の sync + `WsStore::reconcile`)を 1 回分、
     /// 同期的に走らせる。
     pub async fn tick_once(&self) -> ReconcileReport {

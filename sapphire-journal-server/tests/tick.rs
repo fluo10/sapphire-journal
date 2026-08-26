@@ -46,3 +46,60 @@ async fn a_second_tick_is_quiet() {
     assert_eq!(second.upserted, 0, "変化していないのに再検出している");
     assert_eq!(second.removed, 0);
 }
+
+#[tokio::test]
+async fn a_stale_push_to_the_old_path_is_resolved_to_one_entry() {
+    let h = harness::spawn().await;
+    let path = h.write_entry_through_mcp("before").await;
+    h.tick_once().await;
+    let old_rel = h.relative(&path);
+
+    // タイトル変更でリネーム。
+    h.retitle_through_mcp(&path, "after").await;
+
+    // 古いカーソルのクライアントが旧パスへ push してくる。
+    let push = h
+        .rpc(
+            "changes.push",
+            serde_json::json!({
+                "ws": h.ws(), "base_cursor": 0,
+                "changes": [{
+                    "path": old_rel, "kind": "upsert",
+                    "body": "stale edit", "updated_at": chrono::Utc::now().to_rfc3339()
+                }]
+            }),
+        )
+        .await;
+    assert!(
+        push["result"]["conflicts"].as_array().is_some_and(|c| c.is_empty()),
+        "push は拒否されない想定（LWW で通る）はずが拒否された: {push:?}"
+    );
+
+    // resolve_duplicates を呼ぶ前に、本当に同じ id のエントリが 2 つ live に
+    // なっていることを確認する。ここを確認しないと、stale push がどこかで
+    // 弾かれたり期待と違う場所に着地したりしていても、このテストは
+    // resolve_duplicates が何もしなくても通ってしまう。
+    let before = h.rpc("workspace.snapshot", serde_json::json!({"ws": h.ws()})).await;
+    let md_before: Vec<_> = before["result"]["docs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["path"].as_str().unwrap().ends_with(".md"))
+        .collect();
+    assert_eq!(
+        md_before.len(),
+        2,
+        "resolve_duplicates を呼ぶ前に 2 つの live エントリが揃っていない（テストの前提が崩れている）: {md_before:?}"
+    );
+
+    h.tick_once().await;
+
+    let snapshot = h.rpc("workspace.snapshot", serde_json::json!({"ws": h.ws()})).await;
+    let md: Vec<_> = snapshot["result"]["docs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["path"].as_str().unwrap().ends_with(".md"))
+        .collect();
+    assert_eq!(md.len(), 1, "同じ id のエントリが 2 つ残っている: {md:?}");
+}

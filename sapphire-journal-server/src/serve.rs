@@ -196,6 +196,17 @@ pub fn tick_once(
     }
     journal_state.lock().unwrap().sync()?;
     let report = store.reconcile()?;
+
+    // reconcile が回収した後、パス単位 LWW が旧パスを復活させて同じ id が
+    // 2 つのファイルに分かれていないか確認する（Task 9）。origin はここでしか
+    // 分からない（`WsStore` は自分の origin を公開しない）ので journal から
+    // 引く。
+    let origin = journal_state.lock().unwrap().journal.root.clone();
+    let removed = crate::dedupe::resolve_duplicates(store, &origin)?;
+    if removed > 0 {
+        tracing::info!(removed, "resolved duplicate entry ids sharing the same id");
+    }
+
     Ok(report)
 }
 
