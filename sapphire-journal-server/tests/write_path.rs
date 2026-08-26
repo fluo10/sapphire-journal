@@ -5,8 +5,6 @@ mod harness;
 async fn an_entry_written_through_mcp_appears_in_changes_pull() {
     let h = harness::spawn().await;
 
-    // MCP のツールを直接叩くのは重いので、オブザーバが繋がっている経路を
-    // サーバ内部の同じ入口で再現する。
     h.write_entry_through_mcp("first note").await;
 
     let pulled = h

@@ -163,17 +163,25 @@ pub fn allowed_hosts(addr: std::net::SocketAddr, extra: &[String]) -> Vec<String
 /// MCP の書き込みを change log に載せるオブザーバもここで繋ぐ — `mcp_router`
 /// がセッションごとにファクトリで `SapphireJournalServer` を作る以上、外から
 /// 後付けする経路は無い。
+///
+/// **journal ルートは `journal_state` から引く。** 以前は `journal_dir` を
+/// 別に受け取ってそこから `origin` を作り直していたが、MCP の書き込みは
+/// `journal_state` の側から来る。[`write_observer`] のドキュメントが長々と
+/// 警告している「綴りが 1 文字ずれると全部の書き込みが黙って落ちる」は、
+/// まさにその 2 つがずれ得たから起きる —— 同じ 1 つから引けば、ずれようが
+/// ない。
 pub fn build_router(
     state: Arc<ServerState>,
     journal_state: Arc<Mutex<JournalState>>,
-    journal_dir: &Path,
     cancel: CancellationToken,
     allowed_hosts: &[String],
 ) -> anyhow::Result<Router> {
-    let ws = workspace_id(journal_dir)?;
+    let (ws, origin) = {
+        let guard = lock_journal(&journal_state);
+        (guard.journal.journal_id()?.to_string(), guard.journal.root.clone())
+    };
     // /rpc と同じインスタンス。ここで with_config を自分で呼ぶと change log が 2 本になる。
     let store = state.workspace(&ws)?;
-    let origin = Journal::from_root(journal_dir.to_path_buf())?.root;
     let observer = write_observer(store, origin);
 
     let mcp =
@@ -406,7 +414,6 @@ pub async fn run_until(
     let app = build_router(
         Arc::clone(&state),
         Arc::clone(&journal_state),
-        journal_dir,
         cancel.clone(),
         &mcp_hosts,
     )?;
@@ -414,8 +421,8 @@ pub async fn run_until(
     // build_router がこの ws に対する WsStore を既に開いている
     // (`ServerState::workspace` はワークスペースごとにメモ化する) ので、ここで
     // 呼んでも新しいインスタンスは生まれない — tick が change log を分裂させる
-    // ことはない。
-    let ws = workspace_id(journal_dir)?;
+    // ことはない。`build_router` と同じく `journal_state` から引く。
+    let ws = lock_journal(&journal_state).journal.journal_id()?.to_string();
     let store = state.workspace(&ws)?;
     let interval = match UserConfig::load() {
         // `sync_interval()` が `None` を返すのは `sync_interval_minutes = 0`
@@ -435,7 +442,19 @@ pub async fn run_until(
             DEFAULT_TICK_INTERVAL
         }
         Ok(cfg) => cfg.sync_interval().unwrap_or(DEFAULT_TICK_INTERVAL),
-        Err(_) => DEFAULT_TICK_INTERVAL,
+        Err(e) => {
+            // 設定ファイルが**壊れている**のと、そもそも無いのとは違う。
+            // 後者は `load()` が既定値を返すのでここには来ない。黙って
+            // 既定値に落ちると、運用者が書いた設定が丸ごと無視されている
+            // ことに気づけない。
+            tracing::warn!(
+                error = %e,
+                default_secs = DEFAULT_TICK_INTERVAL.as_secs(),
+                "could not read the user config; falling back to the default tick interval \
+                 (any other setting in that file is being ignored too)"
+            );
+            DEFAULT_TICK_INTERVAL
+        }
     };
     let tick_handle = spawn_tick(store, Arc::clone(&journal_state), interval);
 

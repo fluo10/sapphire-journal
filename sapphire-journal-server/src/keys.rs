@@ -18,6 +18,11 @@ pub const TOKEN_PREFIX: &str = "sjt";
 ///
 /// 単位は必須。曖昧な `90` は拒否する — 秒なのか日なのか読めない値を鍵の
 /// 有効期限に使わせない。
+///
+/// `Duration::days` ではなく `try_days` を使うこと。前者は範囲外の入力で
+/// panic するので、`gen-key --expires-in 99999999999d` が「エラー」ではなく
+/// 「異常終了」になる —— 打ち間違いに対してプロセスが落ちるのは、この入口の
+/// 応答として重すぎる。
 pub fn parse_duration(s: &str) -> anyhow::Result<Duration> {
     let (value, unit) = s.split_at(
         s.find(|c: char| !c.is_ascii_digit())
@@ -29,12 +34,13 @@ pub fn parse_duration(s: &str) -> anyhow::Result<Duration> {
     let n: i64 = value
         .parse()
         .with_context(|| format!("bad duration: {s:?}"))?;
-    match unit {
-        "d" => Ok(Duration::days(n)),
-        "h" => Ok(Duration::hours(n)),
-        "m" => Ok(Duration::minutes(n)),
+    let d = match unit {
+        "d" => Duration::try_days(n),
+        "h" => Duration::try_hours(n),
+        "m" => Duration::try_minutes(n),
         other => bail!("unknown duration unit {other:?} in {s:?} (use d, h or m)"),
-    }
+    };
+    d.ok_or_else(|| anyhow::anyhow!("duration is out of range: {s:?}"))
 }
 
 /// トークンを先頭 12 文字に切り詰めてマスクする。
@@ -45,6 +51,26 @@ pub fn parse_duration(s: &str) -> anyhow::Result<Duration> {
 /// この一手だけが手書きトークンで壊れる事態を避ける。
 fn mask_token(token: &str) -> String {
     format!("{}…", token.chars().take(12).collect::<String>())
+}
+
+/// `list-keys` の 1 行: id・トークン（マスク済）・作成日時・**期限**・ラベル。
+///
+/// 期限は日付ごと出す。`(expired)` とだけ書いても、いつ切れたのかも、まだ
+/// 切れていない鍵がいつ切れるのかも分からず、失効を計画できない。
+fn format_key_line(e: &sapphire_framework::remote_server::KeyEntry, now: chrono::DateTime<Utc>) -> String {
+    let expires = match e.expires_at {
+        Some(at) if e.is_expired(now) => format!("expired {}", at.to_rfc3339()),
+        Some(at) => format!("expires {}", at.to_rfc3339()),
+        None => "no expiry".to_owned(),
+    };
+    format!(
+        "{}  {}  {}  {}  {}",
+        e.id,
+        mask_token(&e.token),
+        e.created_at.to_rfc3339(),
+        expires,
+        e.label.as_deref().unwrap_or("-"),
+    )
 }
 
 /// 鍵サブコマンドを実行する。
@@ -60,7 +86,17 @@ pub fn run(command: Command, keys_path: &Path) -> anyhow::Result<()> {
                 .transpose()?
                 // 相対指定は生成時に絶対時刻へ直して保存する。ファイルには絶対
                 // 時刻だけを持たせるほうが、後から読んだときに曖昧さがない。
-                .map(|d| Utc::now() + d);
+                //
+                // `checked_add_signed`。`Utc::now() + d` は表現できない時刻に
+                // なると panic するので、`parse_duration` を通った値でもまだ
+                // 落ちうる（chrono の `Duration` の上限は `DateTime` の上限より
+                // ずっと緩い）。打ち間違いでプロセスが異常終了しないこと。
+                .map(|d| {
+                    Utc::now()
+                        .checked_add_signed(d)
+                        .ok_or_else(|| anyhow::anyhow!("expiry is too far in the future: {d}"))
+                })
+                .transpose()?;
             let entry = store.generate(TOKEN_PREFIX, label, expires_at)?;
             println!("{}", entry.token);
             eprintln!(
@@ -76,16 +112,7 @@ pub fn run(command: Command, keys_path: &Path) -> anyhow::Result<()> {
         Command::ListKeys => {
             let now = Utc::now();
             for e in store.entries() {
-                let masked = mask_token(&e.token);
-                let state = if e.is_expired(now) { " (expired)" } else { "" };
-                println!(
-                    "{}  {}  {}  {}{}",
-                    e.id,
-                    masked,
-                    e.created_at.to_rfc3339(),
-                    e.label.as_deref().unwrap_or("-"),
-                    state
-                );
+                println!("{}", format_key_line(e, now));
             }
         }
         Command::RevokeKey { selector } => {
@@ -121,6 +148,86 @@ mod tests {
         assert!(parse_duration("d90").is_err());
         assert!(parse_duration("-1d").is_err());
         assert!(parse_duration("90y").is_err());
+    }
+
+    #[test]
+    fn parse_duration_errors_instead_of_panicking_on_an_out_of_range_value() {
+        // `chrono::Duration::days` はこれらで panic する（上限は
+        // i64::MAX ミリ秒 ≒ 1.07e11 日）。打ち間違い 1 つで `gen-key` が
+        // エラーではなく異常終了になるのを防ぐ。
+        for s in ["1000000000000d", "10000000000000h", "1000000000000000m"] {
+            assert!(parse_duration(s).is_err(), "{s} が通ってしまった");
+        }
+    }
+
+    #[test]
+    fn gen_key_errors_instead_of_panicking_on_an_absurd_expiry() {
+        // `parse_duration` を通っても、`Utc::now() + d` がまだ落ちうる:
+        // chrono の `Duration` の上限（約 1.07e11 日）は `DateTime` の上限
+        // （西暦 262143 年）よりずっと緩い。ここが本当の入口。
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("keys.toml");
+
+        let result = run(
+            Command::GenKey { label: None, expires_in: Some("99999999999d".into()) },
+            &path,
+        );
+
+        assert!(result.is_err(), "表現できない期限が受理された");
+    }
+
+    #[test]
+    fn list_keys_prints_the_expiry_timestamp() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("keys.toml");
+        run(
+            Command::GenKey { label: Some("laptop".into()), expires_in: Some("90d".into()) },
+            &path,
+        )
+        .unwrap();
+        let store = sapphire_framework::remote_server::KeyStore::load(&path).unwrap();
+        let entry = &store.entries()[0];
+        let expires_at = entry.expires_at.unwrap();
+
+        let line = format_key_line(entry, chrono::Utc::now());
+
+        assert!(
+            line.contains(&expires_at.to_rfc3339()),
+            "期限の日時が出ていない: {line}"
+        );
+        assert!(line.contains(&entry.id.to_string()), "{line}");
+        assert!(line.contains("laptop"), "{line}");
+        assert!(!line.contains(&entry.token), "生のトークンが出ている: {line}");
+    }
+
+    #[test]
+    fn list_keys_says_when_an_expired_key_expired() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("keys.toml");
+        run(Command::GenKey { label: None, expires_in: Some("1m".into()) }, &path).unwrap();
+        let store = sapphire_framework::remote_server::KeyStore::load(&path).unwrap();
+        let entry = &store.entries()[0];
+
+        // 期限の後から見た場合。
+        let line = format_key_line(entry, chrono::Utc::now() + chrono::Duration::hours(1));
+
+        assert!(line.contains("expired"), "{line}");
+        assert!(
+            line.contains(&entry.expires_at.unwrap().to_rfc3339()),
+            "失効済みでも日時は出すこと: {line}"
+        );
+    }
+
+    #[test]
+    fn list_keys_says_so_when_there_is_no_expiry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("keys.toml");
+        run(Command::GenKey { label: None, expires_in: None }, &path).unwrap();
+        let store = sapphire_framework::remote_server::KeyStore::load(&path).unwrap();
+
+        let line = format_key_line(&store.entries()[0], chrono::Utc::now());
+
+        assert!(line.contains("no expiry"), "{line}");
     }
 
     #[test]

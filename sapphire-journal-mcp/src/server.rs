@@ -85,11 +85,6 @@ impl SapphireJournalServer {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn notify_write_for_test(&self, paths: &[PathBuf]) {
-        self.notify_write(paths);
-    }
-
     /// Take the journal lock, recovering it if an earlier panic poisoned it.
     ///
     /// `.lock().unwrap()` would turn one panic anywhere under this mutex into
@@ -832,42 +827,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_rename_notifies_both_paths_in_one_call() {
-        let observed: Arc<Mutex<Vec<Vec<PathBuf>>>> = Arc::new(Mutex::new(Vec::new()));
-        let sink = Arc::clone(&observed);
-
-        let (_dir, server) = test_server();
-        let server = server.with_write_observer(Arc::new(move |paths: &[PathBuf]| {
-            sink.lock().unwrap().push(paths.to_vec());
-        }));
-
-        let created = server.notify_write_for_test(&[PathBuf::from("2026/1_old.md")]);
-        let _ = created;
-        server.notify_write_for_test(&[
-            PathBuf::from("2026/1_old.md"),
-            PathBuf::from("2026/1_new.md"),
-        ]);
-
-        let calls = observed.lock().unwrap();
-        assert_eq!(calls.len(), 2);
-        assert_eq!(calls[1].len(), 2, "リネームは 1 回の通知に両方のパスを含める");
-    }
-
-    #[test]
-    fn no_observer_is_a_no_op() {
-        let (_dir, server) = test_server();
-        // オブザーバ未設定でも panic しないこと。
-        server.notify_write_for_test(&[PathBuf::from("a.md")]);
-    }
-
     // ── coverage that drives the real tool handlers ─────────────────────────
     //
-    // The tests above only prove the observer plumbing works with hand-built
-    // path lists; they don't exercise create_entry/update_entry/fix_entry/
-    // remove_entry at all, so a bug in any of those four call sites (e.g.
-    // swapped or dropped paths) would still pass. These tests call the actual
-    // `#[tool]` methods so the rename branches are the ones under test.
+    // Every observer test below calls an actual `#[tool]` method, so the
+    // create/update/fix/remove call sites are the things under test. There
+    // used to be a pair above that hand-built path lists and pushed them
+    // straight at the observer: they proved the plumbing carried whatever it
+    // was handed, which is not a claim about this crate, and they would have
+    // passed with every one of those four call sites broken.
 
     fn blank_new_params(title: &str) -> EntryNewParams {
         EntryNewParams {

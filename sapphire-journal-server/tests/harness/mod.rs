@@ -75,7 +75,6 @@ pub async fn spawn_with_allowed_hosts(allowed_hosts: &[String], mcp_host: &str) 
     let router = sapphire_journal_server::serve::build_router(
         Arc::clone(&state),
         Arc::clone(&journal_state),
-        &journal_dir,
         CancellationToken::new(),
         allowed_hosts,
     )

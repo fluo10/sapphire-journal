@@ -4,7 +4,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use tower::ServiceExt as _;
 
-mod harness; // 下の Step 3 で書く共通ヘルパ
+mod harness;
 
 #[tokio::test]
 async fn both_routes_reject_a_request_without_a_token() {
