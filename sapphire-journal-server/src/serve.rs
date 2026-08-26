@@ -14,8 +14,20 @@ use sapphire_journal_core::journal_state::JournalState;
 use sapphire_journal_core::user_config::UserConfig;
 use tokio_util::sync::CancellationToken;
 
-/// `UserConfig::sync_interval()` が使えない(設定が読めない、無効化されている)
-/// ときの既定間隔。
+/// `UserConfig::sync_interval()` が使えない(設定が読めない)ときの既定間隔。
+///
+/// **`sync_interval_minutes = 0` は意図的にここでは無効を意味しない。**
+/// `UserConfig` 自身のドキュメントは「0 で無効化」と書いてあり、MCP 側の
+/// `spawn_periodic_reindex` はその通り `None` を返して自分自身を起動しない
+/// —— クライアントではそれで正しい。書き込み通知の経路と再インデックスが
+/// 二重になるだけだから。
+///
+/// だがこのサーバでは `spawn_periodic_reindex` を最初から一切呼んでおらず、
+/// この tick が唯一の整合性の網（Task 7 のオブザーバの取りこぼし、手作業、
+/// 外部ツールの編集を拾う場所）になる。無関係な理由で誰かが 0 を設定した
+/// せいでこの安全網まで黙って止まるのは、0 を無視するより悪い。将来ここを
+/// 「MCP と挙動を揃える」方向に「直さない」こと —— `run` 側で 0 を検出したら
+/// 警告ログを出したうえでこの既定値にフォールバックする、まで込みで意図的。
 const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// このサーバが公開するワークスペースの識別子。
@@ -167,6 +179,21 @@ pub fn tick_once(
     store: &WsStore,
     journal_state: &Mutex<JournalState>,
 ) -> anyhow::Result<ReconcileReport> {
+    if journal_state.is_poisoned() {
+        // 通常の失敗ではない。過去のどこかのティックが journal_state を
+        // 握ったまま panic して以来、この Mutex は poisoned のまま —
+        // つまり直後の `lock().unwrap()` は必ず panic し、この先も
+        // プロセスを再起動するまで毎ティック同じことが起きる
+        // (spawn_blocking が拾って `spawn_tick` 側で「panicked」と
+        // ログには出るが、それだけでは「たまたま今回失敗した」のか
+        // 「もう死んでいて二度と動かない」のか区別できない)。ロック方針
+        // 自体は変えない — ここでは何が起きているかを一度はっきり
+        // 名指しするだけ。
+        tracing::error!(
+            "journal_state mutex is poisoned by an earlier panic; every tick will keep \
+             panicking here until the process restarts"
+        );
+    }
     journal_state.lock().unwrap().sync()?;
     let report = store.reconcile()?;
     Ok(report)
@@ -216,10 +243,26 @@ pub async fn run(
     // ことはない。
     let ws = workspace_id(journal_dir)?;
     let store = state.workspace(&ws)?;
-    let interval = UserConfig::load()
-        .ok()
-        .and_then(|c| c.sync_interval())
-        .unwrap_or(DEFAULT_TICK_INTERVAL);
+    let interval = match UserConfig::load() {
+        // `sync_interval()` が `None` を返すのは `sync_interval_minutes = 0`
+        // が明示的に設定されているとき (ファイル自体が無ければ `load()` は
+        // 既定の 10 分入りの `UserConfig` を返すので、ここには来ない)。
+        // `DEFAULT_TICK_INTERVAL` のドキュメント通り、このサーバではその 0 を
+        // 尊重しない — ただし黙っては尊重しない、というだけ。
+        Ok(cfg) if cfg.sync_interval().is_none() => {
+            tracing::warn!(
+                default_secs = DEFAULT_TICK_INTERVAL.as_secs(),
+                "user config sets sync_interval_minutes = 0; on the client that disables \
+                 MCP's own periodic re-index, but this server never starts that re-index \
+                 at all — this tick is the only reconciliation path (the safety net for \
+                 missed write notifications, hand edits, external tools), so it does not \
+                 honor the 0 and runs at the default interval instead"
+            );
+            DEFAULT_TICK_INTERVAL
+        }
+        Ok(cfg) => cfg.sync_interval().unwrap_or(DEFAULT_TICK_INTERVAL),
+        Err(_) => DEFAULT_TICK_INTERVAL,
+    };
     let tick_handle = spawn_tick(store, Arc::clone(&journal_state), interval);
 
     let listener = tokio::net::TcpListener::bind(addr)
@@ -230,6 +273,7 @@ pub async fn run(
         %addr,
         journal = %journal_dir.display(),
         keys = %keys_path.display(),
+        tick_interval_secs = interval.as_secs(),
         "sapphire-journal-server listening on /rpc and /mcp — private network only: \
          no TLS, no OAuth, tokens are stored in plaintext"
     );
