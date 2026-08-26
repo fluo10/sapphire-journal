@@ -1,7 +1,5 @@
 //! `/rpc` と `/mcp` が同じ Router に載り、同じ鍵で守られていることを確かめる。
 
-use std::sync::Arc;
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use tower::ServiceExt as _;

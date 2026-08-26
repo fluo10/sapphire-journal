@@ -1,12 +1,18 @@
 //! テスト用に journal を 1 つ作り、鍵を 1 本発行してサーバを組み立てる。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, header};
 use http_body_util::BodyExt as _;
+use sapphire_framework::remote_server::ServerState;
+use sapphire_journal_core::JournalState;
+use sapphire_journal_core::entry_ref::EntryRef;
+use sapphire_journal_core::ops::UpdateOption;
+use sapphire_journal_mcp::Parameters;
+use sapphire_journal_mcp::server::{EntryModifyParams, EntryNewParams};
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt as _;
 
@@ -16,6 +22,8 @@ pub struct Harness {
     pub token: String,
     pub ws: String,
     router: Router,
+    state: Arc<ServerState>,
+    journal_state: Arc<Mutex<JournalState>>,
 }
 
 pub async fn spawn() -> Harness {
@@ -41,12 +49,13 @@ pub async fn spawn() -> Harness {
     let ws = sapphire_journal_server::serve::workspace_id(&journal_dir).unwrap();
     let router = sapphire_journal_server::serve::build_router(
         Arc::clone(&state),
-        journal_state,
+        Arc::clone(&journal_state),
+        &journal_dir,
         CancellationToken::new(),
     )
     .unwrap();
 
-    Harness { _tmp: tmp, journal_dir, token, ws, router }
+    Harness { _tmp: tmp, journal_dir, token, ws, router, state, journal_state }
 }
 
 /// `.sapphire-journal/` を掘って journal にする。`ensure_journal` の init 分岐と同じ。
@@ -90,5 +99,69 @@ impl Harness {
             .unwrap();
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         serde_json::from_slice(&bytes).unwrap()
+    }
+
+    /// `build_router` の中身と同じ配線 — `state.workspace(&ws)` から得た
+    /// `Arc<WsStore>` を `write_observer` に渡し、この harness の journal
+    /// state を共有する `SapphireJournalServer` に取り付ける。MCP のツールを
+    /// トランスポート越しに叩くのは重すぎるので、この「オブザーバが繋がって
+    /// いる入口」を直接呼ぶのがテストの目的に合う — 確かめたいのは MCP の
+    /// 書き込みが change log に届くことであって、HTTP を経由することではない。
+    fn mcp_server(&self) -> sapphire_journal_mcp::SapphireJournalServer {
+        let store = self.state.workspace(&self.ws).unwrap();
+        let observer = sapphire_journal_server::serve::write_observer(store, self.journal_dir.clone());
+        sapphire_journal_mcp::SapphireJournalServer::from_shared(Arc::clone(&self.journal_state))
+            .with_write_observer(observer)
+    }
+
+    /// `entry_new` を直接呼んでエントリを 1 件作る。オブザーバ経由で change
+    /// log に載っているはずのパスを、呼び出し元が検証できるよう返す。
+    pub async fn write_entry_through_mcp(&self, title: &str) -> PathBuf {
+        let server = self.mcp_server();
+        let msg = server
+            .entry_new(Parameters(EntryNewParams {
+                title: Some(title.to_owned()),
+                body: None,
+                parent: None,
+                slug: None,
+                tags: None,
+                task_due: None,
+                task_status: None,
+                task_started_at: None,
+                task_closed_at: None,
+                event_start: None,
+                event_end: None,
+            }))
+            .expect("entry_new failed");
+        PathBuf::from(
+            msg.strip_prefix("created: ")
+                .unwrap_or_else(|| panic!("unexpected entry_new response: {msg}")),
+        )
+    }
+
+    /// `entry_modify` でタイトルを変え、`fix_entry` と同じ経路でファイル名も
+    /// 追随させる（`update_entry` はタイトル変更時にリネームする）。
+    pub async fn retitle_through_mcp(&self, path: &Path, new_title: &str) {
+        let server = self.mcp_server();
+        let msg = server
+            .entry_modify(Parameters(EntryModifyParams {
+                entry: EntryRef::Path(path.to_path_buf()),
+                title: Some(new_title.to_owned()),
+                body: None,
+                parent: UpdateOption::Unchanged,
+                slug: None,
+                tags: None,
+                task_due: None,
+                task_status: None,
+                task_started_at: None,
+                task_closed_at: None,
+                event_start: None,
+                event_end: None,
+            }))
+            .expect("entry_modify failed");
+        assert!(
+            msg.starts_with("updated"),
+            "unexpected entry_modify response: {msg}"
+        );
     }
 }
