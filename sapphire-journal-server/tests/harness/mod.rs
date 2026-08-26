@@ -365,11 +365,11 @@ impl Harness {
         )
     }
 
-    /// `entry_modify` over `/mcp`, changing only the title. Asserts the
-    /// change actually renamed the file (`update_entry` renames on a
-    /// slug-changing title) — a vacuous "updated: ..." with no rename would
-    /// silently defeat the point of the caller's test.
-    pub async fn retitle_through_mcp(&self, path: &Path, new_title: &str) {
+    /// `entry_modify` over `/mcp`, changing only the title. Returns the new
+    /// path. Asserts the change actually renamed the file (`update_entry`
+    /// renames on a slug-changing title) — a vacuous "updated: ..." with no
+    /// rename would silently defeat the point of the caller's test.
+    pub async fn retitle_through_mcp(&self, path: &Path, new_title: &str) -> PathBuf {
         let msg = self
             .mcp_call_tool(
                 "entry_modify",
@@ -379,9 +379,38 @@ impl Harness {
                 }),
             )
             .await;
-        assert!(
-            msg.starts_with("updated and renamed:"),
-            "expected a rename, got: {msg}"
-        );
+        let new_path = msg
+            .strip_prefix("updated and renamed: ")
+            .unwrap_or_else(|| panic!("expected a rename, got: {msg}"));
+        PathBuf::from(new_path)
+    }
+
+    /// `resolve_duplicates` の退避先。journal ルートの**外**（cache dir 配下）
+    /// にあるので、ここに入ったファイルは同期に出ない。
+    pub fn quarantine_dir(&self) -> PathBuf {
+        self.journal_state
+            .lock()
+            .unwrap()
+            .journal
+            .cache_dir()
+            .unwrap()
+            .join("quarantine")
+    }
+
+    /// 退避されたファイルの一覧（ファイル名, 中身）。
+    pub fn quarantined(&self) -> Vec<(String, String)> {
+        let dir = self.quarantine_dir();
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(|e| e.ok())
+            .map(|e| {
+                (
+                    e.file_name().to_string_lossy().into_owned(),
+                    std::fs::read_to_string(e.path()).unwrap_or_default(),
+                )
+            })
+            .collect()
     }
 }

@@ -234,13 +234,22 @@ pub fn tick_once(
     let report = store.reconcile()?;
 
     // reconcile が回収した後、パス単位 LWW が旧パスを復活させて同じ id が
-    // 2 つのファイルに分かれていないか確認する（Task 9）。origin はここでしか
-    // 分からない（`WsStore` は自分の origin を公開しない）ので journal から
-    // 引く。
-    let origin = journal_state.lock().unwrap().journal.root.clone();
-    let removed = crate::dedupe::resolve_duplicates(store, &origin)?;
-    if removed > 0 {
-        tracing::info!(removed, "resolved duplicate entry ids sharing the same id");
+    // 2 つのファイルに分かれていないか確認する（Task 9）。
+    //
+    // `sync()` を先に呼ぶ順序は変えないこと。両方が entry として読める重複は
+    // `sync_cache` の `increment_until_free` が id を振り直して両方残すので、
+    // `resolve_duplicates` には届かない —— 届くのは片方が読めない場合だけで、
+    // そのときの残す/退避するの判断も、この `sync()` が更新したキャッシュの
+    // id → パス対応を根拠にしている。
+    let guard = journal_state.lock().unwrap();
+    let quarantined = crate::dedupe::resolve_duplicates(store, &guard)?;
+    drop(guard);
+    if quarantined > 0 {
+        tracing::info!(
+            quarantined,
+            "resolved files sharing an entry id; the losers were moved to the journal's \
+             cache dir under quarantine/, not deleted"
+        );
     }
 
     Ok(report)

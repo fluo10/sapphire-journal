@@ -533,6 +533,24 @@ fn fetch_full_entry(
     Ok(Entry { path: PathBuf::from(path_str), frontmatter, body: String::new() })
 }
 
+/// Re-mint `entry`'s id (and rename its file) until no *other* on-disk entry
+/// claims the same id.
+///
+/// This is one half of a single policy for "two files share one id", and the
+/// half that runs whenever both files parse as entries: **keep both, give one
+/// a new id.** Nothing is destroyed, so it is safe to apply eagerly on every
+/// sync.
+///
+/// The other half lives in `sapphire-journal-server`'s `dedupe` module
+/// (`resolve_duplicates`) and only ever sees what this function cannot: a file
+/// whose name carries a valid id but whose contents do not parse (a partial
+/// write, an editor artifact, a sync push of non-frontmatter content).
+/// `read_entry` fails on those, `sync_cache` skips them, and they stay
+/// duplicated in the server's change log — so the server resolves them itself,
+/// by moving the loser out of the journal rather than by re-minting it.
+///
+/// Two functions, one policy, split by what each can see; changing either one's
+/// behaviour means checking the other still lines up with it.
 fn increment_until_free(
     conn: &Connection,
     mut entry: crate::entry::Entry,
