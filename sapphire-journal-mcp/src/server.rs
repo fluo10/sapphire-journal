@@ -27,11 +27,21 @@ use serde::Deserialize;
 
 // ── server struct ─────────────────────────────────────────────────────────────
 
+/// Called after a tool writes to the journal. The argument is the paths
+/// affected (workspace-relative or absolute — conversion is the receiver's
+/// job).
+///
+/// **One call is one batch.** A rename reports the old and new path in the
+/// same call; notifying separately would let the syncing side briefly lose
+/// the entry.
+pub type WriteObserver = Arc<dyn Fn(&[PathBuf]) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct SapphireJournalServer {
     /// Cached journal + SQLite connection, shared across tool calls.
     state: Arc<Mutex<JournalState>>,
     tool_router: ToolRouter<Self>,
+    write_observer: Option<WriteObserver>,
 }
 
 impl std::fmt::Debug for SapphireJournalServer {
@@ -52,6 +62,7 @@ impl SapphireJournalServer {
         Self {
             state,
             tool_router: Self::tool_router(),
+            write_observer: None,
         }
     }
 
@@ -59,6 +70,24 @@ impl SapphireJournalServer {
     /// background tasks like periodic git sync against the same journal.
     pub fn shared_state(&self) -> Arc<Mutex<JournalState>> {
         Arc::clone(&self.state)
+    }
+
+    /// Set where post-write notifications go. Unused by the stdio transport.
+    pub fn with_write_observer(mut self, observer: WriteObserver) -> Self {
+        self.write_observer = Some(observer);
+        self
+    }
+
+    /// Notify the observer of the affected paths. A no-op when none is set.
+    fn notify_write(&self, paths: &[PathBuf]) {
+        if let Some(observer) = &self.write_observer {
+            observer(paths);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn notify_write_for_test(&self, paths: &[PathBuf]) {
+        self.notify_write(paths);
     }
 
     fn with_state<F, T>(&self, f: F) -> anyhow::Result<T>
@@ -358,14 +387,16 @@ impl SapphireJournalServer {
                 },
                 ..fields
             };
-            self.with_state(|s| {
+            let dest = self.with_state(|s| {
                 s.sync()?;
                 let dest = ops::create_entry(s, fields)?;
                 if let Ok(conn) = s.open_conn() {
                     let _ = cache::upsert_entry_from_path(&conn, &dest, s.retrieve_db(), s.track());
                 }
-                Ok(format!("created: {}", dest.display()))
-            })
+                Ok(dest)
+            })?;
+            self.notify_write(&[dest.clone()]);
+            Ok(format!("created: {}", dest.display()))
         })()
         .map_err(|e| e.to_string())
     }
@@ -404,19 +435,28 @@ impl SapphireJournalServer {
                 parent: p.parent,
                 ..fields
             };
-            self.with_state(|s| {
+            let (msg, notify_paths) = self.with_state(|s| {
                 s.sync()?;
                 let conn = s.open_conn()?;
                 let path = ops::resolve_entry(&p.entry, &conn)?;
-                let msg = if let Some(new_path) = ops::update_entry(&path, &conn, fields)? {
-                    let _ = cache::upsert_entry_from_path(&conn, &new_path, s.retrieve_db(), s.track());
-                    format!("updated and renamed: {}", new_path.display())
-                } else {
-                    let _ = cache::upsert_entry_from_path(&conn, &path, s.retrieve_db(), s.track());
-                    format!("updated: {}", path.display())
+                let renamed = ops::update_entry(&path, &conn, fields)?;
+                let (msg, notify_paths) = match &renamed {
+                    Some(new_path) => {
+                        let _ = cache::upsert_entry_from_path(&conn, new_path, s.retrieve_db(), s.track());
+                        (
+                            format!("updated and renamed: {}", new_path.display()),
+                            vec![path.clone(), new_path.clone()],
+                        )
+                    }
+                    None => {
+                        let _ = cache::upsert_entry_from_path(&conn, &path, s.retrieve_db(), s.track());
+                        (format!("updated: {}", path.display()), vec![path.clone()])
+                    }
                 };
-                Ok(msg)
-            })
+                Ok((msg, notify_paths))
+            })?;
+            self.notify_write(&notify_paths);
+            Ok(msg)
         })()
         .map_err(|e| e.to_string())
     }
@@ -453,11 +493,14 @@ impl SapphireJournalServer {
                 ops::resolve_entry(&p.entry, &conn).map_err(Into::into)
             })?;
             match ops::fix_entry(&path)? {
-                Some(new_path) => Ok(format!(
-                    "renamed: {} → {}",
-                    path.file_name().unwrap_or_default().to_string_lossy(),
-                    new_path.file_name().unwrap_or_default().to_string_lossy(),
-                )),
+                Some(new_path) => {
+                    self.notify_write(&[path.clone(), new_path.clone()]);
+                    Ok(format!(
+                        "renamed: {} → {}",
+                        path.file_name().unwrap_or_default().to_string_lossy(),
+                        new_path.file_name().unwrap_or_default().to_string_lossy(),
+                    ))
+                }
                 None => Ok(format!("ok: {} (already correct)", path.display())),
             }
         })()
@@ -467,14 +510,16 @@ impl SapphireJournalServer {
     #[tool(description = "Delete an entry file from the journal")]
     fn entry_remove(&self, Parameters(p): Parameters<EntryRemoveParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            self.with_state(|s| {
+            let path = self.with_state(|s| {
                 s.sync()?;
                 let conn = s.open_conn()?;
                 let path = ops::resolve_entry(&p.entry, &conn)?;
                 ops::remove_entry(&path)?;
                 let _ = cache::remove_from_cache(&conn, &path, s.retrieve_db(), s.track());
-                Ok(format!("removed: {}", path.display()))
-            })
+                Ok(path)
+            })?;
+            self.notify_write(&[path.clone()]);
+            Ok(format!("removed: {}", path.display()))
         })()
         .map_err(|e| e.to_string())
     }
@@ -712,6 +757,28 @@ pub async fn run(journal_dir: Option<&Path>, init: bool) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    /// Build a minimal, throwaway `SapphireJournalServer` backed by a journal
+    /// initialized under the system temp directory. No cleanup on drop — these
+    /// are small, and adding a dependency just to rmdir them isn't worth it.
+    fn test_server() -> SapphireJournalServer {
+        sapphire_journal_core::init_app_context();
+        // Windows' system-time resolution (~15ms ticks) is too coarse to keep
+        // parallel test threads from landing on the same nanosecond reading,
+        // so mix in a per-process counter to guarantee a unique directory.
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "sapphire-journal-mcp-test-{}-{unique}-{n}",
+            std::process::id(),
+        ));
+        let state = prepare_state(Some(&dir), true).expect("failed to init test journal");
+        SapphireJournalServer::new(state)
+    }
+
     /// Zero-argument tools use `EmptyObject`, which must advertise a top-level `type: object`.
     /// `serde_json::Value` used to render as `{"title":"AnyValue"}` (no `type`), which Anthropic
     /// rejects with `tools.<N>.custom.input_schema.type: Field required`. See
@@ -747,5 +814,33 @@ mod tests {
                 tool.name,
             );
         }
+    }
+
+    #[test]
+    fn a_rename_notifies_both_paths_in_one_call() {
+        let observed: Arc<Mutex<Vec<Vec<PathBuf>>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&observed);
+
+        let server = test_server().with_write_observer(Arc::new(move |paths: &[PathBuf]| {
+            sink.lock().unwrap().push(paths.to_vec());
+        }));
+
+        let created = server.notify_write_for_test(&[PathBuf::from("2026/1_old.md")]);
+        let _ = created;
+        server.notify_write_for_test(&[
+            PathBuf::from("2026/1_old.md"),
+            PathBuf::from("2026/1_new.md"),
+        ]);
+
+        let calls = observed.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1].len(), 2, "リネームは 1 回の通知に両方のパスを含める");
+    }
+
+    #[test]
+    fn no_observer_is_a_no_op() {
+        let server = test_server();
+        // オブザーバ未設定でも panic しないこと。
+        server.notify_write_for_test(&[PathBuf::from("a.md")]);
     }
 }
