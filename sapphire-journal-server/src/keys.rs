@@ -24,15 +24,27 @@ pub fn parse_duration(s: &str) -> anyhow::Result<Duration> {
             .with_context(|| format!("duration needs a unit (d/h/m): {s:?}"))?,
     );
     if value.is_empty() {
-        bail!("duration needs a number: {s:?}");
+        bail!("duration must start with digits before the unit: {s:?}");
     }
-    let n: i64 = value.parse().with_context(|| format!("bad duration: {s:?}"))?;
+    let n: i64 = value
+        .parse()
+        .with_context(|| format!("bad duration: {s:?}"))?;
     match unit {
         "d" => Ok(Duration::days(n)),
         "h" => Ok(Duration::hours(n)),
         "m" => Ok(Duration::minutes(n)),
         other => bail!("unknown duration unit {other:?} in {s:?} (use d, h or m)"),
     }
+}
+
+/// トークンを先頭 12 文字に切り詰めてマスクする。
+///
+/// バイト単位で切ると、マルチバイト文字の途中で切れて panic しうる —
+/// 鍵ファイルはヘッダで「`token` 行だけ手で足してよい」と案内しており、手書きの
+/// トークンは検証されずに読み込まれる。文字境界で切ることで、鍵を一覧する
+/// この一手だけが手書きトークンで壊れる事態を避ける。
+fn mask_token(token: &str) -> String {
+    format!("{}…", token.chars().take(12).collect::<String>())
 }
 
 /// 鍵サブコマンドを実行する。
@@ -64,7 +76,7 @@ pub fn run(command: Command, keys_path: &Path) -> anyhow::Result<()> {
         Command::ListKeys => {
             let now = Utc::now();
             for e in store.entries() {
-                let masked = format!("{}…", &e.token[..e.token.len().min(12)]);
+                let masked = mask_token(&e.token);
                 let state = if e.is_expired(now) { " (expired)" } else { "" };
                 println!(
                     "{}  {}  {}  {}{}",
@@ -78,7 +90,11 @@ pub fn run(command: Command, keys_path: &Path) -> anyhow::Result<()> {
         }
         Command::RevokeKey { selector } => {
             let removed = store.revoke(&selector)?;
-            eprintln!("revoked {} ({})", removed.id, removed.label.as_deref().unwrap_or("-"));
+            eprintln!(
+                "revoked {} ({})",
+                removed.id,
+                removed.label.as_deref().unwrap_or("-")
+            );
         }
     }
     Ok(())
@@ -92,7 +108,10 @@ mod tests {
     fn parse_duration_accepts_days_hours_and_minutes() {
         assert_eq!(parse_duration("90d").unwrap(), chrono::Duration::days(90));
         assert_eq!(parse_duration("12h").unwrap(), chrono::Duration::hours(12));
-        assert_eq!(parse_duration("30m").unwrap(), chrono::Duration::minutes(30));
+        assert_eq!(
+            parse_duration("30m").unwrap(),
+            chrono::Duration::minutes(30)
+        );
     }
 
     #[test]
@@ -105,11 +124,18 @@ mod tests {
     }
 
     #[test]
-    fn gen_key_writes_a_prefixed_token_and_list_masks_it() {
+    fn gen_key_writes_a_prefixed_token_and_persists_the_label() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("keys.toml");
 
-        run(Command::GenKey { label: Some("laptop".into()), expires_in: None }, &path).unwrap();
+        run(
+            Command::GenKey {
+                label: Some("laptop".into()),
+                expires_in: None,
+            },
+            &path,
+        )
+        .unwrap();
 
         let store = sapphire_framework::remote_server::KeyStore::load(&path).unwrap();
         assert_eq!(store.entries().len(), 1);
@@ -117,12 +143,58 @@ mod tests {
         assert_eq!(store.entries()[0].label.as_deref(), Some("laptop"));
     }
 
+    /// `sjt_aaaaaaa` は 11 バイト、続く `あ` は 3 バイトで 11..14 を占める。
+    /// バイト 12 はその文字の途中に落ちるので、バイト単位の切り詰めなら panic する。
+    fn boundary_breaking_token() -> String {
+        format!("sjt_{}あrest", "a".repeat(7))
+    }
+
+    #[test]
+    fn mask_token_returns_first_12_chars_with_ellipsis() {
+        let token = "sjt_abcdefghijklmnopqrst";
+        assert_eq!(mask_token(token), "sjt_abcdefgh…");
+    }
+
+    #[test]
+    fn mask_token_does_not_panic_on_a_multibyte_token_near_the_boundary() {
+        let token = boundary_breaking_token();
+
+        let masked = mask_token(&token);
+
+        assert!(String::from_utf8(masked.clone().into_bytes()).is_ok());
+        assert_eq!(masked.chars().count(), 13, "先頭 12 文字 + 省略記号");
+    }
+
+    #[test]
+    fn list_keys_does_not_panic_on_a_hand_written_multibyte_token() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("keys.toml");
+        // ヘッダが案内する通り、`token` 行だけの手書きの鍵。id / created_at は
+        // load が補うので検証されない — マルチバイトのトークンもそのまま通る。
+        std::fs::write(
+            &path,
+            format!("[[key]]\ntoken = \"{}\"\n", boundary_breaking_token()),
+        )
+        .unwrap();
+
+        let result = run(Command::ListKeys, &path);
+
+        assert!(result.is_ok());
+    }
+
     #[test]
     fn expires_in_becomes_an_absolute_time() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("keys.toml");
 
-        run(Command::GenKey { label: None, expires_in: Some("90d".into()) }, &path).unwrap();
+        run(
+            Command::GenKey {
+                label: None,
+                expires_in: Some("90d".into()),
+            },
+            &path,
+        )
+        .unwrap();
 
         let store = sapphire_framework::remote_server::KeyStore::load(&path).unwrap();
         let expires = store.entries()[0].expires_at.expect("期限が入っているはず");
@@ -134,9 +206,22 @@ mod tests {
     fn revoke_key_removes_it() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("keys.toml");
-        run(Command::GenKey { label: Some("gone".into()), expires_in: None }, &path).unwrap();
+        run(
+            Command::GenKey {
+                label: Some("gone".into()),
+                expires_in: None,
+            },
+            &path,
+        )
+        .unwrap();
 
-        run(Command::RevokeKey { selector: "gone".into() }, &path).unwrap();
+        run(
+            Command::RevokeKey {
+                selector: "gone".into(),
+            },
+            &path,
+        )
+        .unwrap();
 
         let store = sapphire_framework::remote_server::KeyStore::load(&path).unwrap();
         assert!(store.entries().is_empty());

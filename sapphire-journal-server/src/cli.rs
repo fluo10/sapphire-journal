@@ -65,14 +65,18 @@ mod tests {
 
     #[test]
     fn addr_is_a_single_socket_addr() {
-        let cli = Cli::try_parse_from(["sapphire-journal-server", "--addr", "0.0.0.0:9000"]).unwrap();
+        let cli =
+            Cli::try_parse_from(["sapphire-journal-server", "--addr", "0.0.0.0:9000"]).unwrap();
         assert_eq!(cli.addr.to_string(), "0.0.0.0:9000");
     }
 
     #[test]
     fn gen_key_takes_an_optional_label() {
         let cli = Cli::try_parse_from(["sapphire-journal-server", "gen-key"]).unwrap();
-        assert!(matches!(cli.command, Some(Command::GenKey { label: None, .. })));
+        assert!(matches!(
+            cli.command,
+            Some(Command::GenKey { label: None, .. })
+        ));
 
         let cli = Cli::try_parse_from(["sapphire-journal-server", "gen-key", "laptop"]).unwrap();
         assert!(matches!(

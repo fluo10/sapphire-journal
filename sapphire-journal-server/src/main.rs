@@ -18,7 +18,7 @@ fn main() -> anyhow::Result<()> {
 /// このタスクの時点では `--keys` が必須。Task 6 で `None` の分岐を journal の
 /// キャッシュディレクトリ既定に差し替える（`Journal` をここで引き込みたくない）。
 fn resolve_keys_path(cli: &Cli) -> anyhow::Result<PathBuf> {
-    cli.keys
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("--keys is required (a default arrives with the serve path)"))
+    cli.keys.clone().ok_or_else(|| {
+        anyhow::anyhow!("--keys is required (a default arrives with the serve path)")
+    })
 }
