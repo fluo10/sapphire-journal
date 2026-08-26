@@ -8,3 +8,4 @@
 
 pub mod cli;
 pub mod keys;
+pub mod serve;
