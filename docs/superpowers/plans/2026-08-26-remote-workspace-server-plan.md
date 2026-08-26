@@ -1417,7 +1417,6 @@ pub fn build_router(
 
 `build_router` は `journal_dir: &Path` を受け取る形に変える（Task 6 の呼び出し側と
 ハーネスも合わせること）。
-```
 
 オブザーバの中身:
 
