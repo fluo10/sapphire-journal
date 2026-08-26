@@ -935,6 +935,40 @@ mod tests {
     }
 
     #[test]
+    fn entry_fix_rename_notifies_old_and_new_path_in_one_call() {
+        let (_dir, server) = test_server();
+        let (obs, observed) = observer();
+        let server = server.with_write_observer(obs);
+
+        let msg = server
+            .entry_new(Parameters(blank_new_params("Original Title")))
+            .expect("entry_new failed");
+        let canonical_path = path_from_created_message(&msg);
+        observed.lock().unwrap().clear(); // isolate the fix notification below
+
+        // Put the file into the state `entry_fix` is meant to correct: rename
+        // it on disk (same dir, off-canonical name) so it no longer matches
+        // the `{id}_{slug}.md` filename `fix_entry` computes from the
+        // frontmatter it still carries. This is the same drift `entry_check`
+        // reports as a `FilenameMismatch`, produced with a plain filesystem
+        // rename rather than by reaching into `ops::` internals.
+        let mismatched_path = canonical_path.with_file_name("mismatched.md");
+        std::fs::rename(&canonical_path, &mismatched_path)
+            .expect("failed to rename fixture file on disk");
+
+        let fix_msg = server
+            .entry_fix(Parameters(EntryFixParams { entry: EntryRef::Path(mismatched_path.clone()) }))
+            .expect("entry_fix failed");
+        assert!(fix_msg.starts_with("renamed:"), "expected a rename, got: {fix_msg}");
+
+        let calls = observed.lock().unwrap();
+        assert_eq!(calls.len(), 1, "rename must notify in exactly one call");
+        assert_eq!(calls[0].len(), 2, "rename must carry both paths");
+        assert_eq!(calls[0][0], mismatched_path, "old path must come first");
+        assert_ne!(calls[0][1], mismatched_path, "second path must be the new one");
+    }
+
+    #[test]
     fn entry_modify_without_rename_notifies_a_single_path() {
         let (_dir, server) = test_server();
         let (obs, observed) = observer();
