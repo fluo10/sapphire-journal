@@ -81,7 +81,11 @@ pub async fn spawn() -> Harness {
 }
 
 /// `.sapphire-journal/` を掘って journal にする。`ensure_journal` の init 分岐と同じ。
-fn init_journal(root: &std::path::Path) {
+///
+/// `pub` なのは、鍵を 1 本も発行しない状態から始めたいテスト（`run` が起動を
+/// 拒否することを確かめるテストなど）が `spawn()` を経由せずに journal だけ
+/// 欲しいことがあるため。
+pub fn init_journal(root: &std::path::Path) {
     use sapphire_journal_core::journal::JournalConfig;
     let journal_dir = root.join(".sapphire-journal");
     std::fs::create_dir_all(&journal_dir).unwrap();

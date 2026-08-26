@@ -238,6 +238,12 @@ pub fn spawn_tick(
 }
 
 /// listener を開いて待ち受ける。
+///
+/// 有効な鍵が 1 件も無ければ bind の前に拒否する。framework の
+/// `remote_server::serve` は同じチェックを内蔵しているが、こちらは `/mcp` を
+/// 1 つの Router に merge するため `axum::serve` を自前で呼んでおり、その
+/// チェックを経由しない —— ここで明示的に行う。認証なしで待ち受ける状態を
+/// 作らない、という不変条件はどちらの経路でも同じにする。
 pub async fn run(
     addr: std::net::SocketAddr,
     journal_dir: &Path,
@@ -245,6 +251,17 @@ pub async fn run(
     state: Arc<ServerState>,
     journal_state: Arc<Mutex<JournalState>>,
 ) -> anyhow::Result<()> {
+    match state.keys() {
+        Some(keys) if keys.has_usable_key() => {}
+        _ => {
+            anyhow::bail!(
+                "no usable API key configured in {}; run `sapphire-journal-server gen-key` \
+                 first (an expired-only key file counts as none)",
+                keys_path.display()
+            );
+        }
+    }
+
     let cancel = CancellationToken::new();
     let app = build_router(Arc::clone(&state), Arc::clone(&journal_state), journal_dir, cancel.clone())?;
 
