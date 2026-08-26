@@ -28,6 +28,17 @@ fn entry_id(path: &str) -> Option<&str> {
     let file = path.rsplit('/').next()?;
     let stem = file.strip_suffix(".md")?;
     let id = stem.split('_').next()?;
+    // grain-id 0.15 の `GrainId::from_str` は `s.len()`(バイト数)で 7 を
+    // 判定したあと、`s.chars()` を 7 回無条件に `.unwrap()` する。7 バイトだが
+    // 7 文字ではないマルチバイト文字列(例: 日本語 3 文字 + ASCII 1 文字で
+    // ちょうど 7 バイト)を渡すと、この `.unwrap()` が範囲外で panic する
+    // ——上流のバグで、ここでの `.ok()?` では防げない。Crockford Base32 は
+    // そもそも ASCII のみなので、非 ASCII を先に弾いておけばこの panic の
+    // 引き金を引かない。「無効な id を弾く」ためではなく「上流の panic を
+    // 避ける」ためのガードなので消さないこと。
+    if !id.is_ascii() {
+        return None;
+    }
     id.parse::<GrainId>().ok()?;
     Some(id)
 }
@@ -150,5 +161,15 @@ mod tests {
             find_duplicate_ids(&paths).is_empty(),
             "README.md と README_notes.md が誤って同じ id の重複としてグループ化された"
         );
+    }
+
+    #[test]
+    fn a_seven_byte_non_ascii_stem_does_not_panic() {
+        // "日本1" は 3 + 3 + 1 = 7 バイトだが 3 文字。grain-id 0.15 の
+        // `GrainId::from_str` はバイト数で 7 かどうかを見てから `chars()` を
+        // 7 回 `.unwrap()` するので、ガードなしで parse に渡すとここで panic
+        // する。`entry_id` 側の非 ASCII ガードがこれを防いでいることを確認する。
+        let paths = vec!["2026/日本1.md".to_owned()];
+        assert!(find_duplicate_ids(&paths).is_empty());
     }
 }
