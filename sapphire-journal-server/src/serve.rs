@@ -30,6 +30,32 @@ use tokio_util::sync::CancellationToken;
 /// 警告ログを出したうえでこの既定値にフォールバックする、まで込みで意図的。
 const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
+/// `JournalState` の Mutex を、毒されていても取る。
+///
+/// `.lock().unwrap()` にしない理由。`ServerState::workspace()` は `workspaces`
+/// の Mutex を握ったまま resolver を呼ぶので、resolver の中で panic すると
+/// そのマップまで毒される —— 以後この Router は `/rpc` も `/mcp` も全滅する。
+/// tick も同じで、一度 `sync()` の中で panic すると、プロセスを再起動するまで
+/// 毎ティック同じ場所で panic し続ける。
+///
+/// そして `JournalState` の不変条件は `sync()` が途中で panic しても壊れない
+/// —— SQLite の接続は呼び出しごとに開き直し（`open_conn`）、`sync_cache` は
+/// トランザクションで囲まれていて、中断すればロールバックされる。だから毒を
+/// 「二度と使えない」ではなく「一度は騒ぐが使う」で扱う。framework 自身の
+/// `WsStore::lock_writes` も同じ判断をしている。
+fn lock_journal(state: &Mutex<JournalState>) -> std::sync::MutexGuard<'_, JournalState> {
+    if state.is_poisoned() {
+        // 毒されたこと自体は一度は名指しする。「たまたま今回おかしい」のか
+        // 「過去に panic した痕」なのかは、ログに出ていないと区別できない。
+        tracing::warn!(
+            "journal_state mutex was poisoned by an earlier panic; recovering the state and \
+             carrying on (JournalState's invariants do not depend on sync() running to \
+             completion)"
+        );
+    }
+    state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// このサーバが公開するワークスペースの識別子。
 ///
 /// journal の UUID をそのまま使う。名前ではなく ID にしてあるのは、クライアント
@@ -84,7 +110,9 @@ pub fn build_state(
                     ws.to_owned(),
                 ));
             }
-            let retrieve = resolver_state.lock().unwrap().retrieve_db().shared();
+            // resolver は軽く、そして panic しないこと。`workspace()` は
+            // `workspaces` の Mutex を握ったままここを呼ぶ。
+            let retrieve = lock_journal(&resolver_state).retrieve_db().shared();
             Ok(WsStoreConfig {
                 origin_dir: origin_dir.clone(),
                 state_dir: state_dir.clone(),
@@ -215,22 +243,7 @@ pub fn tick_once(
     store: &WsStore,
     journal_state: &Mutex<JournalState>,
 ) -> anyhow::Result<ReconcileReport> {
-    if journal_state.is_poisoned() {
-        // 通常の失敗ではない。過去のどこかのティックが journal_state を
-        // 握ったまま panic して以来、この Mutex は poisoned のまま —
-        // つまり直後の `lock().unwrap()` は必ず panic し、この先も
-        // プロセスを再起動するまで毎ティック同じことが起きる
-        // (spawn_blocking が拾って `spawn_tick` 側で「panicked」と
-        // ログには出るが、それだけでは「たまたま今回失敗した」のか
-        // 「もう死んでいて二度と動かない」のか区別できない)。ロック方針
-        // 自体は変えない — ここでは何が起きているかを一度はっきり
-        // 名指しするだけ。
-        tracing::error!(
-            "journal_state mutex is poisoned by an earlier panic; every tick will keep \
-             panicking here until the process restarts"
-        );
-    }
-    journal_state.lock().unwrap().sync()?;
+    lock_journal(journal_state).sync()?;
     let report = store.reconcile()?;
 
     // reconcile が回収した後、パス単位 LWW が旧パスを復活させて同じ id が
@@ -241,7 +254,7 @@ pub fn tick_once(
     // `resolve_duplicates` には届かない —— 届くのは片方が読めない場合だけで、
     // そのときの残す/退避するの判断も、この `sync()` が更新したキャッシュの
     // id → パス対応を根拠にしている。
-    let guard = journal_state.lock().unwrap();
+    let guard = lock_journal(journal_state);
     let quarantined = crate::dedupe::resolve_duplicates(store, &guard)?;
     drop(guard);
     if quarantined > 0 {
@@ -297,6 +310,73 @@ pub async fn run(
     journal_state: Arc<Mutex<JournalState>>,
     extra_allowed_hosts: &[String],
 ) -> anyhow::Result<()> {
+    run_until(
+        addr,
+        journal_dir,
+        keys_path,
+        state,
+        journal_state,
+        extra_allowed_hosts,
+        shutdown_signal(),
+    )
+    .await
+}
+
+/// Ctrl-C（全プラットフォーム）と SIGTERM（unix）のどちらか早いほうで解決する。
+///
+/// systemd も `docker stop` も SIGTERM を送る。これを待たないと、`axum` の
+/// graceful shutdown には一度も入らないまま、書き込みの途中でプロセスが
+/// 叩き切られる。
+pub async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::warn!(error = %e, "cannot listen for Ctrl-C");
+            // 二度と解決しない future にして、もう片方に任せる。返してしまうと
+            // 「シグナルが来た」ことになって即座に終了してしまう。
+            std::future::pending::<()>().await;
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = ctrl_c => {}
+                    _ = term.recv() => {}
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "cannot listen for SIGTERM; only Ctrl-C will shut this server down gracefully"
+                );
+                ctrl_c.await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    ctrl_c.await;
+}
+
+/// [`run`] の本体。`shutdown` が解決した時点で待ち受けをやめ、in-flight の
+/// リクエストを捌いてから戻る。
+///
+/// `run` はここに本物のシグナル待ち（[`shutdown_signal`]）を渡すだけ。分けて
+/// あるのは、graceful shutdown の配線が繋がっていることをテストから確かめる
+/// ため —— 以前は `CancellationToken` を作って待つところまでは書いてあったのに
+/// `cancel()` を呼ぶ者がおらず、`with_graceful_shutdown` は死んだコードだった。
+#[allow(clippy::too_many_arguments)]
+pub async fn run_until(
+    addr: std::net::SocketAddr,
+    journal_dir: &Path,
+    keys_path: &Path,
+    state: Arc<ServerState>,
+    journal_state: Arc<Mutex<JournalState>>,
+    extra_allowed_hosts: &[String],
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> anyhow::Result<()> {
     match state.keys() {
         Some(keys) if keys.has_usable_key() => {}
         // `state.keys() == None` can't actually happen here — `build_state`
@@ -315,6 +395,13 @@ pub async fn run(
     }
 
     let cancel = CancellationToken::new();
+    let shutdown_cancel = cancel.clone();
+    let shutdown_handle = tokio::spawn(async move {
+        shutdown.await;
+        tracing::info!("shutdown signal received; draining in-flight requests");
+        shutdown_cancel.cancel();
+    });
+
     let mcp_hosts = allowed_hosts(addr, extra_allowed_hosts);
     let app = build_router(
         Arc::clone(&state),
@@ -380,6 +467,7 @@ pub async fn run(
         .context("server failed");
 
     tick_handle.abort();
+    shutdown_handle.abort();
     result
 }
 

@@ -118,6 +118,26 @@ pub fn init_journal(root: &std::path::Path) {
     std::fs::write(journal_dir.join(".gitignore"), "cache/\n").unwrap();
 }
 
+/// エントリのフィクスチャを、アプリ本体と同じ `parse_entry` → `render_entry`
+/// を通して組み立てる。
+///
+/// **手書きの frontmatter を使わないこと。** `tick.rs` と `crlf.rs` はどちらも
+/// 手書きで、どちらも id を間違えていた（`01J9` は 4 文字、
+/// `01J000000000000000000000` は 24 文字。`GrainId` は 7 文字ちょうどしか
+/// 受け付けない）。id が無効だと `read_entry` が落ち、そのファイルは journal の
+/// キャッシュに一切載らない —— 「キャッシュ越しに読めること」を確かめたつもり
+/// のテストが、パーサが完全に壊れていても通る状態になっていた。
+///
+/// ここを通せば、無効な id や壊れた frontmatter はフィクスチャを作る時点で
+/// panic するので、同じ間違いが静かに通ることはない。
+pub fn render_entry_fixture(id: &str, title: &str, body: &str) -> String {
+    let src = format!("---\nid: '{id}'\ntitle: {title}\n---\n\n{body}\n");
+    let path = PathBuf::from(format!("{id}.md"));
+    let entry = sapphire_journal_core::parser::parse_entry(&path, &src)
+        .unwrap_or_else(|e| panic!("フィクスチャが entry として読めない (id {id:?}): {e}"));
+    sapphire_journal_core::parser::render_entry(&entry)
+}
+
 /// Streamable HTTP wraps every request-scoped response in SSE, and the
 /// default config sends an empty "priming" event (SEP-1699) before the real
 /// one. Skip blank `data:` frames and return the first one that parses.
@@ -156,6 +176,47 @@ impl Harness {
             .map(|c| c.as_os_str().to_string_lossy())
             .collect::<Vec<_>>()
             .join("/")
+    }
+
+    /// [`render_entry_fixture`] を journal 内の `rel` に書く。返すのは絶対パス。
+    pub fn write_entry_fixture(&self, rel: &str, id: &str, title: &str, body: &str) -> PathBuf {
+        self.write_raw(rel, &render_entry_fixture(id, title, body))
+    }
+
+    /// 同じものを CRLF で書く。`render_entry` は LF しか出さないので、
+    /// チェックアウト時に `core.autocrlf=true` が行うのと同じ変換をここで行う。
+    pub fn write_entry_fixture_crlf(
+        &self,
+        rel: &str,
+        id: &str,
+        title: &str,
+        body: &str,
+    ) -> PathBuf {
+        let lf = render_entry_fixture(id, title, body);
+        self.write_raw(rel, &lf.replace('\n', "\r\n"))
+    }
+
+    fn write_raw(&self, rel: &str, contents: &str) -> PathBuf {
+        let path = self
+            .journal_dir
+            .join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, contents).unwrap();
+        path
+    }
+
+    /// journal のキャッシュがこの id に対して持っているタイトル。
+    ///
+    /// change log は本文を不透明なテキストとして持つだけなので、そちらを見ても
+    /// frontmatter が解釈できたかは分からない。**parse を経た値**を確かめたい
+    /// テストはここを使うこと。
+    pub fn cached_title(&self, id: &str) -> Option<String> {
+        let guard = self.journal_state.lock().unwrap();
+        let conn = guard.open_conn().ok()?;
+        let id: grain_id::GrainId = id.parse().ok()?;
+        sapphire_journal_core::cache::find_entry_by_id(&conn, id)
+            .ok()
+            .map(|e| e.frontmatter.title)
     }
 
     /// Task 8 の `tick_once`(journal の sync + `WsStore::reconcile`)を 1 回分、

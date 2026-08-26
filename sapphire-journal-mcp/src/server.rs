@@ -90,11 +90,33 @@ impl SapphireJournalServer {
         self.notify_write(paths);
     }
 
+    /// Take the journal lock, recovering it if an earlier panic poisoned it.
+    ///
+    /// `.lock().unwrap()` would turn one panic anywhere under this mutex into
+    /// a permanently dead server: every later tool call would panic on the
+    /// poison rather than on anything wrong with the journal. And
+    /// `JournalState`'s invariants do not actually depend on the previous
+    /// holder finishing — SQLite connections are opened per operation
+    /// (`open_conn`), and `sync_cache` runs inside a transaction that rolls
+    /// back if it is interrupted. So we say so once and carry on, the way
+    /// framework's own `WsStore::lock_writes` does.
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, JournalState> {
+        if self.state.is_poisoned() {
+            tracing::warn!(
+                "journal state mutex was poisoned by an earlier panic; recovering it rather \
+                 than failing every tool call for the rest of the process"
+            );
+        }
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     fn with_state<F, T>(&self, f: F) -> anyhow::Result<T>
     where
         F: FnOnce(&JournalState) -> anyhow::Result<T>,
     {
-        let guard = self.state.lock().unwrap();
+        let guard = self.lock_state();
         f(&guard)
     }
 }
@@ -568,7 +590,7 @@ impl SapphireJournalServer {
         Returns the number of entries indexed.")]
     fn cache_rebuild(&self, _: Parameters<EmptyObject>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let mut guard = self.state.lock().unwrap();
+            let mut guard = self.lock_state();
             let journal_root = guard.journal.root.clone();
             let journal = Journal::from_root(journal_root)?;
             let state = JournalState::rebuild(journal)?;
@@ -728,7 +750,11 @@ pub(crate) fn spawn_periodic_reindex(
         ticker.tick().await; // skip the first immediate tick
         loop {
             ticker.tick().await;
-            let guard = state.lock().unwrap();
+            // 毒されていても回収する。ここで panic すると、この定期タスクは
+            // 二度と走らないまま黙って消える。
+            let guard = state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Err(e) = guard.sync() {
                 eprintln!("[sapphire-journal] periodic re-index failed: {e}");
             }
@@ -890,6 +916,32 @@ mod tests {
         let observed: Arc<Mutex<Vec<Vec<PathBuf>>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&observed);
         (Arc::new(move |paths: &[PathBuf]| sink.lock().unwrap().push(paths.to_vec())), observed)
+    }
+
+    /// One panic under the journal lock must not end the server.
+    ///
+    /// The state mutex is shared by every tool, and in the HTTP host also by
+    /// the sync resolver and the reconciliation tick. With `.lock().unwrap()`
+    /// a single panic anywhere under it poisons the mutex and every later
+    /// tool call panics on the poison rather than on anything actually wrong,
+    /// for the rest of the process's life.
+    #[test]
+    fn a_poisoned_journal_lock_does_not_end_the_server() {
+        let (_dir, server) = test_server();
+        let state = server.shared_state();
+
+        let poisoner = Arc::clone(&state);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.lock().unwrap();
+            panic!("a tool panicked while holding the journal lock");
+        })
+        .join();
+        assert!(state.is_poisoned(), "テストの前提: Mutex が毒されているはず");
+
+        let msg = server
+            .entry_new(Parameters(blank_new_params("After The Panic")))
+            .expect("entry_new failed after the mutex was poisoned");
+        assert!(msg.starts_with("created: "), "{msg}");
     }
 
     #[test]

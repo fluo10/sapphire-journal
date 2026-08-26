@@ -5,18 +5,19 @@ async fn the_tick_picks_up_a_file_written_behind_the_server() {
     let h = harness::spawn().await;
 
     // 誰も通知してくれない書き込み(外部ツール、手作業)。
-    let path = h.journal_dir.join("2026").join("handwritten.md");
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, "---\nid: 01J000000000000000000000\n---\n\nby hand\n").unwrap();
+    h.write_entry_fixture("2026/gmsdr81_handwritten.md", "gmsdr81", "handwritten", "by hand");
 
     h.tick_once().await;
 
     let snapshot = h.rpc("workspace.snapshot", serde_json::json!({"ws": h.ws()})).await;
     let docs = snapshot["result"]["docs"].as_array().unwrap();
     assert!(
-        docs.iter().any(|d| d["path"].as_str().unwrap().ends_with("handwritten.md")),
+        docs.iter().any(|d| d["path"].as_str().unwrap().ends_with("gmsdr81_handwritten.md")),
         "手書きのファイルが回収されていない"
     );
+    // この tick が journal のキャッシュも更新していること。change log だけを
+    // 見ていると、frontmatter が一切解釈できていなくても通ってしまう。
+    assert_eq!(h.cached_title("gmsdr81").as_deref(), Some("handwritten"));
 }
 
 #[tokio::test]
@@ -133,17 +134,36 @@ async fn a_stale_push_loses_to_the_live_entry_and_is_quarantined_not_deleted() {
     assert_eq!(md[0]["path"].as_str().unwrap(), new_rel, "残ったのが旧パスのほう");
 }
 
+/// 同じ状況でも、**押し戻された中身が entry として読める**なら決着をつけるのは
+/// `resolve_duplicates` ではない —— tick が先に呼ぶ `sync()` の中で
+/// `increment_until_free` が動き、後から現れたほうに新しい id を振って両方残す。
+///
+/// このテストは以前 `"stale edit"`（frontmatter 無し）を push していたため、
+/// `read_entry` が落ちて `increment_until_free` は一度も走っておらず、どちらの
+/// 方針も踏んでいなかった。ここでは本物のエントリを押し込んで、id 再発行のほう
+/// の経路を通す。
 #[tokio::test]
-async fn a_stale_push_to_the_old_path_is_resolved_to_one_entry() {
+async fn a_stale_push_that_parses_is_reminted_and_leaves_the_live_entry_alone() {
     let h = harness::spawn().await;
-    let path = h.write_entry_through_mcp("before").await;
+    let old_path = h.write_entry_through_mcp("before").await;
     h.tick_once().await;
-    let old_rel = h.relative(&path);
+    let old_rel = h.relative(&old_path);
+    // ファイル名の先頭がその id（`{id}_{slug}.md`）。
+    let id = old_path
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .split('_')
+        .next()
+        .unwrap()
+        .to_owned();
 
     // タイトル変更でリネーム。
-    h.retitle_through_mcp(&path, "after").await;
+    let new_path = h.retitle_through_mcp(&old_path, "after").await;
+    let new_rel = h.relative(&new_path);
 
-    // 古いカーソルのクライアントが旧パスへ push してくる。
+    // 古いカーソルのクライアントが旧パスへ push してくる。中身は同じ id を
+    // 持つ本物のエントリ（リネーム前に pull したもの、という想定）。
     let push = h
         .rpc(
             "changes.push",
@@ -151,7 +171,8 @@ async fn a_stale_push_to_the_old_path_is_resolved_to_one_entry() {
                 "ws": h.ws(), "base_cursor": 0,
                 "changes": [{
                     "path": old_rel, "kind": "upsert",
-                    "body": "stale edit", "updated_at": chrono::Utc::now().to_rfc3339()
+                    "body": harness::render_entry_fixture(&id, "before", "stale edit"),
+                    "updated_at": chrono::Utc::now().to_rfc3339()
                 }]
             }),
         )
@@ -161,10 +182,9 @@ async fn a_stale_push_to_the_old_path_is_resolved_to_one_entry() {
         "push は拒否されない想定（LWW で通る）はずが拒否された: {push:?}"
     );
 
-    // resolve_duplicates を呼ぶ前に、本当に同じ id のエントリが 2 つ live に
-    // なっていることを確認する。ここを確認しないと、stale push がどこかで
-    // 弾かれたり期待と違う場所に着地したりしていても、このテストは
-    // resolve_duplicates が何もしなくても通ってしまう。
+    // 決着をつける前に、本当に同じ id のファイルが 2 つ live になっている
+    // ことを確認する。ここを確認しないと、stale push がどこかで弾かれたり
+    // 期待と違う場所に着地したりしていても、このテストは何もしなくても通る。
     let before = h.rpc("workspace.snapshot", serde_json::json!({"ws": h.ws()})).await;
     let md_before: Vec<_> = before["result"]["docs"]
         .as_array()
@@ -175,17 +195,36 @@ async fn a_stale_push_to_the_old_path_is_resolved_to_one_entry() {
     assert_eq!(
         md_before.len(),
         2,
-        "resolve_duplicates を呼ぶ前に 2 つの live エントリが揃っていない（テストの前提が崩れている）: {md_before:?}"
+        "決着をつける前に 2 つの live エントリが揃っていない（テストの前提が崩れている）: {md_before:?}"
     );
 
     h.tick_once().await;
 
+    // その id を持ち続けるのはリネーム後のエントリ。パスと中身の両方で見る。
+    assert_eq!(
+        h.cached_title(&id).as_deref(),
+        Some("after"),
+        "その id が指す先が利用者の現在のエントリでなくなっている"
+    );
+    assert!(new_path.exists(), "{new_path:?} が消えた");
+    let survived = std::fs::read_to_string(&new_path).unwrap();
+    assert!(survived.contains("after"), "{survived}");
+    assert!(!survived.contains("stale edit"), "{survived}");
+
+    // 押し戻されたほうは消えても退避もされず、**新しい id を振られて残る**。
+    assert!(h.quarantined().is_empty(), "読めるエントリが退避されている: {:?}", h.quarantined());
     let snapshot = h.rpc("workspace.snapshot", serde_json::json!({"ws": h.ws()})).await;
-    let md: Vec<_> = snapshot["result"]["docs"]
+    let md: Vec<String> = snapshot["result"]["docs"]
         .as_array()
         .unwrap()
         .iter()
-        .filter(|d| d["path"].as_str().unwrap().ends_with(".md"))
+        .map(|d| d["path"].as_str().unwrap().to_owned())
+        .filter(|p| p.ends_with(".md"))
         .collect();
-    assert_eq!(md.len(), 1, "同じ id のエントリが 2 つ残っている: {md:?}");
+    assert!(md.contains(&new_rel), "利用者のエントリが同期から消えた: {md:?}");
+    assert!(
+        !md.contains(&old_rel),
+        "旧パスがそのまま残っている（id が振り直されていない）: {md:?}"
+    );
+    assert_eq!(md.len(), 2, "id を振り直して両方残す想定: {md:?}");
 }
