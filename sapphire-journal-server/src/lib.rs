@@ -7,3 +7,4 @@
 //! 持たない。認証は共有の bearer トークンだけで、鍵は平文で保存される。
 
 pub mod cli;
+pub mod keys;

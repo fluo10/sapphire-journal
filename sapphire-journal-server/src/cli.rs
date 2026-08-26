@@ -56,7 +56,6 @@ pub enum Command {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser as _;
 
     #[test]
     fn no_subcommand_means_serve() {
