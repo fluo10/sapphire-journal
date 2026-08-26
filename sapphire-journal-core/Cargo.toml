@@ -36,3 +36,6 @@ sapphire-workspace = { package = "sapphire-framework-workspace", git = "https://
 sapphire-track = { package = "sapphire-framework-track", git = "https://github.com/fluo10/sapphire-framework", branch = "main" }
 grain-id = { version = "0.15", features = ["serde", "rusqlite", "schemars"] }
 dirs = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

@@ -554,7 +554,13 @@ fn increment_until_free(
         // pre-rename location) unless a file still exists there, in which
         // case it really is a second, unrelated entry that happens to share
         // an id (e.g. a copy-pasted `.md` file) and does need a new one.
-        let conflict = conflict.filter(|p| Path::new(p).exists());
+        //
+        // `try_exists()`, not `exists()`: the latter maps every IO error
+        // (locked file, permission denied, ...) to `false`, which would let
+        // a real collision slip through as "absent". An IO error is treated
+        // as a collision — the conservative behaviour the original,
+        // unfiltered check had.
+        let conflict = conflict.filter(|p| Path::new(p).try_exists().unwrap_or(true));
         if conflict.is_none() {
             break;
         }
@@ -565,7 +571,6 @@ fn increment_until_free(
         );
         let new_path = entry.path.with_file_name(new_name);
         std::fs::rename(&entry.path, &new_path)?;
-        render_entry(&entry);
         entry.path = new_path;
         std::fs::write(&entry.path, render_entry(&entry))?;
     }
@@ -639,5 +644,106 @@ fn entry_to_document(entry: &crate::entry::Entry) -> sapphire_workspace::Documen
         body: entry.body.clone(),
         path: entry.path.to_string_lossy().into_owned(),
         chunks: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Regression coverage for `increment_until_free`'s collision check.
+    //!
+    //! Both tests use a bare in-memory connection (schema only, no `Journal`)
+    //! since `increment_until_free` only ever touches `conn` and the
+    //! filesystem — pulling in a full `Journal`/`open_cache` would just add
+    //! unrelated setup (and write to the real XDG cache dir) for no benefit
+    //! here.
+
+    use super::*;
+    use crate::entry::{Entry, Frontmatter};
+
+    fn conn_with_schema() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn
+    }
+
+    /// Write `entry` to disk as rendered Markdown, matching its own
+    /// frontmatter (the same invariant `create_entry`/`fix_entry_mut` keep).
+    fn write_fixture(entry: &Entry) {
+        std::fs::write(&entry.path, render_entry(entry)).unwrap();
+    }
+
+    fn frontmatter(id: GrainId, title: &str) -> Frontmatter {
+        let now = chrono::Local::now().naive_local();
+        Frontmatter {
+            id,
+            parent_id: None,
+            title: title.to_owned(),
+            slug: String::new(),
+            created_at: now,
+            updated_at: now,
+            tags: Vec::new(),
+            task: None,
+            event: None,
+            extra: indexmap::IndexMap::new(),
+        }
+    }
+
+    /// A retitle-driven rename (`update_entry`/`fix_entry`) re-upserts the
+    /// entry under its *own* id at a *new* path. The cache row left behind at
+    /// the old path is stale — the entry's own pre-rename location, not a
+    /// second entry — so it must not cause a new id to be minted.
+    #[test]
+    fn retitle_then_upsert_keeps_the_same_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = conn_with_schema();
+        let id = GrainId::now_unix();
+
+        // The pre-rename state, already indexed (mirrors what entry_new left
+        // behind before the title change).
+        let old_path = tmp.path().join("before.md");
+        let old_entry = Entry { path: old_path.clone(), frontmatter: frontmatter(id, "before"), body: String::new() };
+        write_fixture(&old_entry);
+        upsert_entry(&conn, &old_entry).unwrap();
+
+        // Simulate the rename `fix_entry_mut` performs: same id, new path,
+        // old path gone.
+        let new_path = tmp.path().join("after.md");
+        std::fs::rename(&old_path, &new_path).unwrap();
+        let renamed = Entry { path: new_path.clone(), frontmatter: frontmatter(id, "after"), body: String::new() };
+
+        let result = increment_until_free(&conn, renamed).unwrap();
+
+        assert_eq!(result.frontmatter.id, id, "a same-entry rename must not mint a new id");
+        assert_eq!(result.path, new_path, "no id change means no further rename either");
+    }
+
+    /// A copy-pasted `.md` file that happens to reuse an id, with the
+    /// *original* file still on disk, is the genuine collision this check
+    /// exists for — it must still get a new id (and be renamed to match),
+    /// exactly as before the fix.
+    #[test]
+    fn a_genuine_id_collision_still_gets_a_new_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = conn_with_schema();
+        let id = GrainId::now_unix();
+
+        // The original entry: indexed, and — unlike the rename case — its
+        // file is still on disk.
+        let original_path = tmp.path().join("original.md");
+        let original = Entry { path: original_path.clone(), frontmatter: frontmatter(id, "original"), body: String::new() };
+        write_fixture(&original);
+        upsert_entry(&conn, &original).unwrap();
+
+        // A copy-pasted duplicate: same id, different path, also on disk.
+        let copy_path = tmp.path().join("copy.md");
+        let copy = Entry { path: copy_path.clone(), frontmatter: frontmatter(id, "copy"), body: String::new() };
+        write_fixture(&copy);
+
+        let result = increment_until_free(&conn, copy).unwrap();
+
+        assert_ne!(result.frontmatter.id, id, "a real duplicate must get a new id");
+        assert_ne!(result.path, copy_path, "the duplicate's file must be renamed to match its new id");
+        assert!(result.path.exists(), "the renamed file must exist at its reported path");
+        assert!(original_path.exists(), "the original entry's file must be untouched");
     }
 }
