@@ -52,9 +52,11 @@ The label (`laptop` here) is optional and purely for your own bookkeeping —
 nothing in the system reads it back. The command prints the token itself to
 stdout (so you can pipe or copy just that line) and the key's id and
 creation time to stderr. Give the printed token to the client as its
-`Authorization: Bearer <token>` value; there is no way to recover it later,
-only to issue a new one. Add `--expires-in 90d` (or `12h`, `30m`) if the key
-should stop working on its own.
+`Authorization: Bearer <token>` value. If you lose it, you don't have to
+issue a new one — it's sitting in plaintext in the key file (see below), so
+you can read it back out and set up another client with the same token. Add
+`--expires-in 90d` (or `12h`, `30m`) if the key should stop working on its
+own.
 
 `sapphire-journal-server --journal-dir ... list-keys` lists the keys that
 exist, with tokens masked, so you can see what's issued without printing
@@ -71,12 +73,15 @@ setting up a new client. Treat this file the way you'd treat any other
 plaintext secret: readable only by whoever runs the server.
 
 By default the key file lives in your OS cache directory, under
-`sapphire-journal/<workspace-id>/keys.toml` (e.g. `~/.cache/sapphire-journal/`
-on Linux, `%LOCALAPPDATA%\sapphire-journal\` on Windows) — **entirely
+`sapphire-journal/<id>/keys.toml`, where `<id>` is a UUID derived from the
+journal's own filesystem path (e.g. `~/.cache/sapphire-journal/<id>/` on
+Linux, `%LOCALAPPDATA%\sapphire-journal\<id>\` on Windows) — **entirely
 outside the journal root**, so a key can never end up inside the synced
-content and get shipped to a client the way an entry would. Pass `--keys
-/some/other/path` (or `SAPPHIRE_JOURNAL_SERVER_KEYS`) to put it somewhere
-else entirely, such as a location your backup policy excludes on purpose.
+content and get shipped to a client the way an entry would. That `<id>` is
+purely a cache-directory name; it is not the same id clients use to name
+this workspace when they sync. Pass `--keys /some/other/path` (or
+`SAPPHIRE_JOURNAL_SERVER_KEYS`) to put the key file somewhere else
+entirely, such as a location your backup policy excludes on purpose.
 
 ## What "no usable key" means
 

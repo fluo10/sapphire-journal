@@ -253,6 +253,12 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     match state.keys() {
         Some(keys) if keys.has_usable_key() => {}
+        // `state.keys() == None` can't actually happen here — `build_state`
+        // always calls `.with_keys(...)`, so `state` never reaches `run`
+        // without a `KeyStore` installed (possibly just an empty one).
+        // Handled anyway, defensively, for symmetry with framework's own
+        // `remote_server::serve`, whose check this mirrors — not because
+        // there's a path that reaches it. Don't go looking for one.
         _ => {
             anyhow::bail!(
                 "no usable API key configured in {}; run `sapphire-journal-server gen-key` \
