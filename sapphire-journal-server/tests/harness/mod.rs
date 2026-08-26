@@ -2,12 +2,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use http_body_util::BodyExt as _;
+use sapphire_framework::remote_server::{ReconcileReport, WsStore};
+use sapphire_journal_core::journal_state::JournalState;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt as _;
 
@@ -20,6 +22,14 @@ pub struct Harness {
     /// `/mcp`. Reused for every subsequent `tools/call`.
     mcp_session: String,
     next_mcp_id: AtomicI64,
+    /// journal のルート。Task 8 のテストは、通知を経由しない書き込みをここに
+    /// 直接植える。
+    pub journal_dir: PathBuf,
+    /// `build_router` が開いたのと同じ `WsStore`(`ServerState::workspace` は
+    /// ws ごとにメモ化する)。`tick_once` はここではなく change log を更新する
+    /// ので、テストの検証も change log(`workspace.snapshot`)側で行うこと。
+    store: Arc<WsStore>,
+    journal_state: Arc<Mutex<JournalState>>,
 }
 
 pub async fn spawn() -> Harness {
@@ -45,11 +55,15 @@ pub async fn spawn() -> Harness {
     let ws = sapphire_journal_server::serve::workspace_id(&journal_dir).unwrap();
     let router = sapphire_journal_server::serve::build_router(
         Arc::clone(&state),
-        journal_state,
+        Arc::clone(&journal_state),
         &journal_dir,
         CancellationToken::new(),
     )
     .unwrap();
+    // `build_router` が `state.workspace(&ws)` で既に開いている。`workspace`
+    // はメモ化されるので、ここで取り直しても同じインスタンス — change log が
+    // 2 本になる心配はない。
+    let store = state.workspace(&ws).unwrap();
 
     let mut h = Harness {
         _tmp: tmp,
@@ -58,6 +72,9 @@ pub async fn spawn() -> Harness {
         router,
         mcp_session: String::new(),
         next_mcp_id: AtomicI64::new(1),
+        journal_dir,
+        store,
+        journal_state,
     };
     h.mcp_session = h.mcp_initialize().await;
     h
@@ -103,6 +120,12 @@ impl Harness {
     }
     pub fn ws(&self) -> &str {
         &self.ws
+    }
+
+    /// Task 8 の `tick_once`(journal の sync + `WsStore::reconcile`)を 1 回分、
+    /// 同期的に走らせる。
+    pub async fn tick_once(&self) -> ReconcileReport {
+        sapphire_journal_server::serve::tick_once(&self.store, &self.journal_state).unwrap()
     }
 
     /// 鍵つきで JSON-RPC を 1 回叩く。

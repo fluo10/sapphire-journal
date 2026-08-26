@@ -2,15 +2,21 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::Context as _;
 use axum::Router;
 use sapphire_framework::remote_server::{
-    KeyStore, ServerState, WsStore, WsStoreConfig, protect, router,
+    KeyStore, ReconcileReport, ServerState, WsStore, WsStoreConfig, protect, router,
 };
 use sapphire_journal_core::journal::Journal;
 use sapphire_journal_core::journal_state::JournalState;
+use sapphire_journal_core::user_config::UserConfig;
 use tokio_util::sync::CancellationToken;
+
+/// `UserConfig::sync_interval()` が使えない(設定が読めない、無効化されている)
+/// ときの既定間隔。
+const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// このサーバが公開するワークスペースの識別子。
 ///
@@ -151,6 +157,48 @@ fn write_observer(store: Arc<WsStore>, origin: PathBuf) -> sapphire_journal_mcp:
     })
 }
 
+/// 1 回分の整合処理。journal のキャッシュ同期と change log の追随を、
+/// この順で行う。
+///
+/// **サーバ構成では走査はここだけ。** MCP の定期再インデックス
+/// (`spawn_periodic_reindex`) は呼ばない — 同じファイル群を 2 回舐めるだけで、
+/// しかも片方は change log を更新しない。
+pub fn tick_once(
+    store: &WsStore,
+    journal_state: &Mutex<JournalState>,
+) -> anyhow::Result<ReconcileReport> {
+    journal_state.lock().unwrap().sync()?;
+    let report = store.reconcile()?;
+    Ok(report)
+}
+
+/// [`tick_once`] を `interval` ごとに回す。起動直後に 1 回走らせてから待つ。
+pub fn spawn_tick(
+    store: Arc<WsStore>,
+    journal_state: Arc<Mutex<JournalState>>,
+    interval: Duration,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        loop {
+            ticker.tick().await;
+            let store = Arc::clone(&store);
+            let journal_state = Arc::clone(&journal_state);
+            // redb / tantivy / ファイル走査はブロッキング。
+            let result = tokio::task::spawn_blocking(move || tick_once(&store, &journal_state))
+                .await;
+            match result {
+                Ok(Ok(report)) if !(report.upserted == 0 && report.removed == 0) => {
+                    tracing::info!(?report, "reconciled");
+                }
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => tracing::warn!(error = %e, "reconcile tick failed"),
+                Err(e) => tracing::warn!(error = %e, "reconcile tick panicked"),
+            }
+        }
+    })
+}
+
 /// listener を開いて待ち受ける。
 pub async fn run(
     addr: std::net::SocketAddr,
@@ -161,6 +209,18 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let cancel = CancellationToken::new();
     let app = build_router(Arc::clone(&state), Arc::clone(&journal_state), journal_dir, cancel.clone())?;
+
+    // build_router がこの ws に対する WsStore を既に開いている
+    // (`ServerState::workspace` はワークスペースごとにメモ化する) ので、ここで
+    // 呼んでも新しいインスタンスは生まれない — tick が change log を分裂させる
+    // ことはない。
+    let ws = workspace_id(journal_dir)?;
+    let store = state.workspace(&ws)?;
+    let interval = UserConfig::load()
+        .ok()
+        .and_then(|c| c.sync_interval())
+        .unwrap_or(DEFAULT_TICK_INTERVAL);
+    let tick_handle = spawn_tick(store, Arc::clone(&journal_state), interval);
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -174,9 +234,11 @@ pub async fn run(
          no TLS, no OAuth, tokens are stored in plaintext"
     );
 
-    // 定期ティックは Task 8 でここに足す。
-    axum::serve(listener, app)
+    let result = axum::serve(listener, app)
         .with_graceful_shutdown(async move { cancel.cancelled().await })
         .await
-        .context("server failed")
+        .context("server failed");
+
+    tick_handle.abort();
+    result
 }
