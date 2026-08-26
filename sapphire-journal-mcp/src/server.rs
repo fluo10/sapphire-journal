@@ -164,58 +164,64 @@ struct EntryShowParams {
     entry: EntryRef,
 }
 
+// `pub` (struct and fields): sapphire-journal-server's write-path tests build
+// these directly to drive `entry_new`/`entry_modify` without going through
+// the MCP transport — see `SapphireJournalServer::entry_new`/`entry_modify`
+// below for why those are `pub` too. This doesn't widen what's reachable over
+// MCP itself: the JSON shape was already public via the tool's input schema.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct EntryNewParams {
+pub struct EntryNewParams {
     /// Title of the entry — written into the frontmatter and used to generate the filename slug
-    title: Option<String>,
+    pub title: Option<String>,
     /// Body content (Markdown)
-    body: Option<String>,
+    pub body: Option<String>,
     /// Parent entry
-    parent: Option<EntryRef>,
+    pub parent: Option<EntryRef>,
     /// Slug override in the frontmatter
-    slug: Option<String>,
+    pub slug: Option<String>,
     /// Tags as comma-separated string (e.g. "work,project")
-    tags: Option<String>,
+    pub tags: Option<String>,
     /// Task due date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)
-    task_due: Option<String>,
+    pub task_due: Option<String>,
     /// Task status (open | in_progress | done | cancelled | archived)
-    task_status: Option<String>,
+    pub task_status: Option<String>,
     /// Task start date/time; set automatically when status → in_progress
-    task_started_at: Option<String>,
+    pub task_started_at: Option<String>,
     /// Task close date/time
-    task_closed_at: Option<String>,
+    pub task_closed_at: Option<String>,
     /// Event start date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)
-    event_start: Option<String>,
+    pub event_start: Option<String>,
     /// Event end date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)
-    event_end: Option<String>,
+    pub event_end: Option<String>,
 }
 
+// `pub`: see the comment on `EntryNewParams` above.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct EntryModifyParams {
-    entry: EntryRef,
+pub struct EntryModifyParams {
+    pub entry: EntryRef,
     /// New title
-    title: Option<String>,
+    pub title: Option<String>,
     /// New body content (Markdown). Replaces the existing body.
-    body: Option<String>,
+    pub body: Option<String>,
     /// New parent entry. Omit to leave unchanged; pass null to remove the parent.
     #[serde(default)]
-    parent: UpdateOption<EntryRef>,
+    pub parent: UpdateOption<EntryRef>,
     /// New slug override
-    slug: Option<String>,
+    pub slug: Option<String>,
     /// New tags as comma-separated string. Pass empty string to clear all tags.
-    tags: Option<String>,
+    pub tags: Option<String>,
     /// Task due date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)
-    task_due: Option<String>,
+    pub task_due: Option<String>,
     /// Task status (open | in_progress | done | cancelled | archived)
-    task_status: Option<String>,
+    pub task_status: Option<String>,
     /// Task start date/time; set automatically when status → in_progress
-    task_started_at: Option<String>,
+    pub task_started_at: Option<String>,
     /// Task close date/time
-    task_closed_at: Option<String>,
+    pub task_closed_at: Option<String>,
     /// Event start date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)
-    event_start: Option<String>,
+    pub event_start: Option<String>,
     /// Event end date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)
-    event_end: Option<String>,
+    pub event_end: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -365,8 +371,11 @@ impl SapphireJournalServer {
         .map_err(|e| e.to_string())
     }
 
+    // `pub`: sapphire-journal-server's write-path tests call this directly
+    // (with an observer attached) to reproduce the MCP entry point without
+    // paying for the full transport — see EntryNewParams above.
     #[tool(description = "Create a new journal entry")]
-    fn entry_new(&self, Parameters(p): Parameters<EntryNewParams>) -> Result<String, String> {
+    pub fn entry_new(&self, Parameters(p): Parameters<EntryNewParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             let fields = parse_entry_fields(
                 p.slug,
@@ -401,8 +410,9 @@ impl SapphireJournalServer {
         .map_err(|e| e.to_string())
     }
 
+    // `pub`: see the comment on `entry_new` above.
     #[tool(description = "Update frontmatter fields of an existing journal entry")]
-    fn entry_modify(&self, Parameters(p): Parameters<EntryModifyParams>) -> Result<String, String> {
+    pub fn entry_modify(&self, Parameters(p): Parameters<EntryModifyParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
             if p.title.is_none()
                 && p.body.is_none()
