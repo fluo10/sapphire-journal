@@ -758,25 +758,15 @@ mod tests {
     use super::*;
 
     /// Build a minimal, throwaway `SapphireJournalServer` backed by a journal
-    /// initialized under the system temp directory. No cleanup on drop — these
-    /// are small, and adding a dependency just to rmdir them isn't worth it.
-    fn test_server() -> SapphireJournalServer {
+    /// initialized under a fresh `tempfile::TempDir`. The `TempDir` is
+    /// returned alongside the server — hold onto it for the test's duration,
+    /// since dropping it removes the directory the open journal state points
+    /// at.
+    fn test_server() -> (tempfile::TempDir, SapphireJournalServer) {
         sapphire_journal_core::init_app_context();
-        // Windows' system-time resolution (~15ms ticks) is too coarse to keep
-        // parallel test threads from landing on the same nanosecond reading,
-        // so mix in a per-process counter to guarantee a unique directory.
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "sapphire-journal-mcp-test-{}-{unique}-{n}",
-            std::process::id(),
-        ));
-        let state = prepare_state(Some(&dir), true).expect("failed to init test journal");
-        SapphireJournalServer::new(state)
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let state = prepare_state(Some(dir.path()), true).expect("failed to init test journal");
+        (dir, SapphireJournalServer::new(state))
     }
 
     /// Zero-argument tools use `EmptyObject`, which must advertise a top-level `type: object`.
@@ -821,7 +811,8 @@ mod tests {
         let observed: Arc<Mutex<Vec<Vec<PathBuf>>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&observed);
 
-        let server = test_server().with_write_observer(Arc::new(move |paths: &[PathBuf]| {
+        let (_dir, server) = test_server();
+        let server = server.with_write_observer(Arc::new(move |paths: &[PathBuf]| {
             sink.lock().unwrap().push(paths.to_vec());
         }));
 
@@ -839,8 +830,148 @@ mod tests {
 
     #[test]
     fn no_observer_is_a_no_op() {
-        let server = test_server();
+        let (_dir, server) = test_server();
         // オブザーバ未設定でも panic しないこと。
         server.notify_write_for_test(&[PathBuf::from("a.md")]);
+    }
+
+    // ── coverage that drives the real tool handlers ─────────────────────────
+    //
+    // The tests above only prove the observer plumbing works with hand-built
+    // path lists; they don't exercise create_entry/update_entry/fix_entry/
+    // remove_entry at all, so a bug in any of those four call sites (e.g.
+    // swapped or dropped paths) would still pass. These tests call the actual
+    // `#[tool]` methods so the rename branches are the ones under test.
+
+    fn blank_new_params(title: &str) -> EntryNewParams {
+        EntryNewParams {
+            title: Some(title.to_owned()),
+            body: None,
+            parent: None,
+            slug: None,
+            tags: None,
+            task_due: None,
+            task_status: None,
+            task_started_at: None,
+            task_closed_at: None,
+            event_start: None,
+            event_end: None,
+        }
+    }
+
+    fn blank_modify_params(entry: EntryRef) -> EntryModifyParams {
+        EntryModifyParams {
+            entry,
+            title: None,
+            body: None,
+            parent: UpdateOption::Unchanged,
+            slug: None,
+            tags: None,
+            task_due: None,
+            task_status: None,
+            task_started_at: None,
+            task_closed_at: None,
+            event_start: None,
+            event_end: None,
+        }
+    }
+
+    /// `entry_new`'s response is `"created: {path}"`; pull the path back out
+    /// so the test can hand it to a follow-up `entry_modify`/`entry_remove`
+    /// call and compare it against what the observer received.
+    fn path_from_created_message(msg: &str) -> PathBuf {
+        PathBuf::from(
+            msg.strip_prefix("created: ")
+                .unwrap_or_else(|| panic!("unexpected entry_new response: {msg}")),
+        )
+    }
+
+    fn observer() -> (WriteObserver, Arc<Mutex<Vec<Vec<PathBuf>>>>) {
+        let observed: Arc<Mutex<Vec<Vec<PathBuf>>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&observed);
+        (Arc::new(move |paths: &[PathBuf]| sink.lock().unwrap().push(paths.to_vec())), observed)
+    }
+
+    #[test]
+    fn entry_new_notifies_the_created_path_once() {
+        let (_dir, server) = test_server();
+        let (obs, observed) = observer();
+        let server = server.with_write_observer(obs);
+
+        let msg = server
+            .entry_new(Parameters(blank_new_params("Original Title")))
+            .expect("entry_new failed");
+        let created = path_from_created_message(&msg);
+
+        let calls = observed.lock().unwrap();
+        assert_eq!(*calls, vec![vec![created]]);
+    }
+
+    #[test]
+    fn entry_modify_rename_notifies_old_and_new_path_in_one_call() {
+        let (_dir, server) = test_server();
+        let (obs, observed) = observer();
+        let server = server.with_write_observer(obs);
+
+        let msg = server
+            .entry_new(Parameters(blank_new_params("Original Title")))
+            .expect("entry_new failed");
+        let old_path = path_from_created_message(&msg);
+        observed.lock().unwrap().clear(); // isolate the rename notification below
+
+        let mut modify = blank_modify_params(EntryRef::Path(old_path.clone()));
+        modify.title = Some("Renamed Title".to_owned());
+        let modify_msg = server.entry_modify(Parameters(modify)).expect("entry_modify failed");
+        assert!(
+            modify_msg.starts_with("updated and renamed:"),
+            "expected a rename, got: {modify_msg}"
+        );
+
+        let calls = observed.lock().unwrap();
+        assert_eq!(calls.len(), 1, "rename must notify in exactly one call");
+        assert_eq!(calls[0].len(), 2, "rename must carry both paths");
+        assert_eq!(calls[0][0], old_path, "old path must come first");
+        assert_ne!(calls[0][1], old_path, "second path must be the new one");
+    }
+
+    #[test]
+    fn entry_modify_without_rename_notifies_a_single_path() {
+        let (_dir, server) = test_server();
+        let (obs, observed) = observer();
+        let server = server.with_write_observer(obs);
+
+        let msg = server
+            .entry_new(Parameters(blank_new_params("Stable Title")))
+            .expect("entry_new failed");
+        let path = path_from_created_message(&msg);
+        observed.lock().unwrap().clear(); // isolate the modify notification below
+
+        let mut modify = blank_modify_params(EntryRef::Path(path.clone()));
+        modify.tags = Some("work".to_owned());
+        let modify_msg = server.entry_modify(Parameters(modify)).expect("entry_modify failed");
+        assert!(modify_msg.starts_with("updated:"), "expected no rename, got: {modify_msg}");
+
+        let calls = observed.lock().unwrap();
+        assert_eq!(*calls, vec![vec![path]]);
+    }
+
+    #[test]
+    fn entry_remove_notifies_the_removed_path() {
+        let (_dir, server) = test_server();
+        let (obs, observed) = observer();
+        let server = server.with_write_observer(obs);
+
+        let msg = server
+            .entry_new(Parameters(blank_new_params("Doomed Entry")))
+            .expect("entry_new failed");
+        let path = path_from_created_message(&msg);
+        observed.lock().unwrap().clear(); // isolate the remove notification below
+
+        server
+            .entry_remove(Parameters(EntryRemoveParams { entry: EntryRef::Path(path.clone()) }))
+            .expect("entry_remove failed");
+
+        let calls = observed.lock().unwrap();
+        assert_eq!(*calls, vec![vec![path]]);
     }
 }
