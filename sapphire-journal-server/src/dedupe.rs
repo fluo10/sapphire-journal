@@ -11,17 +11,24 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use grain_id::GrainId;
 use sapphire_framework::remote_server::WsStore;
 
 /// ワークスペース相対パスから `{id}` を取り出す。エントリらしくなければ `None`。
+///
+/// 「アンダースコアの前が英数字なら id」という緩い判定だと、たまたま
+/// アンダースコアなしの英数字なファイル名を持つ非エントリ同士（例:
+/// `README.md` と `README_notes.md`。どちらも先頭部分は `README`）を
+/// 誤って同じ id の重複と見なし、`resolve_duplicates` が一方を消してしまう
+/// —— 実データに `_` 区切り以外の理由でファイルを消す事故になる。
+/// `GrainId` は 7 文字の Crockford Base32 という固定形状を持つので、
+/// `GrainId::from_str` を実際の判定に使う。長さもアルファベットも一致しない
+/// 文字列は確実に弾かれる。
 fn entry_id(path: &str) -> Option<&str> {
     let file = path.rsplit('/').next()?;
     let stem = file.strip_suffix(".md")?;
     let id = stem.split('_').next()?;
-    // GrainId は英数字。空や明らかに違うものは弾く。
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return None;
-    }
+    id.parse::<GrainId>().ok()?;
     Some(id)
 }
 
@@ -55,9 +62,12 @@ pub fn resolve_duplicates(store: &WsStore, origin: &Path) -> anyhow::Result<usiz
                     .map(|c| (p, c.updated_at))
             })
             .collect();
+        // 安定ソートなので、`updated_at` が同値のときは group 内の元の並び順
+        // (snapshot.docs の seq 昇順)がそのまま保たれる —— 同値タイでは
+        // change log により後から記録された方(seq が大きい方)が勝つ。
         with_time.sort_by_key(|(_, t)| *t);
 
-        // 最後の 1 つ(最も新しい)以外を消す。
+        // 最後の 1 つ(最も新しい。同値タイなら上のコメントの通り seq が大きい方)以外を消す。
         let doomed: Vec<String> = with_time
             .iter()
             .rev()
@@ -86,31 +96,36 @@ pub fn resolve_duplicates(store: &WsStore, origin: &Path) -> anyhow::Result<usiz
 mod tests {
     use super::*;
 
+    // "0000001" / "0000002" は実際に `GrainId::from_str` が受理する 7 文字の
+    // Crockford Base32(digits はどれもアルファベットに含まれる)。 id の判定が
+    // 本物の GrainId 形状を見ているかを確かめたいので、フィクスチャも本物の
+    // 形状にしてある。
+
     #[test]
     fn groups_paths_that_share_an_id() {
         let paths = vec![
-            "2026/01J1_old-title.md".to_owned(),
-            "2026/01J1_new-title.md".to_owned(),
-            "2026/01J2_other.md".to_owned(),
+            "2026/0000001_old-title.md".to_owned(),
+            "2026/0000001_new-title.md".to_owned(),
+            "2026/0000002_other.md".to_owned(),
         ];
 
         let groups = find_duplicate_ids(&paths);
 
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].len(), 2);
-        assert!(groups[0].iter().all(|p| p.contains("01J1")));
+        assert!(groups[0].iter().all(|p| p.contains("0000001")));
     }
 
     #[test]
     fn a_bare_id_filename_still_groups() {
         // スラグが空のときファイル名は `{id}.md` になる。
-        let paths = vec!["2026/01J1.md".to_owned(), "2026/01J1_titled.md".to_owned()];
+        let paths = vec!["2026/0000001.md".to_owned(), "2026/0000001_titled.md".to_owned()];
         assert_eq!(find_duplicate_ids(&paths).len(), 1);
     }
 
     #[test]
     fn unique_ids_produce_no_groups() {
-        let paths = vec!["2026/01J1_a.md".to_owned(), "2026/01J2_b.md".to_owned()];
+        let paths = vec!["2026/0000001_a.md".to_owned(), "2026/0000002_b.md".to_owned()];
         assert!(find_duplicate_ids(&paths).is_empty());
     }
 
@@ -121,5 +136,19 @@ mod tests {
             "README.md".to_owned(),
         ];
         assert!(find_duplicate_ids(&paths).is_empty());
+    }
+
+    #[test]
+    fn similarly_named_non_entry_files_are_not_grouped() {
+        // これが実際に事故を起こす組み合わせ: どちらも `_` の前が `README` で、
+        // 「アンダースコア前が英数字なら id」という緩い判定だと同じ id の重複
+        // として扱われ、`resolve_duplicates` が `README.md` を消してしまう。
+        // `README` は 7 文字の GrainId として parse できない(6 文字)ので、
+        // GrainId ベースの判定なら両方とも id なし = グループ化されない。
+        let paths = vec!["README.md".to_owned(), "README_notes.md".to_owned()];
+        assert!(
+            find_duplicate_ids(&paths).is_empty(),
+            "README.md と README_notes.md が誤って同じ id の重複としてグループ化された"
+        );
     }
 }
