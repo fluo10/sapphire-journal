@@ -152,7 +152,7 @@ fn embed(journal: &Journal) -> Result<()> {
     if user_cfg.cache.retrieve.db == VectorDb::None {
         anyhow::bail!(
             "cache.retrieve.db is \"none\" in ~/.config/sapphire-journal/config.toml — \
-             set it to \"sqlite_vec\" to use vector search"
+             set it to \"redb\" to use vector search"
         );
     }
     if embed_cfg.dimension.is_none() {

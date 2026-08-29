@@ -34,7 +34,7 @@ fn show(journal_dir: Option<&Path>) -> Result<()> {
         println!("#");
         println!("# [cache.embedding]");
         println!("# enabled   = true");
-        println!("# vector_db = \"sqlite_vec\"   # \"none\" | \"sqlite_vec\"");
+        println!("# vector_db = \"redb\"   # \"none\" | \"redb\"");
         println!("# provider  = \"openai\"");
         println!("# model     = \"text-embedding-3-small\"");
         println!("# dimension = 1536");

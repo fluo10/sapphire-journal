@@ -76,6 +76,11 @@ pub enum Command {
         expires_in: Option<String>,
     },
     /// Remove a key by id or label.
+    ///
+    /// The key stops working immediately in this process, but a running
+    /// server only picks the change up when it next reloads the key file
+    /// (e.g. on restart) — `ServerState` holds a snapshot taken at
+    /// start-up and has no reload path.
     RevokeKey {
         /// The key's UUID, or its label when that is unambiguous.
         selector: String,

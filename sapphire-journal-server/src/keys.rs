@@ -34,6 +34,12 @@ pub fn parse_duration(s: &str) -> anyhow::Result<Duration> {
     let n: i64 = value
         .parse()
         .with_context(|| format!("bad duration: {s:?}"))?;
+    if n <= 0 {
+        // `is_expired` は `expires_at <= now`。`0d` を素通しすると、
+        // 絶対時刻に直した瞬間に「もう期限切れ」の鍵ができ、一度も
+        // 認証できないまま死ぬ。
+        bail!("duration must be positive: {s:?}");
+    }
     let d = match unit {
         "d" => Duration::try_days(n),
         "h" => Duration::try_hours(n),
@@ -113,7 +119,7 @@ pub fn run(command: Command, keys_path: &Path) -> anyhow::Result<()> {
             // 時刻だけを持たせるほうが、後から読んだときに曖昧さがない。
             let expires_at = absolute_expiry(expires_in.as_deref())?;
             // id と device_id はどちらも None。journal-server は鍵の内部 id を自分で
-            // 決める理由が無く、デバイス台帳との連動もまだ持たない（issue 参照）。
+            // 決める理由が無く、デバイス台帳との連動もまだ持たない（issue #279 参照）。
             let entry = store.generate(TOKEN_PREFIX, None, None, label, expires_at)?;
             println!("{}", entry.token);
             eprintln!(
@@ -159,6 +165,9 @@ pub fn run(command: Command, keys_path: &Path) -> anyhow::Result<()> {
                 removed.id,
                 removed.label.as_deref().unwrap_or("-")
             );
+            eprintln!(
+                "a running server keeps accepting this token until it reloads this file"
+            );
         }
     }
     Ok(())
@@ -185,6 +194,16 @@ mod tests {
         assert!(parse_duration("d90").is_err());
         assert!(parse_duration("-1d").is_err());
         assert!(parse_duration("90y").is_err());
+    }
+
+    #[test]
+    fn parse_duration_rejects_zero_and_negative_values() {
+        // `0d` を通すと `is_expired`（`expires_at <= now`）により、絶対時刻に
+        // 直した瞬間もう期限切れの鍵ができる。一度も認証できないトークンを
+        // 「成功」として発行してはいけない。
+        for s in ["0d", "0h", "0m", "-1d", "-1h", "-1m"] {
+            assert!(parse_duration(s).is_err(), "{s} が通ってしまった");
+        }
     }
 
     #[test]
