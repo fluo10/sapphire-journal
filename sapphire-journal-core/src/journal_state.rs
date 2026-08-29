@@ -144,8 +144,6 @@ impl JournalState {
         let Some(dim) = embed_cfg.dimension else { return Ok(()); };
         let vector_db = retrieve.db;
 
-        // LanceDB uses block_in_place internally when called from an async context,
-        // so it is safe to call directly here.
         self.init_vector_backend(vector_db, dim)
     }
 

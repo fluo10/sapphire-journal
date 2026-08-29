@@ -106,9 +106,6 @@ fn info(journal: &Journal) -> Result<()> {
                     println!("vector backend: redb (dimension not configured)");
                 }
             }
-            VectorDb::LanceDb => {
-                println!("vector backend: lancedb (no longer available; was removed in framework main)");
-            }
         }
     }
 
@@ -230,16 +227,6 @@ fn find_stale_sqlite(cache_dir: &Path) -> Vec<(std::path::PathBuf, u64)> {
 
 fn file_size(path: &Path) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
-}
-
-fn dir_size(path: &Path) -> u64 {
-    let Ok(rd) = std::fs::read_dir(path) else { return 0 };
-    rd.filter_map(|e| e.ok())
-        .map(|e| {
-            let p = e.path();
-            if p.is_dir() { dir_size(&p) } else { file_size(&p) }
-        })
-        .sum()
 }
 
 fn human_size(bytes: u64) -> String {

@@ -97,6 +97,8 @@ pub fn run(command: Command, keys_path: &Path) -> anyhow::Result<()> {
                         .ok_or_else(|| anyhow::anyhow!("expiry is too far in the future: {d}"))
                 })
                 .transpose()?;
+            // id と device_id はどちらも None。journal-server は鍵の内部 id を自分で
+            // 決める理由が無く、デバイス台帳との連動もまだ持たない（issue 参照）。
             let entry = store.generate(TOKEN_PREFIX, None, None, label, expires_at)?;
             println!("{}", entry.token);
             eprintln!(
