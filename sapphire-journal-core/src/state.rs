@@ -21,8 +21,8 @@ pub fn open_state(journal_dir: Option<&Path>) -> Result<JournalState> {
 
 /// Initialise the vector backend and embedder when configured.
 ///
-/// Calls the sync variants on [`JournalState`]; the underlying lancedb store
-/// uses `block_in_place` internally so this is safe to call from inside a
+/// Calls the sync variants on [`JournalState`]; the underlying vector stores
+/// use `block_in_place` internally so this is safe to call from inside a
 /// tokio multi-thread runtime task (MCP wraps the call in `block_in_place`
 /// to avoid blocking other tasks during the initial model download).
 pub fn bootstrap_embedder(state: &JournalState, config: &UserConfig) -> Result<()> {
