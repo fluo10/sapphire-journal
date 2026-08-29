@@ -12,7 +12,6 @@ keywords = ["markdown", "task-management", "notes", "frontmatter", "plain-text"]
 default = ["redb-store", "fastembed-embed"]
 # Pure-Rust cache backend (redb + tantivy). Default; no SQLite/libsqlite3-sys.
 redb-store      = ["sapphire-workspace/redb-store"]
-lancedb-store   = ["sapphire-workspace/lancedb-store"]
 fastembed-embed = ["sapphire-workspace/fastembed-embed"]
 # Text-frontend helpers: converters from CLI/MCP-style string inputs into the
 # strongly-typed values consumed by `ops`. GUIs that build typed values

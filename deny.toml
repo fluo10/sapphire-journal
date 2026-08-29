@@ -16,13 +16,11 @@ all-features = true
 [advisories]
 yanked = "warn"
 # Transitive `unmaintained` advisories we can't act on without replacing
-# major deps (lance/lancedb, image/rav1e, git2, lindera). Re-evaluate when
-# those crates' upstreams move off the unmaintained package, or when a
-# *vulnerability* (not just unmaintained) advisory is filed for any of them.
+# major deps (image/rav1e, git2). Re-evaluate when those crates' upstreams
+# move off the unmaintained package, or when a *vulnerability* (not just
+# unmaintained) advisory is filed for any of them.
 ignore = [
-    { id = "RUSTSEC-2025-0141", reason = "bincode 2.x is unmaintained but used transitively via lindera → lance; no safe upgrade exists." },
     { id = "RUSTSEC-2026-0105", reason = "core2 is unmaintained and yanked but pulled in via image → rav1e → bitstream-io." },
-    { id = "RUSTSEC-2021-0153", reason = "encoding crate is unmaintained but pulled in via lindera → lance." },
     { id = "RUSTSEC-2025-0119", reason = "number_prefix is unmaintained but pulled in via indicatif → hf-hub → fastembed." },
     { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained but pulled in via many proc-macro consumers; no drop-in replacement." },
 ]

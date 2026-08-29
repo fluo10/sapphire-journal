@@ -14,7 +14,6 @@ path = "src/lib.rs"
 [features]
 default = ["redb-store", "fastembed-embed"]
 redb-store = ["sapphire-journal-core/redb-store"]
-lancedb-store = ["sapphire-journal-core/lancedb-store"]
 fastembed-embed = ["sapphire-journal-core/fastembed-embed"]
 http-server = ["rmcp/transport-streamable-http-server", "dep:axum", "dep:tokio-util"]
 
