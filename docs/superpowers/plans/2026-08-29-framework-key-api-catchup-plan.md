@@ -16,6 +16,7 @@
 - **framework 側の `sapphire-framework-registry` は使わない。** デバイス／ユーザー台帳との連動は本計画のスコープ外で、Task 4 でイシューに上げるだけ。
 - `KeyStore::generate` は `main` で **5 引数**（`prefix`, `id: Option<Uuid>`, `device_id: Option<GrainId>`, `label`, `expires_at`）。journal-server は `id` にも `device_id` にも `None` を渡す。
 - 出力規約は既存の `gen-key` に合わせる — **トークンだけ stdout、メタデータは stderr**。
+- **`grain-id` は 0.15 のまま据え置く。** framework は 0.16 に上がるが、このリポジトリは追随しない — 0.16 の破壊的変更は `rusqlite` 0.39 → 0.40 で、`sapphire-journal-core` が `grain-id` の `rusqlite` フィーチャを有効にしているため、追随すると rusqlite のメジャー移行がまるごと付いてくる。本計画の目的（コンパイルを通す）とは無関係な変更なので、Task 4 でイシューに上げる。<br>バージョンが食い違っても安全なのは、**この 2 つの `GrainId` が出会わない**から。journal-server が触る唯一の接点は `generate` の `device_id` 引数で、そこには常に `None` を渡す（`None` は引数の型から推論されるので、型名の衝突は起きない）。
 - ドキュメントコメントは既存ファイルに合わせて**日本語**で書く。
 
 ---
@@ -504,7 +505,30 @@ ID はこのアプリの台帳の中だけで意味を持ち、他のアプリ�
 の「立てるイシュー」節'
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: grain-id 0.16 のイシューを立てる**
+
+```bash
+gh issue create \
+  --title "Bump grain-id to 0.16, which means bumping rusqlite to 0.40" \
+  --body 'grain-id 0.16 が出ており、`sapphire-framework` は 0.16 を使う。この
+リポジトリは 0.15 のまま据え置いている。
+
+追随できない理由: 0.16 の破壊的変更は `rusqlite` 0.39 → 0.40（と sea-orm 2.0、
+sha3 0.12）で、`sapphire-journal-core` が `grain-id` の `rusqlite` フィーチャを
+有効にしている。つまり grain-id を上げると rusqlite のメジャー移行が付いてくる。
+ワークスペースの `rusqlite = { version = "0.39", features = ["bundled"] }` を
+0.40 へ動かし、`sapphire-journal-core` の SQLite まわりの API 変更に追随する
+必要がある。
+
+据え置いても安全な理由: framework の 0.16 な `GrainId` と、このリポジトリの
+0.15 な `GrainId` は出会わない。唯一の接点である `KeyStore::generate` の
+`device_id` 引数には常に `None` を渡している。
+
+`updated_by` のためにデバイス台帳を使い始める時点（別イシュー）では、
+`registry::Device.id` を実際に扱うことになるので、そこまでには揃える必要がある。'
+```
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add sapphire-journal-server/README.md
