@@ -57,6 +57,24 @@ pub enum Command {
     },
     /// List the keys, with tokens masked.
     ListKeys,
+    /// Re-issue a key's token, keeping its id, label and created_at.
+    ///
+    /// The old token stops working immediately in this process, but a
+    /// running server only picks the change up when it next reloads the
+    /// key file (e.g. on restart) — `ServerState` holds a snapshot taken
+    /// at start-up and has no reload path.
+    RotateKey {
+        /// The key's UUID, or its label when that is unambiguous.
+        selector: String,
+        /// Expire the new token after this long, e.g. `90d`, `12h`.
+        ///
+        /// This REPLACES the expiry rather than keeping it: omitting the
+        /// flag makes the key non-expiring, it does not carry the old
+        /// expiry over. Re-issuing an expired key with its old expiry
+        /// would produce a token that is already unusable.
+        #[arg(long, value_name = "DURATION")]
+        expires_in: Option<String>,
+    },
     /// Remove a key by id or label.
     RevokeKey {
         /// The key's UUID, or its label when that is unambiguous.
@@ -129,5 +147,32 @@ mod tests {
     #[test]
     fn revoke_key_requires_a_selector() {
         assert!(Cli::try_parse_from(["sapphire-journal-server", "revoke-key"]).is_err());
+    }
+
+    #[test]
+    fn rotate_key_requires_a_selector() {
+        assert!(Cli::try_parse_from(["sapphire-journal-server", "rotate-key"]).is_err());
+    }
+
+    #[test]
+    fn rotate_key_takes_a_selector_and_an_optional_expiry() {
+        let cli = Cli::try_parse_from(["sapphire-journal-server", "rotate-key", "laptop"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::RotateKey { ref selector, expires_in: None }) if selector == "laptop"
+        ));
+
+        let cli = Cli::try_parse_from([
+            "sapphire-journal-server",
+            "rotate-key",
+            "laptop",
+            "--expires-in",
+            "90d",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::RotateKey { expires_in: Some(ref d), .. }) if d == "90d"
+        ));
     }
 }

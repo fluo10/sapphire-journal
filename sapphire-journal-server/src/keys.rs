@@ -73,6 +73,24 @@ fn format_key_line(e: &sapphire_framework::remote_server::KeyEntry, now: chrono:
     )
 }
 
+/// `--expires-in` を絶対時刻に直す。
+///
+/// `checked_add_signed`。`Utc::now() + d` は表現できない時刻になると panic
+/// するので、`parse_duration` を通った値でもまだ落ちうる（chrono の
+/// `Duration` の上限は `DateTime` の上限よりずっと緩い）。打ち間違いで
+/// プロセスが異常終了しないこと。
+fn absolute_expiry(expires_in: Option<&str>) -> anyhow::Result<Option<chrono::DateTime<Utc>>> {
+    expires_in
+        .map(parse_duration)
+        .transpose()?
+        .map(|d| {
+            Utc::now()
+                .checked_add_signed(d)
+                .ok_or_else(|| anyhow::anyhow!("expiry is too far in the future: {d}"))
+        })
+        .transpose()
+}
+
 /// 鍵サブコマンドを実行する。
 pub fn run(command: Command, keys_path: &Path) -> anyhow::Result<()> {
     let mut store = KeyStore::load(keys_path)
@@ -80,23 +98,9 @@ pub fn run(command: Command, keys_path: &Path) -> anyhow::Result<()> {
 
     match command {
         Command::GenKey { label, expires_in } => {
-            let expires_at = expires_in
-                .as_deref()
-                .map(parse_duration)
-                .transpose()?
-                // 相対指定は生成時に絶対時刻へ直して保存する。ファイルには絶対
-                // 時刻だけを持たせるほうが、後から読んだときに曖昧さがない。
-                //
-                // `checked_add_signed`。`Utc::now() + d` は表現できない時刻に
-                // なると panic するので、`parse_duration` を通った値でもまだ
-                // 落ちうる（chrono の `Duration` の上限は `DateTime` の上限より
-                // ずっと緩い）。打ち間違いでプロセスが異常終了しないこと。
-                .map(|d| {
-                    Utc::now()
-                        .checked_add_signed(d)
-                        .ok_or_else(|| anyhow::anyhow!("expiry is too far in the future: {d}"))
-                })
-                .transpose()?;
+            // 相対指定は生成時に絶対時刻へ直して保存する。ファイルには絶対
+            // 時刻だけを持たせるほうが、後から読んだときに曖昧さがない。
+            let expires_at = absolute_expiry(expires_in.as_deref())?;
             // id と device_id はどちらも None。journal-server は鍵の内部 id を自分で
             // 決める理由が無く、デバイス台帳との連動もまだ持たない（issue 参照）。
             let entry = store.generate(TOKEN_PREFIX, None, None, label, expires_at)?;
@@ -116,6 +120,26 @@ pub fn run(command: Command, keys_path: &Path) -> anyhow::Result<()> {
             for e in store.entries() {
                 println!("{}", format_key_line(e, now));
             }
+        }
+        Command::RotateKey {
+            selector,
+            expires_in,
+        } => {
+            let expires_at = absolute_expiry(expires_in.as_deref())?;
+            let entry = store.rotate(TOKEN_PREFIX, &selector, expires_at)?;
+            println!("{}", entry.token);
+            eprintln!(
+                "rotated {}  ({}){}",
+                entry.id,
+                entry.label.as_deref().unwrap_or("-"),
+                entry
+                    .expires_at
+                    .map(|e| format!("  expires {}", e.to_rfc3339()))
+                    .unwrap_or_else(|| "  no expiry".to_owned())
+            );
+            eprintln!(
+                "a running server keeps using the old token until it reloads this file"
+            );
         }
         Command::RevokeKey { selector } => {
             let removed = store.revoke(&selector)?;
@@ -334,5 +358,116 @@ mod tests {
 
         let store = sapphire_framework::remote_server::KeyStore::load(&path).unwrap();
         assert!(store.entries().is_empty());
+    }
+
+    #[test]
+    fn rotate_key_replaces_the_token_but_keeps_the_identity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("keys.toml");
+        run(
+            Command::GenKey { label: Some("laptop".into()), expires_in: None },
+            &path,
+        )
+        .unwrap();
+        let before = sapphire_framework::remote_server::KeyStore::load(&path).unwrap();
+        let (old_token, id, created) = {
+            let e = &before.entries()[0];
+            (e.token.clone(), e.id, e.created_at)
+        };
+
+        run(
+            Command::RotateKey { selector: "laptop".into(), expires_in: None },
+            &path,
+        )
+        .unwrap();
+
+        let after = sapphire_framework::remote_server::KeyStore::load(&path).unwrap();
+        let e = &after.entries()[0];
+        assert_ne!(e.token, old_token, "トークンが差し替わっていない");
+        assert!(e.token.starts_with("sjt_"));
+        assert_eq!(e.id, id, "id は保たれる");
+        assert_eq!(e.created_at, created, "created_at は保たれる");
+        assert_eq!(e.label.as_deref(), Some("laptop"));
+        assert!(e.rotated_at.is_some(), "rotated_at が立っていない");
+        assert!(after.authenticate(&old_token).is_none(), "旧トークンが生きている");
+    }
+
+    /// framework の `rotate` は `expires_at` を**保持ではなく置き換え**る。
+    /// 「トークンを差し替えるだけ」のつもりで呼ぶと期限が黙って消えるので、
+    /// それが意図した挙動であることをここで固定する。CLI のヘルプにも書く。
+    #[test]
+    fn rotate_key_without_expires_in_drops_the_existing_expiry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("keys.toml");
+        run(
+            Command::GenKey { label: Some("laptop".into()), expires_in: Some("90d".into()) },
+            &path,
+        )
+        .unwrap();
+
+        run(
+            Command::RotateKey { selector: "laptop".into(), expires_in: None },
+            &path,
+        )
+        .unwrap();
+
+        let store = sapphire_framework::remote_server::KeyStore::load(&path).unwrap();
+        assert!(
+            store.entries()[0].expires_at.is_none(),
+            "期限が引き継がれてしまっている"
+        );
+    }
+
+    #[test]
+    fn rotate_key_sets_a_new_expiry_when_asked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("keys.toml");
+        run(Command::GenKey { label: Some("laptop".into()), expires_in: None }, &path).unwrap();
+
+        run(
+            Command::RotateKey {
+                selector: "laptop".into(),
+                expires_in: Some("30d".into()),
+            },
+            &path,
+        )
+        .unwrap();
+
+        let store = sapphire_framework::remote_server::KeyStore::load(&path).unwrap();
+        let expires = store.entries()[0].expires_at.expect("期限が入っているはず");
+        let expected = chrono::Utc::now() + chrono::Duration::days(30);
+        assert!((expires - expected).num_seconds().abs() < 5);
+    }
+
+    #[test]
+    fn rotate_key_errors_on_an_unknown_selector() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("keys.toml");
+        run(Command::GenKey { label: Some("laptop".into()), expires_in: None }, &path).unwrap();
+
+        let result = run(
+            Command::RotateKey { selector: "nope".into(), expires_in: None },
+            &path,
+        );
+
+        assert!(result.is_err());
+    }
+
+    /// `gen-key` と同じで、範囲外の期限は panic ではなくエラーにする。
+    #[test]
+    fn rotate_key_errors_instead_of_panicking_on_an_absurd_expiry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("keys.toml");
+        run(Command::GenKey { label: Some("laptop".into()), expires_in: None }, &path).unwrap();
+
+        let result = run(
+            Command::RotateKey {
+                selector: "laptop".into(),
+                expires_in: Some("99999999999d".into()),
+            },
+            &path,
+        );
+
+        assert!(result.is_err(), "表現できない期限が受理された");
     }
 }
