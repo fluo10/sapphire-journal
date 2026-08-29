@@ -97,7 +97,7 @@ pub fn run(command: Command, keys_path: &Path) -> anyhow::Result<()> {
                         .ok_or_else(|| anyhow::anyhow!("expiry is too far in the future: {d}"))
                 })
                 .transpose()?;
-            let entry = store.generate(TOKEN_PREFIX, label, expires_at)?;
+            let entry = store.generate(TOKEN_PREFIX, None, None, label, expires_at)?;
             println!("{}", entry.token);
             eprintln!(
                 "id {}  created {}{}",

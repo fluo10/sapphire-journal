@@ -43,7 +43,7 @@ fn fixture() -> Fixture {
 
     let keys_path = tmp.path().join("keys.toml");
     let mut keys = sapphire_framework::remote_server::KeyStore::load(&keys_path).unwrap();
-    keys.generate(sapphire_journal_server::keys::TOKEN_PREFIX, None, None)
+    keys.generate(sapphire_journal_server::keys::TOKEN_PREFIX, None, None, None, None)
         .unwrap();
 
     let journal_state = sapphire_journal_server::serve::open_journal_state(&journal_dir).unwrap();

@@ -60,7 +60,7 @@ pub async fn spawn_with_allowed_hosts(allowed_hosts: &[String], mcp_host: &str) 
     let keys_path = tmp.path().join("keys.toml");
     let mut store = sapphire_framework::remote_server::KeyStore::load(&keys_path).unwrap();
     let token = store
-        .generate(sapphire_journal_server::keys::TOKEN_PREFIX, Some("test".into()), None)
+        .generate(sapphire_journal_server::keys::TOKEN_PREFIX, None, None, Some("test".into()), None)
         .unwrap()
         .token;
 
