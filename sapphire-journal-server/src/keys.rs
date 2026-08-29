@@ -53,21 +53,32 @@ fn mask_token(token: &str) -> String {
     format!("{}…", token.chars().take(12).collect::<String>())
 }
 
-/// `list-keys` の 1 行: id・トークン（マスク済）・作成日時・**期限**・ラベル。
+/// `list-keys` の 1 行: id・トークン（マスク済）・作成日時・**再発行日時**・
+/// **期限**・ラベル。
 ///
 /// 期限は日付ごと出す。`(expired)` とだけ書いても、いつ切れたのかも、まだ
-/// 切れていない鍵がいつ切れるのかも分からず、失効を計画できない。
-fn format_key_line(e: &sapphire_framework::remote_server::KeyEntry, now: chrono::DateTime<Utc>) -> String {
+/// 切れていない鍵がいつ切れるのかも分からず、失効を計画できない。再発行日時も
+/// 同じ理由で日付ごと — 「いつ差し替えたか」が分からないと、漏洩した疑いの
+/// あるトークンが既に無効化済みかどうか判断できない。
+fn format_key_line(
+    e: &sapphire_framework::remote_server::KeyEntry,
+    now: chrono::DateTime<Utc>,
+) -> String {
     let expires = match e.expires_at {
         Some(at) if e.is_expired(now) => format!("expired {}", at.to_rfc3339()),
         Some(at) => format!("expires {}", at.to_rfc3339()),
         None => "no expiry".to_owned(),
     };
+    let rotated = e
+        .rotated_at
+        .map(|at| format!("rotated {}", at.to_rfc3339()))
+        .unwrap_or_else(|| "-".to_owned());
     format!(
-        "{}  {}  {}  {}  {}",
+        "{}  {}  {}  {}  {}  {}",
         e.id,
         mask_token(&e.token),
         e.created_at.to_rfc3339(),
+        rotated,
         expires,
         e.label.as_deref().unwrap_or("-"),
     )
@@ -469,5 +480,39 @@ mod tests {
         );
 
         assert!(result.is_err(), "表現できない期限が受理された");
+    }
+
+    #[test]
+    fn list_keys_shows_when_a_key_was_last_rotated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("keys.toml");
+        run(Command::GenKey { label: Some("laptop".into()), expires_in: None }, &path).unwrap();
+        run(
+            Command::RotateKey { selector: "laptop".into(), expires_in: None },
+            &path,
+        )
+        .unwrap();
+        let store = sapphire_framework::remote_server::KeyStore::load(&path).unwrap();
+        let entry = &store.entries()[0];
+
+        let line = format_key_line(entry, chrono::Utc::now());
+
+        assert!(
+            line.contains(&entry.rotated_at.unwrap().to_rfc3339()),
+            "再発行の日時が出ていない: {line}"
+        );
+    }
+
+    #[test]
+    fn list_keys_says_nothing_special_for_a_key_that_was_never_rotated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("keys.toml");
+        run(Command::GenKey { label: Some("laptop".into()), expires_in: None }, &path).unwrap();
+        let store = sapphire_framework::remote_server::KeyStore::load(&path).unwrap();
+
+        let line = format_key_line(&store.entries()[0], chrono::Utc::now());
+
+        // 一度も再発行していない鍵には日時が無いので、その列は `-`。
+        assert!(line.contains(" -  ") || line.ends_with(" -"), "{line}");
     }
 }
