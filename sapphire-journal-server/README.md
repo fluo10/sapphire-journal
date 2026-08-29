@@ -92,8 +92,30 @@ own.
 
 `sapphire-journal-server --journal-dir ... list-keys` lists the keys that
 exist, with tokens masked, so you can see what's issued without printing
-live secrets again. `sapphire-journal-server --journal-dir ... revoke-key
-<id-or-label>` removes one.
+live secrets again.
+
+Re-issue a key's token with `rotate-key`, keeping its id, label and creation
+time:
+
+```sh
+sapphire-journal-server --journal-dir /path/to/your/journal rotate-key <id-or-label> [--expires-in 90d]
+```
+
+Omitting `--expires-in` does **not** carry the old expiry forward — the new
+token comes back non-expiring. `rotate-key` replaces the expiry rather than
+preserving it, so re-issuing an already-expired key without a fresh
+`--expires-in` does not restore its old deadline, it drops the deadline
+entirely.
+
+`sapphire-journal-server --journal-dir ... revoke-key <id-or-label>` removes
+a key from the file.
+
+Both `rotate-key` and `revoke-key` only change the key file on disk:
+**a running server keeps accepting the old token until it next reloads the
+key file** (in practice, until it restarts) — `ServerState` holds a snapshot
+of the keys taken at start-up, with no path to reload it. If you're rotating
+or revoking a key because its token leaked, restart the server too, or the
+old token stays live.
 
 ### The key file
 
