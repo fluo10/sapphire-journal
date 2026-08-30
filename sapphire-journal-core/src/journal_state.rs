@@ -57,11 +57,6 @@ impl JournalState {
         let conn = cache::rebuild_cache(&journal)?;
         drop(conn);
         let retrieve_db = RetrieveDb::rebuild(&journal.retrieve_db_path()?)?;
-        #[cfg(feature = "lancedb-store")]
-        {
-            use sapphire_workspace::lancedb_store;
-            let _ = std::fs::remove_dir_all(lancedb_store::data_dir(&journal.cache_dir()?));
-        }
         // Drop the mtime snapshot too: a stale snapshot paired with a freshly
         // emptied retrieve index would make changed files look unchanged.
         let track_path = journal.track_db_path()?;
@@ -149,16 +144,6 @@ impl JournalState {
         let Some(dim) = embed_cfg.dimension else { return Ok(()); };
         let vector_db = retrieve.db;
 
-        // LanceDB uses block_in_place internally when called from an async context,
-        // so it is safe to call directly here.
-        #[cfg(feature = "lancedb-store")]
-        if vector_db == VectorDb::LanceDb {
-            use sapphire_workspace::lancedb_store;
-            let lancedb_dir = lancedb_store::data_dir(&self.journal.cache_dir()?);
-            self.retrieve_db.init_lancedb(&lancedb_dir, dim)?;
-            return Ok(());
-        }
-
         self.init_vector_backend(vector_db, dim)
     }
 
@@ -171,18 +156,6 @@ impl JournalState {
                 #[cfg(not(feature = "redb-store"))]
                 return Err(crate::error::Error::InvalidConfig(
                     "redb support is not compiled in (enable the `redb-store` feature)".into(),
-                ));
-            }
-            #[cfg(feature = "lancedb-store")]
-            VectorDb::LanceDb => {
-                use sapphire_workspace::lancedb_store;
-                let lancedb_dir = lancedb_store::data_dir(&self.journal.cache_dir()?);
-                self.retrieve_db.init_lancedb(&lancedb_dir, dim)?;
-            }
-            #[cfg(not(feature = "lancedb-store"))]
-            VectorDb::LanceDb => {
-                return Err(crate::error::Error::InvalidConfig(
-                    "lancedb support is not compiled in (enable the `lancedb-store` feature)".into(),
                 ));
             }
         }

@@ -27,11 +27,21 @@ use serde::Deserialize;
 
 // ── server struct ─────────────────────────────────────────────────────────────
 
+/// Called after a tool writes to the journal. The argument is the paths
+/// affected (workspace-relative or absolute — conversion is the receiver's
+/// job).
+///
+/// **One call is one batch.** A rename reports the old and new path in the
+/// same call; notifying separately would let the syncing side briefly lose
+/// the entry.
+pub type WriteObserver = Arc<dyn Fn(&[PathBuf]) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct SapphireJournalServer {
     /// Cached journal + SQLite connection, shared across tool calls.
     state: Arc<Mutex<JournalState>>,
     tool_router: ToolRouter<Self>,
+    write_observer: Option<WriteObserver>,
 }
 
 impl std::fmt::Debug for SapphireJournalServer {
@@ -52,6 +62,7 @@ impl SapphireJournalServer {
         Self {
             state,
             tool_router: Self::tool_router(),
+            write_observer: None,
         }
     }
 
@@ -61,11 +72,46 @@ impl SapphireJournalServer {
         Arc::clone(&self.state)
     }
 
+    /// Set where post-write notifications go. Unused by the stdio transport.
+    pub fn with_write_observer(mut self, observer: WriteObserver) -> Self {
+        self.write_observer = Some(observer);
+        self
+    }
+
+    /// Notify the observer of the affected paths. A no-op when none is set.
+    fn notify_write(&self, paths: &[PathBuf]) {
+        if let Some(observer) = &self.write_observer {
+            observer(paths);
+        }
+    }
+
+    /// Take the journal lock, recovering it if an earlier panic poisoned it.
+    ///
+    /// `.lock().unwrap()` would turn one panic anywhere under this mutex into
+    /// a permanently dead server: every later tool call would panic on the
+    /// poison rather than on anything wrong with the journal. And
+    /// `JournalState`'s invariants do not actually depend on the previous
+    /// holder finishing — SQLite connections are opened per operation
+    /// (`open_conn`), and `sync_cache` runs inside a transaction that rolls
+    /// back if it is interrupted. So we say so once and carry on, the way
+    /// framework's own `WsStore::lock_writes` does.
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, JournalState> {
+        if self.state.is_poisoned() {
+            tracing::warn!(
+                "journal state mutex was poisoned by an earlier panic; recovering it rather \
+                 than failing every tool call for the rest of the process"
+            );
+        }
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     fn with_state<F, T>(&self, f: F) -> anyhow::Result<T>
     where
         F: FnOnce(&JournalState) -> anyhow::Result<T>,
     {
-        let guard = self.state.lock().unwrap();
+        let guard = self.lock_state();
         f(&guard)
     }
 }
@@ -358,14 +404,16 @@ impl SapphireJournalServer {
                 },
                 ..fields
             };
-            self.with_state(|s| {
+            let dest = self.with_state(|s| {
                 s.sync()?;
                 let dest = ops::create_entry(s, fields)?;
                 if let Ok(conn) = s.open_conn() {
                     let _ = cache::upsert_entry_from_path(&conn, &dest, s.retrieve_db(), s.track());
                 }
-                Ok(format!("created: {}", dest.display()))
-            })
+                Ok(dest)
+            })?;
+            self.notify_write(&[dest.clone()]);
+            Ok(format!("created: {}", dest.display()))
         })()
         .map_err(|e| e.to_string())
     }
@@ -404,19 +452,28 @@ impl SapphireJournalServer {
                 parent: p.parent,
                 ..fields
             };
-            self.with_state(|s| {
+            let (msg, notify_paths) = self.with_state(|s| {
                 s.sync()?;
                 let conn = s.open_conn()?;
                 let path = ops::resolve_entry(&p.entry, &conn)?;
-                let msg = if let Some(new_path) = ops::update_entry(&path, &conn, fields)? {
-                    let _ = cache::upsert_entry_from_path(&conn, &new_path, s.retrieve_db(), s.track());
-                    format!("updated and renamed: {}", new_path.display())
-                } else {
-                    let _ = cache::upsert_entry_from_path(&conn, &path, s.retrieve_db(), s.track());
-                    format!("updated: {}", path.display())
+                let renamed = ops::update_entry(&path, &conn, fields)?;
+                let (msg, notify_paths) = match &renamed {
+                    Some(new_path) => {
+                        let _ = cache::upsert_entry_from_path(&conn, new_path, s.retrieve_db(), s.track());
+                        (
+                            format!("updated and renamed: {}", new_path.display()),
+                            vec![path.clone(), new_path.clone()],
+                        )
+                    }
+                    None => {
+                        let _ = cache::upsert_entry_from_path(&conn, &path, s.retrieve_db(), s.track());
+                        (format!("updated: {}", path.display()), vec![path.clone()])
+                    }
                 };
-                Ok(msg)
-            })
+                Ok((msg, notify_paths))
+            })?;
+            self.notify_write(&notify_paths);
+            Ok(msg)
         })()
         .map_err(|e| e.to_string())
     }
@@ -453,11 +510,14 @@ impl SapphireJournalServer {
                 ops::resolve_entry(&p.entry, &conn).map_err(Into::into)
             })?;
             match ops::fix_entry(&path)? {
-                Some(new_path) => Ok(format!(
-                    "renamed: {} → {}",
-                    path.file_name().unwrap_or_default().to_string_lossy(),
-                    new_path.file_name().unwrap_or_default().to_string_lossy(),
-                )),
+                Some(new_path) => {
+                    self.notify_write(&[path.clone(), new_path.clone()]);
+                    Ok(format!(
+                        "renamed: {} → {}",
+                        path.file_name().unwrap_or_default().to_string_lossy(),
+                        new_path.file_name().unwrap_or_default().to_string_lossy(),
+                    ))
+                }
                 None => Ok(format!("ok: {} (already correct)", path.display())),
             }
         })()
@@ -467,14 +527,16 @@ impl SapphireJournalServer {
     #[tool(description = "Delete an entry file from the journal")]
     fn entry_remove(&self, Parameters(p): Parameters<EntryRemoveParams>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            self.with_state(|s| {
+            let path = self.with_state(|s| {
                 s.sync()?;
                 let conn = s.open_conn()?;
                 let path = ops::resolve_entry(&p.entry, &conn)?;
                 ops::remove_entry(&path)?;
                 let _ = cache::remove_from_cache(&conn, &path, s.retrieve_db(), s.track());
-                Ok(format!("removed: {}", path.display()))
-            })
+                Ok(path)
+            })?;
+            self.notify_write(&[path.clone()]);
+            Ok(format!("removed: {}", path.display()))
         })()
         .map_err(|e| e.to_string())
     }
@@ -523,7 +585,7 @@ impl SapphireJournalServer {
         Returns the number of entries indexed.")]
     fn cache_rebuild(&self, _: Parameters<EmptyObject>) -> Result<String, String> {
         (|| -> anyhow::Result<String> {
-            let mut guard = self.state.lock().unwrap();
+            let mut guard = self.lock_state();
             let journal_root = guard.journal.root.clone();
             let journal = Journal::from_root(journal_root)?;
             let state = JournalState::rebuild(journal)?;
@@ -683,7 +745,11 @@ pub(crate) fn spawn_periodic_reindex(
         ticker.tick().await; // skip the first immediate tick
         loop {
             ticker.tick().await;
-            let guard = state.lock().unwrap();
+            // 毒されていても回収する。ここで panic すると、この定期タスクは
+            // 二度と走らないまま黙って消える。
+            let guard = state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Err(e) = guard.sync() {
                 eprintln!("[sapphire-journal] periodic re-index failed: {e}");
             }
@@ -711,6 +777,18 @@ pub async fn run(journal_dir: Option<&Path>, init: bool) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a minimal, throwaway `SapphireJournalServer` backed by a journal
+    /// initialized under a fresh `tempfile::TempDir`. The `TempDir` is
+    /// returned alongside the server — hold onto it for the test's duration,
+    /// since dropping it removes the directory the open journal state points
+    /// at.
+    fn test_server() -> (tempfile::TempDir, SapphireJournalServer) {
+        sapphire_journal_core::init_app_context();
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let state = prepare_state(Some(dir.path()), true).expect("failed to init test journal");
+        (dir, SapphireJournalServer::new(state))
+    }
 
     /// Zero-argument tools use `EmptyObject`, which must advertise a top-level `type: object`.
     /// `serde_json::Value` used to render as `{"title":"AnyValue"}` (no `type`), which Anthropic
@@ -747,5 +825,206 @@ mod tests {
                 tool.name,
             );
         }
+    }
+
+    // ── coverage that drives the real tool handlers ─────────────────────────
+    //
+    // Every observer test below calls an actual `#[tool]` method, so the
+    // create/update/fix/remove call sites are the things under test. There
+    // used to be a pair above that hand-built path lists and pushed them
+    // straight at the observer: they proved the plumbing carried whatever it
+    // was handed, which is not a claim about this crate, and they would have
+    // passed with every one of those four call sites broken.
+
+    fn blank_new_params(title: &str) -> EntryNewParams {
+        EntryNewParams {
+            title: Some(title.to_owned()),
+            body: None,
+            parent: None,
+            slug: None,
+            tags: None,
+            task_due: None,
+            task_status: None,
+            task_started_at: None,
+            task_closed_at: None,
+            event_start: None,
+            event_end: None,
+        }
+    }
+
+    fn blank_modify_params(entry: EntryRef) -> EntryModifyParams {
+        EntryModifyParams {
+            entry,
+            title: None,
+            body: None,
+            parent: UpdateOption::Unchanged,
+            slug: None,
+            tags: None,
+            task_due: None,
+            task_status: None,
+            task_started_at: None,
+            task_closed_at: None,
+            event_start: None,
+            event_end: None,
+        }
+    }
+
+    /// `entry_new`'s response is `"created: {path}"`; pull the path back out
+    /// so the test can hand it to a follow-up `entry_modify`/`entry_remove`
+    /// call and compare it against what the observer received.
+    fn path_from_created_message(msg: &str) -> PathBuf {
+        PathBuf::from(
+            msg.strip_prefix("created: ")
+                .unwrap_or_else(|| panic!("unexpected entry_new response: {msg}")),
+        )
+    }
+
+    fn observer() -> (WriteObserver, Arc<Mutex<Vec<Vec<PathBuf>>>>) {
+        let observed: Arc<Mutex<Vec<Vec<PathBuf>>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&observed);
+        (Arc::new(move |paths: &[PathBuf]| sink.lock().unwrap().push(paths.to_vec())), observed)
+    }
+
+    /// One panic under the journal lock must not end the server.
+    ///
+    /// The state mutex is shared by every tool, and in the HTTP host also by
+    /// the sync resolver and the reconciliation tick. With `.lock().unwrap()`
+    /// a single panic anywhere under it poisons the mutex and every later
+    /// tool call panics on the poison rather than on anything actually wrong,
+    /// for the rest of the process's life.
+    #[test]
+    fn a_poisoned_journal_lock_does_not_end_the_server() {
+        let (_dir, server) = test_server();
+        let state = server.shared_state();
+
+        let poisoner = Arc::clone(&state);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.lock().unwrap();
+            panic!("a tool panicked while holding the journal lock");
+        })
+        .join();
+        assert!(state.is_poisoned(), "テストの前提: Mutex が毒されているはず");
+
+        let msg = server
+            .entry_new(Parameters(blank_new_params("After The Panic")))
+            .expect("entry_new failed after the mutex was poisoned");
+        assert!(msg.starts_with("created: "), "{msg}");
+    }
+
+    #[test]
+    fn entry_new_notifies_the_created_path_once() {
+        let (_dir, server) = test_server();
+        let (obs, observed) = observer();
+        let server = server.with_write_observer(obs);
+
+        let msg = server
+            .entry_new(Parameters(blank_new_params("Original Title")))
+            .expect("entry_new failed");
+        let created = path_from_created_message(&msg);
+
+        let calls = observed.lock().unwrap();
+        assert_eq!(*calls, vec![vec![created]]);
+    }
+
+    #[test]
+    fn entry_modify_rename_notifies_old_and_new_path_in_one_call() {
+        let (_dir, server) = test_server();
+        let (obs, observed) = observer();
+        let server = server.with_write_observer(obs);
+
+        let msg = server
+            .entry_new(Parameters(blank_new_params("Original Title")))
+            .expect("entry_new failed");
+        let old_path = path_from_created_message(&msg);
+        observed.lock().unwrap().clear(); // isolate the rename notification below
+
+        let mut modify = blank_modify_params(EntryRef::Path(old_path.clone()));
+        modify.title = Some("Renamed Title".to_owned());
+        let modify_msg = server.entry_modify(Parameters(modify)).expect("entry_modify failed");
+        assert!(
+            modify_msg.starts_with("updated and renamed:"),
+            "expected a rename, got: {modify_msg}"
+        );
+
+        let calls = observed.lock().unwrap();
+        assert_eq!(calls.len(), 1, "rename must notify in exactly one call");
+        assert_eq!(calls[0].len(), 2, "rename must carry both paths");
+        assert_eq!(calls[0][0], old_path, "old path must come first");
+        assert_ne!(calls[0][1], old_path, "second path must be the new one");
+    }
+
+    #[test]
+    fn entry_fix_rename_notifies_old_and_new_path_in_one_call() {
+        let (_dir, server) = test_server();
+        let (obs, observed) = observer();
+        let server = server.with_write_observer(obs);
+
+        let msg = server
+            .entry_new(Parameters(blank_new_params("Original Title")))
+            .expect("entry_new failed");
+        let canonical_path = path_from_created_message(&msg);
+        observed.lock().unwrap().clear(); // isolate the fix notification below
+
+        // Put the file into the state `entry_fix` is meant to correct: rename
+        // it on disk (same dir, off-canonical name) so it no longer matches
+        // the `{id}_{slug}.md` filename `fix_entry` computes from the
+        // frontmatter it still carries. This is the same drift `entry_check`
+        // reports as a `FilenameMismatch`, produced with a plain filesystem
+        // rename rather than by reaching into `ops::` internals.
+        let mismatched_path = canonical_path.with_file_name("mismatched.md");
+        std::fs::rename(&canonical_path, &mismatched_path)
+            .expect("failed to rename fixture file on disk");
+
+        let fix_msg = server
+            .entry_fix(Parameters(EntryFixParams { entry: EntryRef::Path(mismatched_path.clone()) }))
+            .expect("entry_fix failed");
+        assert!(fix_msg.starts_with("renamed:"), "expected a rename, got: {fix_msg}");
+
+        let calls = observed.lock().unwrap();
+        assert_eq!(calls.len(), 1, "rename must notify in exactly one call");
+        assert_eq!(calls[0].len(), 2, "rename must carry both paths");
+        assert_eq!(calls[0][0], mismatched_path, "old path must come first");
+        assert_ne!(calls[0][1], mismatched_path, "second path must be the new one");
+    }
+
+    #[test]
+    fn entry_modify_without_rename_notifies_a_single_path() {
+        let (_dir, server) = test_server();
+        let (obs, observed) = observer();
+        let server = server.with_write_observer(obs);
+
+        let msg = server
+            .entry_new(Parameters(blank_new_params("Stable Title")))
+            .expect("entry_new failed");
+        let path = path_from_created_message(&msg);
+        observed.lock().unwrap().clear(); // isolate the modify notification below
+
+        let mut modify = blank_modify_params(EntryRef::Path(path.clone()));
+        modify.tags = Some("work".to_owned());
+        let modify_msg = server.entry_modify(Parameters(modify)).expect("entry_modify failed");
+        assert!(modify_msg.starts_with("updated:"), "expected no rename, got: {modify_msg}");
+
+        let calls = observed.lock().unwrap();
+        assert_eq!(*calls, vec![vec![path]]);
+    }
+
+    #[test]
+    fn entry_remove_notifies_the_removed_path() {
+        let (_dir, server) = test_server();
+        let (obs, observed) = observer();
+        let server = server.with_write_observer(obs);
+
+        let msg = server
+            .entry_new(Parameters(blank_new_params("Doomed Entry")))
+            .expect("entry_new failed");
+        let path = path_from_created_message(&msg);
+        observed.lock().unwrap().clear(); // isolate the remove notification below
+
+        server
+            .entry_remove(Parameters(EntryRemoveParams { entry: EntryRef::Path(path.clone()) }))
+            .expect("entry_remove failed");
+
+        let calls = observed.lock().unwrap();
+        assert_eq!(*calls, vec![vec![path]]);
     }
 }

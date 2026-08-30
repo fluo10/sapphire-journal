@@ -14,7 +14,6 @@ path = "src/lib.rs"
 [features]
 default = ["redb-store", "fastembed-embed"]
 redb-store = ["sapphire-journal-core/redb-store"]
-lancedb-store = ["sapphire-journal-core/lancedb-store"]
 fastembed-embed = ["sapphire-journal-core/fastembed-embed"]
 http-server = ["rmcp/transport-streamable-http-server", "dep:axum", "dep:tokio-util"]
 
@@ -32,3 +31,16 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"], optional = true }
 tokio-util = { version = "0.7", optional = true }
+
+[dev-dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+tower = { version = "0.5", features = ["util"] }
+tempfile = "3"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio-util = "0.7"
+toml.workspace = true
+
+[[test]]
+name = "http_router"
+path = "tests/http_router.rs"
+required-features = ["http-server"]

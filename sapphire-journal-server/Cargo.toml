@@ -1,0 +1,43 @@
+[package]
+name = "sapphire-journal-server"
+edition.workspace = true
+version = "0.1.0"
+description = "Self-hosted remote workspace + MCP server for sapphire-journal"
+license.workspace = true
+repository.workspace = true
+categories = ["command-line-utilities", "web-programming::http-server"]
+keywords = ["markdown", "notes", "sync", "server", "mcp"]
+publish = false
+
+[[bin]]
+name = "sapphire-journal-server"
+path = "src/main.rs"
+
+[features]
+default = ["redb-store", "fastembed-embed"]
+redb-store      = ["sapphire-journal-core/redb-store",      "sapphire-journal-mcp/redb-store"]
+fastembed-embed = ["sapphire-journal-core/fastembed-embed", "sapphire-journal-mcp/fastembed-embed"]
+
+[dependencies]
+sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.12.0", default-features = false }
+sapphire-journal-mcp  = { path = "../sapphire-journal-mcp",  version = "0.1.0",  default-features = false, features = ["http-server"] }
+sapphire-framework = { version = "0.1", git = "https://github.com/fluo10/sapphire-framework", branch = "main", default-features = false, features = ["remote-server"] }
+grain-id = "0.15"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+# signal: serve::shutdown_signal が Ctrl-C / SIGTERM を待つのに使う。
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time"] }
+tokio-util = "0.7"
+clap.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+# env-filter: 運用者が RUST_LOG でログを上げられるように。既定機能だけだと
+# INFO 固定で、tick が怪しいときに何も足せない。
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+serde_json.workspace = true
+toml.workspace = true

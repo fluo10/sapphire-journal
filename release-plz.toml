@@ -29,3 +29,16 @@ git_tag_name = "desktop-v{{ version }}"
 git_release_name = "desktop-v{{ version }}"
 publish = false
 release = true
+
+# Also GitHub-release-only: a self-hosted server binary, not a library
+# for others to depend on, and it pulls sapphire-framework by git besides
+# (crates.io rejects git dependencies outright). `publish = false` in its
+# Cargo.toml means release-plz would otherwise skip it entirely, so
+# `release = true` here is what still gets it a `server-v*` tag and GH
+# release.
+[[package]]
+name = "sapphire-journal-server"
+git_tag_name = "server-v{{ version }}"
+git_release_name = "server-v{{ version }}"
+publish = false
+release = true

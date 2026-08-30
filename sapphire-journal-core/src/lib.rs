@@ -90,6 +90,3 @@ pub fn init_app_context() {
     JOURNAL_CTX.set_cache_dir(cache);
     JOURNAL_CTX.set_data_dir(data);
 }
-
-#[cfg(feature = "lancedb-store")]
-pub use sapphire_workspace::lancedb_store;

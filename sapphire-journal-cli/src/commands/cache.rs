@@ -34,8 +34,8 @@ pub enum CacheCommand {
 
     /// Remove stale cache files from previous schema versions
     ///
-    /// Deletes old `cache.vN.db` files and `lancedb/vN/` directories that
-    /// were kept after a schema upgrade. The current version is never touched.
+    /// Deletes old `cache.vN.db` files that were kept after a schema upgrade.
+    /// The current version is never touched.
     Clean,
 }
 
@@ -106,48 +106,6 @@ fn info(journal: &Journal) -> Result<()> {
                     println!("vector backend: redb (dimension not configured)");
                 }
             }
-            #[cfg(feature = "lancedb-store")]
-            VectorDb::LanceDb => {
-                if embed_cfg.dimension.is_some() {
-                    if let Ok(root) = journal.cache_dir() {
-                        use sapphire_journal_core::lancedb_store;
-                        let dir = lancedb_store::data_dir(&root);
-                        println!("vector backend: lancedb");
-                        println!("lancedb path:   {}", dir.display());
-                        state.load_retrieve_backend(&user_cfg).map_err(anyhow::Error::msg)?;
-                        match state.retrieve_db().vec_info() {
-                            Ok(vi) => {
-                                println!("vectors:        {} indexed, {} pending", vi.vector_count, vi.pending_count);
-                            }
-                            Err(e) => eprintln!("warn: could not read vector stats: {e}"),
-                        }
-                        let stale_dirs = find_stale_lancedb(&root);
-                        if !stale_dirs.is_empty() {
-                            let total = stale_dirs.iter().map(|(_, sz)| sz).sum::<u64>();
-                            let names: Vec<String> = stale_dirs
-                                .iter()
-                                .map(|(p, _)| {
-                                    p.file_name()
-                                        .unwrap_or_default()
-                                        .to_string_lossy()
-                                        .into_owned()
-                                })
-                                .collect();
-                            println!(
-                                "stale lancedb:  {} ({}) — run `sapphire-journal cache clean` to remove",
-                                names.join(", "),
-                                human_size(total)
-                            );
-                        }
-                    }
-                } else {
-                    println!("vector backend: lancedb (dimension not configured)");
-                }
-            }
-            #[cfg(not(feature = "lancedb-store"))]
-            VectorDb::LanceDb => {
-                println!("vector backend: lancedb (not compiled in)");
-            }
         }
     }
 
@@ -194,7 +152,7 @@ fn embed(journal: &Journal) -> Result<()> {
     if user_cfg.cache.retrieve.db == VectorDb::None {
         anyhow::bail!(
             "cache.retrieve.db is \"none\" in ~/.config/sapphire-journal/config.toml — \
-             set it to \"sqlite_vec\" or \"lancedb\" to use vector search"
+             set it to \"redb\" to use vector search"
         );
     }
     if embed_cfg.dimension.is_none() {
@@ -239,16 +197,6 @@ fn clean(journal: &Journal) -> Result<()> {
         }
     }
 
-    // ── stale LanceDB directories ─────────────────────────────────────────────
-    #[cfg(feature = "lancedb-store")]
-    if let Ok(root) = journal.cache_dir() {
-        for (path, size) in find_stale_lancedb(&root) {
-            std::fs::remove_dir_all(&path)?;
-            println!("removed: {} ({})", path.display(), human_size(size));
-            removed_any = true;
-        }
-    }
-
     if !removed_any {
         println!("nothing to clean");
     }
@@ -275,41 +223,10 @@ fn find_stale_sqlite(cache_dir: &Path) -> Vec<(std::path::PathBuf, u64)> {
         .collect()
 }
 
-/// Return `(path, size)` for every `lancedb_full_vN` directory in `root` where N ≠ SCHEMA_VERSION.
-#[cfg(feature = "lancedb-store")]
-fn find_stale_lancedb(root: &Path) -> Vec<(std::path::PathBuf, u64)> {
-    use sapphire_journal_core::lancedb_store;
-    let current = format!("lancedb_full_v{}", lancedb_store::SCHEMA_VERSION);
-    let Ok(rd) = std::fs::read_dir(root) else { return Vec::new() };
-    rd.filter_map(|e| e.ok())
-        .filter(|e| {
-            let name = e.file_name();
-            let n = name.to_string_lossy();
-            let suffix = n.strip_prefix("lancedb_full_v").unwrap_or("");
-            !suffix.is_empty() && suffix.parse::<i32>().is_ok() && n != current.as_str()
-        })
-        .map(|e| {
-            let p = e.path();
-            let sz = dir_size(&p);
-            (p, sz)
-        })
-        .collect()
-}
-
 // ── size helpers ──────────────────────────────────────────────────────────────
 
 fn file_size(path: &Path) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
-}
-
-fn dir_size(path: &Path) -> u64 {
-    let Ok(rd) = std::fs::read_dir(path) else { return 0 };
-    rd.filter_map(|e| e.ok())
-        .map(|e| {
-            let p = e.path();
-            if p.is_dir() { dir_size(&p) } else { file_size(&p) }
-        })
-        .sum()
 }
 
 fn human_size(bytes: u64) -> String {
