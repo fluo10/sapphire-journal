@@ -95,7 +95,6 @@ impl UserConfig {
             .and_then(|v| match v.as_str() {
                 "none" => Some(VectorDb::None),
                 "redb" => Some(VectorDb::Redb),
-                "lancedb" => Some(VectorDb::LanceDb),
                 _ => None,
             });
         let enabled = std::env::var("SAPPHIRE_JOURNAL_CACHE_EMBEDDING_ENABLED").ok()

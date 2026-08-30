@@ -10,7 +10,7 @@
 
 # ── Retrieve cache ───────────────────────────────────────────────────────────
 [cache.retrieve]
-# "none" | "redb" | "lancedb"
+# "none" | "redb"
 db = "redb"
 
 [cache.retrieve.embedding]

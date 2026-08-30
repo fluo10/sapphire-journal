@@ -19,6 +19,12 @@ async fn main() -> anyhow::Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
+        // stdout は `gen-key` 等が生のトークンだけを出す契約になっている。
+        // 既定の stdout writer のままだと、framework の `create_private` が
+        // Windows で出す warn!（key file permissions are not restricted...）が
+        // `gen-key > token.txt` のリダイレクト先に混ざり、トークンだけという
+        // 約束を壊す。
+        .with_writer(std::io::stderr)
         .init();
 
     let cli = Cli::parse();
@@ -55,7 +61,8 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-/// 鍵サブコマンド（`gen-key` / `list-keys` / `revoke-key`）が使う鍵ファイル。
+/// 鍵サブコマンド（`gen-key` / `list-keys` / `rotate-key` / `revoke-key`）が
+/// 使う鍵ファイル。
 ///
 /// `--keys` があればそれ。無ければ journal のキャッシュディレクトリ既定を使う
 /// ので、そのときだけ `--journal-dir` が要る。
