@@ -169,6 +169,9 @@ pub fn run(command: Command, keys_path: &Path) -> anyhow::Result<()> {
                 "a running server keeps accepting this token until it reloads this file"
             );
         }
+        // `user` は鍵に触らない別系統のサブコマンドで、main.rs がここへ渡す前に
+        // `cli_device::run_user` へ振り分ける。ここに来ることはない。
+        Command::User { .. } => unreachable!("user command is routed before keys::run"),
     }
     Ok(())
 }

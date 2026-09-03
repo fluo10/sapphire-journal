@@ -85,6 +85,11 @@ pub enum Command {
         /// The key's UUID, or its label when that is unambiguous.
         selector: String,
     },
+    /// Manage the users devices belong to.
+    User {
+        #[command(subcommand)]
+        command: crate::cli_device::UserCommand,
+    },
 }
 
 #[cfg(test)]
@@ -178,6 +183,29 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::RotateKey { expires_in: Some(ref d), .. }) if d == "90d"
+        ));
+    }
+
+    #[test]
+    fn user_add_requires_a_name() {
+        assert!(Cli::try_parse_from(["sapphire-journal-server", "user", "add"]).is_err());
+
+        let cli =
+            Cli::try_parse_from(["sapphire-journal-server", "user", "add", "--name", "fluo"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::User {
+                command: crate::cli_device::UserCommand::Add { ref name, description: None }
+            }) if name == "fluo"
+        ));
+    }
+
+    #[test]
+    fn user_list_parses() {
+        let cli = Cli::try_parse_from(["sapphire-journal-server", "user", "list"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::User { command: crate::cli_device::UserCommand::List })
         ));
     }
 }

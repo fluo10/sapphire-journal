@@ -21,7 +21,7 @@ fastembed-embed = ["sapphire-journal-core/fastembed-embed", "sapphire-journal-mc
 [dependencies]
 sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.12.0", default-features = false }
 sapphire-journal-mcp  = { path = "../sapphire-journal-mcp",  version = "0.1.0",  default-features = false, features = ["http-server"] }
-sapphire-framework = { version = "0.1", git = "https://github.com/fluo10/sapphire-framework", branch = "main", default-features = false, features = ["remote-server"] }
+sapphire-framework = { version = "0.1", git = "https://github.com/fluo10/sapphire-framework", branch = "main", default-features = false, features = ["remote-server", "registry"] }
 grain-id = "0.15"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 # signal: serve::shutdown_signal が Ctrl-C / SIGTERM を待つのに使う。

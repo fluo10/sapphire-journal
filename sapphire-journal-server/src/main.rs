@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use clap::Parser as _;
 use sapphire_journal_server::cli::Cli;
+use sapphire_journal_server::cli::Command;
 use sapphire_journal_server::serve;
 
 /// `--journal-dir` が要る理由は呼び出しごとに違うので、文言もそこで足す。
@@ -35,6 +36,16 @@ async fn main() -> anyhow::Result<()> {
         // は要らない —— 以前はこの解決を match の前で一度に済ませていたため、
         // `gen-key` に `--journal-dir` も `--keys` も無いと「serve するには
         // --journal-dir が要る」という、そのコマンドについて偽の説明が出ていた。
+        // `user` は鍵に触らないので、鍵ファイルの解決自体をしない。台帳の
+        // 位置は journal ルートからしか決まらないため `--journal-dir` は必須
+        // ——`--keys` を渡しても代わりにはならない。
+        Some(Command::User { command }) => {
+            let journal_dir = journal.ok_or_else(|| {
+                anyhow::anyhow!("{JOURNAL_DIR_REQUIRED} to locate the user table")
+            })?;
+            let users_path = serve::default_users_path(&journal_dir)?;
+            sapphire_journal_server::cli_device::run_user(command, &users_path)
+        }
         Some(command) => {
             let keys_path = keys_path_for_key_command(keys.as_deref(), journal.as_deref())?;
             sapphire_journal_server::keys::run(command, &keys_path)
@@ -82,7 +93,6 @@ fn keys_path_for_key_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sapphire_journal_server::cli::Command;
 
     fn cli(args: &[&str]) -> Cli {
         Cli::try_parse_from(std::iter::once("sapphire-journal-server").chain(args.iter().copied()))

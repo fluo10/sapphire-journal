@@ -72,6 +72,21 @@ pub fn default_keys_path(journal_dir: &Path) -> anyhow::Result<std::path::PathBu
     Ok(journal.cache_dir()?.join("keys.toml"))
 }
 
+/// デバイス台帳の位置。鍵ファイルと違い、**journal ルートの中**（マーカー
+/// ディレクトリ）に置く —— `updated_by` として content に焼かれた device_id を
+/// 別のホストで名前に逆引きするには、台帳が content と一緒に同期される必要が
+/// ある。秘密は入らない（トークンは `keys.toml` に留まる）。
+pub fn default_devices_path(journal_dir: &Path) -> anyhow::Result<std::path::PathBuf> {
+    let journal = Journal::from_root(journal_dir.to_path_buf())?;
+    Ok(journal.journal_dir().join("devices.toml"))
+}
+
+/// ユーザー台帳の位置。[`default_devices_path`] と同じディレクトリ。
+pub fn default_users_path(journal_dir: &Path) -> anyhow::Result<std::path::PathBuf> {
+    let journal = Journal::from_root(journal_dir.to_path_buf())?;
+    Ok(journal.journal_dir().join("users.toml"))
+}
+
 /// journal のキャッシュを開く。MCP と同期の両方がこの 1 つを共有する。
 pub fn open_journal_state(journal_dir: &Path) -> anyhow::Result<Arc<Mutex<JournalState>>> {
     let journal = Journal::from_root(journal_dir.to_path_buf())?;
@@ -531,5 +546,39 @@ mod tests {
         // しか返さないため、`ip()` 側を別に入れておく必要がある。
         let hosts = allowed_hosts("[::1]:8080".parse().unwrap(), &[]);
         assert!(hosts.contains(&"::1".to_owned()), "{hosts:?}");
+    }
+
+    #[test]
+    fn the_registry_files_live_in_the_journal_marker_dir() {
+        // 台帳は同期に乗る場所（`.sapphire-journal/`）に置く。鍵ファイルだけが
+        // キャッシュ側に残る —— この 2 つが同じ親に並んだら、トークンが同期で
+        // クライアントに配られる。
+        let tmp = tempfile::tempdir().unwrap();
+        let journal_dir = tmp.path().join("journal");
+        sapphire_journal_core::init_app_context();
+        std::fs::create_dir_all(journal_dir.join(".sapphire-journal")).unwrap();
+        std::fs::write(
+            journal_dir.join(".sapphire-journal").join("config.toml"),
+            "",
+        )
+        .unwrap();
+
+        let devices = default_devices_path(&journal_dir).unwrap();
+        let users = default_users_path(&journal_dir).unwrap();
+
+        assert_eq!(devices.file_name().unwrap(), "devices.toml");
+        assert_eq!(users.file_name().unwrap(), "users.toml");
+        assert_eq!(devices.parent(), users.parent());
+        assert_eq!(
+            devices.parent().unwrap().file_name().unwrap(),
+            ".sapphire-journal",
+            "台帳がマーカーディレクトリの外に出ている"
+        );
+        let keys = default_keys_path(&journal_dir).unwrap();
+        assert_ne!(
+            keys.parent(),
+            devices.parent(),
+            "鍵ファイルが台帳と同じ（同期される）場所にある"
+        );
     }
 }
