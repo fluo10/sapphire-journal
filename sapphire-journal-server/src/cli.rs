@@ -1,6 +1,7 @@
 //! コマンドライン引数。
 //!
-//! `serve` は既定動作なのでサブコマンドを持たない。鍵の管理だけがサブコマンド。
+//! `serve` は既定動作なのでサブコマンドを持たない。サブコマンドはデバイスと
+//! ユーザーの台帳管理だけ。
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -47,44 +48,6 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Generate a new API key and print it.
-    GenKey {
-        /// A note for you — which host or person this key is for.
-        label: Option<String>,
-        /// Expire the key after this long, e.g. `90d`, `12h`.
-        #[arg(long, value_name = "DURATION")]
-        expires_in: Option<String>,
-    },
-    /// List the keys, with tokens masked.
-    ListKeys,
-    /// Re-issue a key's token, keeping its id, label and created_at.
-    ///
-    /// The old token stops working immediately in this process, but a
-    /// running server only picks the change up when it next reloads the
-    /// key file (e.g. on restart) — `ServerState` holds a snapshot taken
-    /// at start-up and has no reload path.
-    RotateKey {
-        /// The key's UUID, or its label when that is unambiguous.
-        selector: String,
-        /// Expire the new token after this long, e.g. `90d`, `12h`.
-        ///
-        /// This REPLACES the expiry rather than keeping it: omitting the
-        /// flag makes the key non-expiring, it does not carry the old
-        /// expiry over. Re-issuing an expired key with its old expiry
-        /// would produce a token that is already unusable.
-        #[arg(long, value_name = "DURATION")]
-        expires_in: Option<String>,
-    },
-    /// Remove a key by id or label.
-    ///
-    /// The key stops working immediately in this process, but a running
-    /// server only picks the change up when it next reloads the key file
-    /// (e.g. on restart) — `ServerState` holds a snapshot taken at
-    /// start-up and has no reload path.
-    RevokeKey {
-        /// The key's UUID, or its label when that is unambiguous.
-        selector: String,
-    },
     /// Manage the users devices belong to.
     User {
         #[command(subcommand)]
@@ -142,53 +105,6 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(cli.allowed_host, ["a.example", "b.example"]);
-    }
-
-    #[test]
-    fn gen_key_takes_an_optional_label() {
-        let cli = Cli::try_parse_from(["sapphire-journal-server", "gen-key"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::GenKey { label: None, .. })
-        ));
-
-        let cli = Cli::try_parse_from(["sapphire-journal-server", "gen-key", "laptop"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::GenKey { label: Some(ref l), .. }) if l == "laptop"
-        ));
-    }
-
-    #[test]
-    fn revoke_key_requires_a_selector() {
-        assert!(Cli::try_parse_from(["sapphire-journal-server", "revoke-key"]).is_err());
-    }
-
-    #[test]
-    fn rotate_key_requires_a_selector() {
-        assert!(Cli::try_parse_from(["sapphire-journal-server", "rotate-key"]).is_err());
-    }
-
-    #[test]
-    fn rotate_key_takes_a_selector_and_an_optional_expiry() {
-        let cli = Cli::try_parse_from(["sapphire-journal-server", "rotate-key", "laptop"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::RotateKey { ref selector, expires_in: None }) if selector == "laptop"
-        ));
-
-        let cli = Cli::try_parse_from([
-            "sapphire-journal-server",
-            "rotate-key",
-            "laptop",
-            "--expires-in",
-            "90d",
-        ])
-        .unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::RotateKey { expires_in: Some(ref d), .. }) if d == "90d"
-        ));
     }
 
     #[test]
