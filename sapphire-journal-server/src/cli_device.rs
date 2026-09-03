@@ -64,8 +64,8 @@ pub enum DeviceCommand {
 /// `add` は**デバイス行を先に、鍵を後に**書く。鍵の無いデバイス行は完全に
 /// 不活性（誰も認証できない）だが、逆順で中断すると、誰も掃除しない孤児の鍵が
 /// 残る。その上で `add` を再開可能にしてある —— 鍵の無い行を見つけたら鍵だけ
-/// 発行する。この分岐が無いと中断状態から抜ける手段が無い（`rotate` は既存の
-/// 鍵を要求する）。
+/// 発行し、**行には一切触れない**（他ホストから同期されてきた行かもしれない）。
+/// この分岐が無いと中断状態から抜ける手段が無い（`rotate` は既存の鍵を要求する）。
 pub fn run_device(
     command: DeviceCommand,
     devices_file: &Path,
@@ -95,9 +95,15 @@ pub fn run_device(
                 None => None,
             };
 
-            // `resolve` は `devices` を不変借用し、別の腕は可変借用するので、
-            // 参照を match をまたいで持てない。所有したコピーを先に取る。
-            let existing = devices.resolve(&name).ok().cloned();
+            // 名前の**完全一致**だけを見る。`resolve` は名前で見つからないと
+            // セレクタを grain-id として読み直すので、`--name` に他のデバイスの
+            // id 文字列を渡されると、無関係な行が「同名の既存行」に見えてしまう。
+            // ここで問いたいのは `Devices::add` が拒否するもの —— 名前の重複 ——
+            // ただ 1 つ。
+            //
+            // なお `devices` は別の腕で可変借用するので、参照を match をまたいで
+            // 持てない。所有したコピーを先に取る。
+            let existing = devices.entries().iter().find(|d| d.name == name).cloned();
             let device = match existing {
                 Some(existing) if existing.is_retired() => {
                     // retired なデバイスは、どのトークンを持っていても認証で
@@ -119,20 +125,41 @@ pub fn run_device(
                              re-issue its token"
                         );
                     }
-                    // 鍵の無い行は一度も使えていない（誰も認証できていない）
-                    // ので、content に id が焼かれている心配が無い。だから
-                    // `--description` / `--user` をここで反映してよい ——
-                    // `Devices` に in-place 更新は無いので、purge して足し直す。
-                    if description.is_some() || user_id.is_some() {
-                        devices.purge(&name)?;
-                        devices.add(
-                            &name,
-                            description.or(existing.description),
-                            user_id.or(existing.user_id),
-                        )?
-                    } else {
-                        existing
+                    // 再開は**鍵だけ**発行する。行には触れない。
+                    //
+                    // 「このホストに鍵が無い」は「この行は一度も使われていない」
+                    // ではない。`devices.toml` は同期される一方、`keys.toml` は
+                    // ホストローカル —— 他のホストで作られた行は、鍵を持たない
+                    // 姿でここに同期されてくる。その行を作り直すと、向こうの
+                    // ホストの鍵を孤児にし（401。そのホストの唯一の鍵なら
+                    // サーバが起動しなくなる）、content に焼かれた
+                    // `updated_by: <旧 id>` を解決不能にする。`retire` が既定で
+                    // purge しないのと同じ理由がここにも効く。
+                    //
+                    // だから `--description` / `--user` は反映しない。エラーに
+                    // もしない —— この分岐は「中断状態から抜ける唯一の道」で、
+                    // ここを塞ぐと行き止まりが戻ってくる。効かなかったことを
+                    // 警告で名指しして、鍵は出す。
+                    let mut ignored: Vec<&str> = Vec::new();
+                    if description.is_some() && description != existing.description {
+                        ignored.push("--description");
                     }
+                    if user_id.is_some() && user_id != existing.user_id {
+                        ignored.push("--user");
+                    }
+                    if !ignored.is_empty() {
+                        eprintln!(
+                            "warning: {} not applied — device {name:?} already exists, and \
+                             resuming `device add` only mints the missing key; it never \
+                             rewrites the row, whose id may already be written into content. \
+                             Edit {} by hand to change it, or run \
+                             `sapphire-journal-server device retire {name} --purge` and add \
+                             it again to start over with a new id",
+                            ignored.join(" and "),
+                            devices_file.display(),
+                        );
+                    }
+                    existing
                 }
                 None => devices.add(&name, description, user_id)?,
             };
@@ -222,16 +249,22 @@ pub fn run_device(
             // `Rotate` と同じ理由で `device_id` から引く。名前で引くと、
             // リネーム済みのデバイスを「引退させた」と報告しながら鍵を
             // 生かしたまま残す。
-            let key_id = keys
+            //
+            // そして**該当する鍵を全部**集める。`add` は 1 デバイスに 1 本しか
+            // 出さないが、鍵ファイルの手編集や `add` の競合で 2 本になり得る。
+            // 1 本目だけ消すと、「引退させた」と報告しながら生きた鍵が残り、
+            // `--purge` はそれを孤児にする。
+            let key_ids: Vec<String> = keys
                 .entries()
                 .iter()
-                .find(|k| k.device_id == Some(device.id))
-                .map(|k| k.id.to_string());
-            let had_key = key_id.is_some();
+                .filter(|k| k.device_id == Some(device.id))
+                .map(|k| k.id.to_string())
+                .collect();
+            let had_key = !key_ids.is_empty();
             // 鍵を先に失効させる。引退の目的は「今すぐ止める」ことなので、
             // 2 つの書き込みの間で落ちても生きた鍵を残さない。
-            if let Some(key_id) = key_id {
-                keys.revoke(&key_id)?;
+            for key_id in &key_ids {
+                keys.revoke(key_id)?;
             }
             if purge {
                 devices.purge(&selector)?;
@@ -414,23 +447,26 @@ mod tests {
         assert_eq!(keys.entries()[0].device_id, Some(id), "行の id が変わった");
     }
 
-    /// 鍵の無い行に `--description` / `--user` を付けて `add` を再実行すると、
-    /// `devices.purge` → `devices.add` の 2 回書きで行を作り直す。反映される
-    /// ことと、鍵が 1 本だけ発行されることをここで固定する。
+    /// 鍵の無い行に `--description` / `--user` を付けて `add` を再実行しても、
+    /// **行には触れない**。`devices.toml` は同期される一方で `keys.toml` は
+    /// ホストローカルなので、「このホストに鍵が無い」＝「一度も使われていない」
+    /// ではない —— 他ホストから同期されてきた行を作り直すと、向こうの鍵を
+    /// 孤児にし、content に焼かれた `updated_by` を解決不能にする。
+    ///
+    /// エラーにもしない。この分岐は中断状態から抜ける唯一の道で、塞ぐと
+    /// 行き止まりが戻ってくる。
     #[test]
-    fn device_add_resuming_a_keyless_row_applies_description_and_user() {
+    fn device_add_resuming_a_keyless_row_mints_only_the_key() {
         let f = files();
-        let old_id = Devices::load(&f.devices)
+        let old = Devices::load(&f.devices)
             .unwrap()
-            .add("laptop", None, None)
-            .unwrap()
-            .id;
+            .add("laptop", Some("the original note".into()), None)
+            .unwrap();
         run_user(
             UserCommand::Add { name: "fluo".into(), description: None },
             &f.users,
         )
         .unwrap();
-        let user_id = Users::load(&f.users).unwrap().resolve("fluo").unwrap().id;
 
         run_device(
             DeviceCommand::Add {
@@ -446,21 +482,78 @@ mod tests {
         .unwrap();
 
         let devices = Devices::load(&f.devices).unwrap();
+        assert_eq!(devices.entries().len(), 1, "行が増えている");
         let device = devices.resolve("laptop").unwrap();
+        assert_eq!(device.id, old.id, "行の id が変わった");
+        assert_eq!(device.created_at, old.created_at, "行が作り直されている");
         assert_eq!(
             device.description.as_deref(),
-            Some("work laptop"),
-            "description が反映されていない"
+            Some("the original note"),
+            "description が上書きされた"
         );
-        assert_eq!(device.user_id, Some(user_id), "user が反映されていない");
-        assert_ne!(device.id, old_id, "purge + add で行の id は変わるはず");
+        assert_eq!(device.user_id, None, "user が上書きされた");
+        assert!(!device.is_retired());
 
         let keys = KeyStore::load(&f.keys).unwrap();
         assert_eq!(keys.entries().len(), 1, "鍵が複数発行されている");
         assert_eq!(
             keys.entries()[0].device_id,
-            Some(device.id),
-            "鍵が作り直した行を指していない"
+            Some(old.id),
+            "鍵が既存の行を指していない"
+        );
+    }
+
+    /// 空の行（description も user も無い）に `--user` を付けて再開しても、
+    /// 同じく行は据え置き。`--user` は解決だけされて捨てられる —— ただし
+    /// 存在しないユーザーは（何も書く前に）エラーのままであること。
+    #[test]
+    fn device_add_resuming_still_rejects_an_unknown_user() {
+        let f = files();
+        Devices::load(&f.devices).unwrap().add("laptop", None, None).unwrap();
+
+        let result = run_device(
+            DeviceCommand::Add {
+                name: "laptop".into(),
+                description: None,
+                user: Some("nobody".into()),
+                expires_in: None,
+            },
+            &f.devices,
+            &f.users,
+            &f.keys,
+        );
+
+        assert!(result.is_err(), "存在しないユーザーが受理された");
+        assert!(
+            KeyStore::load(&f.keys).unwrap().entries().is_empty(),
+            "失敗したのに鍵が残っている"
+        );
+    }
+
+    /// `Devices::resolve` は名前で見つからないとセレクタを grain-id として
+    /// 読み直す。既存判定をそれに任せると、`--name` に他のデバイスの id 文字列
+    /// を渡したときに、無関係な行が「同名の既存行」として拾われる。
+    /// `Devices::add` が拒否するのは名前の重複だけなので、判定も名前の完全一致
+    /// で行う。
+    #[test]
+    fn device_add_does_not_mistake_another_devices_id_for_an_existing_name() {
+        let f = files();
+        add(&f, "laptop").unwrap();
+        let laptop = Devices::load(&f.devices).unwrap().resolve("laptop").unwrap().clone();
+
+        add(&f, &laptop.id.to_string()).unwrap();
+
+        let devices = Devices::load(&f.devices).unwrap();
+        assert_eq!(devices.entries().len(), 2, "既存の行と取り違えている");
+        let keys = KeyStore::load(&f.keys).unwrap();
+        assert_eq!(keys.entries().len(), 2);
+        assert_eq!(
+            keys.entries()
+                .iter()
+                .filter(|k| k.device_id == Some(laptop.id))
+                .count(),
+            1,
+            "無関係なデバイスに 2 本目の鍵が出ている"
         );
     }
 
@@ -645,6 +738,41 @@ mod tests {
         );
         // 行は残す —— content に焼かれた device_id が解決し続けるように。
         assert!(Devices::load(&f.devices).unwrap().resolve("laptop").unwrap().is_retired());
+    }
+
+    /// `add` は 1 デバイス 1 鍵にするが、鍵ファイルの手編集や `add` の競合で
+    /// 2 本になり得る。1 本しか失効させないと、「引退させた」と報告しながら
+    /// 生きた鍵が残る。
+    #[test]
+    fn device_retire_revokes_every_key_bound_to_the_device() {
+        let f = files();
+        add(&f, "laptop").unwrap();
+        let device_id = Devices::load(&f.devices).unwrap().resolve("laptop").unwrap().id;
+        // 同じデバイスを指す 2 本目（手編集や競合した `add` の再現）。
+        KeyStore::load(&f.keys)
+            .unwrap()
+            .generate(
+                TOKEN_PREFIX,
+                None,
+                Some(device_id),
+                Some("laptop".into()),
+                None,
+            )
+            .unwrap();
+        assert_eq!(KeyStore::load(&f.keys).unwrap().entries().len(), 2);
+
+        run_device(
+            DeviceCommand::Retire { selector: "laptop".into(), purge: false },
+            &f.devices,
+            &f.users,
+            &f.keys,
+        )
+        .unwrap();
+
+        assert!(
+            KeyStore::load(&f.keys).unwrap().entries().is_empty(),
+            "2 本目の鍵が生きたまま残っている"
+        );
     }
 
     #[test]

@@ -75,7 +75,15 @@ impl DeviceAuth {
         })
     }
 
-    /// 台帳を経由しない鍵の本数。
+    /// 生きたデバイス行に辿り着けない鍵の本数。
+    ///
+    /// 数えるのは 3 種類 —— `device_id` を持たない鍵、台帳に無いデバイスを
+    /// 指す鍵、そして**引退済みの行**を指す鍵。どれも [`Self::resolve`] が
+    /// 必ず弾くので、「認証先が無い」という意味では同じ。引退済みを外すと、
+    /// 同期で引退が届いたホストで死んだ鍵が見えなくなる。
+    ///
+    /// 期限切れは数えない。行は生きていて `device rotate` で戻せる ——
+    /// 掃除の対象ではない。
     ///
     /// `list-keys` を消した以上、放置された旧鍵に気づく口はここしか無い。
     /// 起動時に warn へ出す。
@@ -83,7 +91,11 @@ impl DeviceAuth {
         self.keys
             .entries()
             .iter()
-            .filter(|k| k.device_id.is_none_or(|id| self.devices.get(id).is_none()))
+            .filter(|k| {
+                k.device_id
+                    .and_then(|id| self.devices.get(id))
+                    .is_none_or(Device::is_retired)
+            })
             .count()
     }
 }
@@ -279,5 +291,48 @@ mod tests {
         add(&f, "laptop");
         assert!(auth(&f).has_usable_device_key());
         assert_eq!(auth(&f).orphan_key_count(), 1, "孤児の鍵は数え続ける");
+    }
+
+    /// 引退済みの行を指す鍵も「認証先が無い」。`device retire` は鍵も消すので
+    /// この状態は同期か手編集でしか起きないが、そのとき運用者に見える口は
+    /// この警告しか無い。
+    #[test]
+    fn orphan_key_count_includes_keys_pointing_at_a_retired_row() {
+        let f = files();
+        add(&f, "laptop");
+        assert_eq!(auth(&f).orphan_key_count(), 0, "生きた行を指す鍵は孤児ではない");
+
+        // 行だけ引退させる（他ホストからの同期の再現）。鍵は残る。
+        Devices::load(&f.devices).unwrap().retire("laptop").unwrap();
+
+        assert_eq!(KeyStore::load(&f.keys).unwrap().entries().len(), 1);
+        assert_eq!(
+            auth(&f).orphan_key_count(),
+            1,
+            "引退済みの行を指す鍵が数えられていない"
+        );
+    }
+
+    /// 期限切れは孤児ではない。行は生きていて `device rotate` で戻せる。
+    #[test]
+    fn orphan_key_count_does_not_count_an_expired_key_on_a_live_row() {
+        let f = files();
+        let device_id = Devices::load(&f.devices)
+            .unwrap()
+            .add("laptop", None, None)
+            .unwrap()
+            .id;
+        KeyStore::load(&f.keys)
+            .unwrap()
+            .generate(
+                crate::keys::TOKEN_PREFIX,
+                None,
+                Some(device_id),
+                Some("laptop".into()),
+                Some(chrono::Utc::now() - chrono::Duration::hours(1)),
+            )
+            .unwrap();
+
+        assert_eq!(auth(&f).orphan_key_count(), 0);
     }
 }

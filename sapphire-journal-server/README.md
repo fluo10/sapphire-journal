@@ -156,6 +156,17 @@ description, never a secret. Splitting the two this way is what lets a
 device's key live only on the machine that needs it while every synced
 peer still sees the same device list.
 
+Being synced also means being writable by any client that can sync: that
+directory is exactly what the push path is allowed to write, so a client
+holding a valid token can rewrite `devices.toml` wholesale. It cannot mint
+itself credentials that way — tokens live only in the unsynced key file, and
+a row without one authenticates nothing — but it can deny service: retire
+every row and the server refuses to start on its next boot, or write
+duplicate names or ids and the table stops loading at all, which `device
+add` cannot repair because it reads the same file. This is acceptable only
+because a token already grants read and write over the entire journal;
+anyone able to do it could wreck your entries directly instead.
+
 ## What "no usable device key" means
 
 A key file can exist and still leave the server with nothing usable in it
@@ -175,6 +186,7 @@ and a keyless token authenticates to nothing. There's no migration path for
 the tokens themselves; re-issue one per client with `device add` (as above)
 and update each client's `Authorization` header to the new token. The old
 entries in `keys.toml` are harmless but useless: the server logs a warning
-at startup naming how many keys in the file authenticate to no device, and
-you can delete those rows from `keys.toml` by hand once every client has
-switched over.
+at startup naming how many keys in the file reach no live device row — the
+ones naming no device, naming a device that is not in the table, or naming a
+retired one — and you can delete those rows from `keys.toml` by hand once
+every client has switched over.

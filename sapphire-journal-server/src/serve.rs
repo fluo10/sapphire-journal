@@ -432,8 +432,9 @@ pub async fn run_until(
         tracing::warn!(
             count = orphans,
             path = %keys_path.display(),
-            "key file holds keys that name no device in the table; they authenticate to \
-             nothing and can be deleted by hand"
+            "key file holds keys that reach no live device row — they name no device, name \
+             a device that is not in the table, or name a retired one. They authenticate \
+             to nothing and can be deleted by hand"
         );
     }
 

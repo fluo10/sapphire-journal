@@ -15,7 +15,9 @@ use clap::{Parser, Subcommand};
     version
 )]
 pub struct Cli {
-    /// Journal root (the directory containing `.sapphire-journal/`). Required to serve.
+    /// Journal root (the directory containing `.sapphire-journal/`). Required by
+    /// every command: it locates the journal to serve, and the device and user
+    /// tables the `device` and `user` subcommands read and write.
     #[arg(long, env = "SAPPHIRE_JOURNAL_SERVER_DIR", value_name = "DIR")]
     pub journal_dir: Option<PathBuf>,
 
@@ -27,7 +29,7 @@ pub struct Cli {
     )]
     pub addr: SocketAddr,
 
-    /// Path to the API key file. Defaults to `<journal cache dir>/keys.toml`.
+    /// Path to the device key file. Defaults to `<journal cache dir>/keys.toml`.
     #[arg(long, env = "SAPPHIRE_JOURNAL_SERVER_KEYS", value_name = "FILE")]
     pub keys: Option<PathBuf>,
 
