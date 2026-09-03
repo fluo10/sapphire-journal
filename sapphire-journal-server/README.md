@@ -72,58 +72,66 @@ an unauthenticated listener is never a state this process will sit in.
 
 Clients authenticate with a bearer token: every request to `/rpc` or `/mcp`
 must carry `Authorization: Bearer <token>`. Requests without a valid,
-unexpired token get `401 Unauthorized`.
+unexpired token get `401 Unauthorized`. But a token by itself is not
+enough — authentication is keyed off **devices**, not bare tokens. Every
+key is minted for a device row, and any token whose device is missing from
+`devices.toml`, retired, or expired is rejected exactly like a token that
+was never issued. A key file carried over from before this device table
+existed has none of its keys naming a live row, so every one of them gets
+`401` (see [Migrating from `gen-key`](#migrating-from-gen-key) below).
 
-Issue a key with the `gen-key` subcommand, run against the same journal:
-
-```sh
-sapphire-journal-server --journal-dir /path/to/your/journal gen-key laptop
-```
-
-The label (`laptop` here) is optional and purely for your own bookkeeping —
-nothing in the system reads it back. The command prints the token itself to
-stdout (so you can pipe or copy just that line) and the key's id and
-creation time to stderr. Give the printed token to the client as its
-`Authorization: Bearer <token>` value. If you lose it, you don't have to
-issue a new one — it's sitting in plaintext in the key file (see below), so
-you can read it back out and set up another client with the same token. Add
-`--expires-in 90d` (or `12h`, `30m`) if the key should stop working on its
-own.
-
-`sapphire-journal-server --journal-dir ... list-keys` lists the keys that
-exist, with tokens masked, so you can see what's issued without printing
-live secrets again.
-
-Re-issue a key's token with `rotate-key`, keeping its id, label and creation
-time:
+Register a device and mint the key it authenticates with:
 
 ```sh
-sapphire-journal-server --journal-dir /path/to/your/journal rotate-key <id-or-label> [--expires-in 90d]
+# optional: register who owns the device
+sapphire-journal-server --journal-dir /path/to/your/journal user add --name fluo
+
+# register the device and mint its token
+sapphire-journal-server --journal-dir /path/to/your/journal device add --name laptop --user fluo
 ```
 
-Omitting `--expires-in` does **not** carry the old expiry forward — the new
-token comes back non-expiring. `rotate-key` replaces the expiry rather than
-preserving it, so re-issuing an already-expired key without a fresh
-`--expires-in` does not restore its old deadline, it drops the deadline
-entirely.
+`user add` is optional — `device add` works fine without `--user` — but
+naming an owner is useful once you have more than a couple of devices.
+`--name` (both commands) is purely for your own bookkeeping; nothing in the
+system reads it back to make an authorization decision. As with the old
+`gen-key`, the command prints the token itself to stdout (so you can pipe or
+copy just that line) and the device's id and creation time to stderr. Give
+the printed token to the client as its `Authorization: Bearer <token>`
+value. Add `--expires-in 90d` (or `12h`, `30m`) to `device add` if the key
+should stop working on its own.
 
-`sapphire-journal-server --journal-dir ... revoke-key <id-or-label>` removes
-a key from the file.
+List devices, see which have a key on this host, and re-issue or stop one:
 
-Both `rotate-key` and `revoke-key` only change the key file on disk:
-**a running server keeps accepting the old token until it next reloads the
-key file** (in practice, until it restarts) — `ServerState` holds a snapshot
-of the keys taken at start-up, with no path to reload it. If you're rotating
-or revoking a key because its token leaked, restart the server too, or the
-old token stays live.
+```sh
+sapphire-journal-server --journal-dir ... device list
+sapphire-journal-server --journal-dir ... device rotate laptop --expires-in 90d
+sapphire-journal-server --journal-dir ... device retire laptop
+```
 
-### The key file
+`rotate` re-issues a device's token, keeping its id and its row. Its
+`--expires-in` **replaces** the expiry rather than preserving it: omitting
+the flag makes the new token non-expiring, it does not carry the old expiry
+forward — re-issuing an already-expired key without a fresh `--expires-in`
+does not restore its old deadline, it drops the deadline entirely. `retire`
+revokes the device's key and marks its row retired rather than deleting it
+outright, because device ids can end up written into content and a deleted
+row would leave those references unresolvable (pass `--purge` if you want
+the row gone anyway).
 
-Keys live in a plain TOML file, one `[[key]]` table per key, each holding
-its token **in plaintext** — there is no hashing, because the threat model
-is "this file lives on a private-network server," and hashing would only
-cost the convenience of being able to read an existing key back when
-setting up a new client. Treat this file the way you'd treat any other
+Both `rotate` and `retire` only change the files on disk: **a running
+server keeps accepting the old token until it next reloads the device
+table and key file** (in practice, until it restarts) — `ServerState` and
+`DeviceAuth` hold a snapshot taken at start-up, with no path to reload it.
+If you're rotating or retiring a device because its token leaked, restart
+the server too, or the old token stays live.
+
+### Where the files live
+
+A key's token lives in a plain TOML file, one `[[key]]` table per key,
+holding the token **in plaintext** — there is no hashing, because the
+threat model is "this file lives on a private-network server," and hashing
+would only cost the convenience of being able to read an existing key back
+when setting up a new client. Treat this file the way you'd treat any other
 plaintext secret: readable only by whoever runs the server.
 
 By default the key file lives in your OS cache directory, under
@@ -137,11 +145,33 @@ this workspace when they sync. Pass `--keys /some/other/path` (or
 `SAPPHIRE_JOURNAL_SERVER_KEYS`) to put the key file somewhere else
 entirely, such as a location your backup policy excludes on purpose.
 
+The device and user tables (`devices.toml`, `users.toml`) live in the
+opposite kind of place: `<journal-root>/.sapphire-journal/`, alongside the
+journal's own config, where they **are** synced like any other journal
+metadata. That's fine — a row only holds an id, a name, and an optional
+description, never a secret. Splitting the two this way is what lets a
+device's key live only on the machine that needs it while every synced
+peer still sees the same device list.
+
 ## What "no usable key" means
 
 A key file can exist and still leave the server with nothing usable in it
-— empty, or holding only keys that have expired. In either case `serve`
-(the default, no-subcommand invocation) exits immediately with an error
-before it opens a listening socket, rather than starting up and quietly
-rejecting every request forever. Run `gen-key` first if you see that error;
-it's the same file the server just tried to read.
+— empty, holding only keys that have expired, or (new since the device
+table) holding keys whose device is missing, unregistered, or retired. In
+any of these cases `serve` (the default, no-subcommand invocation) exits
+immediately with an error before it opens a listening socket, rather than
+starting up and quietly rejecting every request forever. Run `device add`
+first if you see that error; it registers the device and mints it a key
+against the same files the server just tried to read.
+
+## Migrating from `gen-key`
+
+If you set this server up before the device table existed, every token
+`gen-key` issued now gets `401 Unauthorized` — none of them name a device,
+and a keyless token authenticates to nothing. There's no migration path for
+the tokens themselves; re-issue one per client with `device add` (as above)
+and update each client's `Authorization` header to the new token. The old
+entries in `keys.toml` are harmless but useless: the server logs a warning
+at startup naming how many keys in the file authenticate to no device, and
+you can delete those rows from `keys.toml` by hand once every client has
+switched over.
