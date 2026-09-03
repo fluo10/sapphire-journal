@@ -68,11 +68,19 @@ pub async fn spawn_with_allowed_hosts(allowed_hosts: &[String], mcp_host: &str) 
     )
     .unwrap();
     let ws = sapphire_journal_server::serve::workspace_id(&journal_dir).unwrap();
+    let device_auth = std::sync::Arc::new(
+        sapphire_journal_server::device_auth::DeviceAuth::load(
+            &keys_path,
+            &sapphire_journal_server::serve::default_devices_path(&journal_dir).unwrap(),
+        )
+        .unwrap(),
+    );
     let router = sapphire_journal_server::serve::build_router(
         Arc::clone(&state),
         Arc::clone(&journal_state),
         CancellationToken::new(),
         allowed_hosts,
+        device_auth,
     )
     .unwrap();
     // `build_router` が `state.workspace(&ws)` で既に開いている。`workspace`

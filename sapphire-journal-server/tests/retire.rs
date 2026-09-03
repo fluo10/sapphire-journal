@@ -73,11 +73,20 @@ async fn a_retired_device_gets_401_on_both_routes() {
             Arc::clone(&journal_state),
         )
         .unwrap();
+        // 台帳は 1 つ目の journal のもの。`device retire` もそこを引く。
+        let device_auth = Arc::new(
+            sapphire_journal_server::device_auth::DeviceAuth::load(
+                &keys_path,
+                &sapphire_journal_server::serve::default_devices_path(&journal_dir).unwrap(),
+            )
+            .unwrap(),
+        );
         let router = sapphire_journal_server::serve::build_router(
             Arc::clone(&state),
             Arc::clone(&journal_state),
             tokio_util::sync::CancellationToken::new(),
             &[],
+            device_auth,
         )
         .unwrap();
 
@@ -113,11 +122,21 @@ async fn a_retired_device_gets_401_on_both_routes() {
         Arc::clone(&journal_state),
     )
     .unwrap();
+    // 2 世代目も台帳は `journal_dir` 側（鍵ファイルと台帳は共有物で、
+    // journal だけが世代ごとに別）。
+    let device_auth = Arc::new(
+        sapphire_journal_server::device_auth::DeviceAuth::load(
+            &keys_path,
+            &sapphire_journal_server::serve::default_devices_path(&journal_dir).unwrap(),
+        )
+        .unwrap(),
+    );
     let router = sapphire_journal_server::serve::build_router(
         Arc::clone(&state),
         Arc::clone(&journal_state),
         tokio_util::sync::CancellationToken::new(),
         &[],
+        device_auth,
     )
     .unwrap();
 

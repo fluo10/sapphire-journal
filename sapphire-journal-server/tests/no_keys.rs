@@ -37,7 +37,7 @@ async fn run_refuses_to_start_with_no_usable_key() {
     );
     let message = result.unwrap_err().to_string();
     assert!(
-        message.contains("no usable API key"),
+        message.contains("no usable device key"),
         "error should name the actual problem, got: {message}"
     );
 }

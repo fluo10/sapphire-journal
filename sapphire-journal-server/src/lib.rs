@@ -9,5 +9,6 @@
 pub mod cli;
 pub mod cli_device;
 pub mod dedupe;
+pub mod device_auth;
 pub mod keys;
 pub mod serve;
