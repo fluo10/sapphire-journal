@@ -12,6 +12,13 @@ const JOURNAL_DIR_REQUIRED: &str =
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // キャッシュ／データディレクトリを注入する。`sapphire-workspace` 0.10 以降
+    // ライブラリは自分でプラットフォームのディレクトリを解決しないので、これを
+    // 忘れると `Journal::cache_dir()` —— つまり鍵ファイルの既定位置の解決も、
+    // journal を開くことも —— が panic する。CLI（`sapphire-journal`）と同じく
+    // `main` の先頭で 1 度だけ呼ぶ。
+    sapphire_journal_core::init_app_context();
+
     // `RUST_LOG` を読む。既定機能のままだと INFO 固定で、tick がおかしいときに
     // 運用者がログを上げる手段が無い。
     tracing_subscriber::fmt()
