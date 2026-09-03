@@ -1407,6 +1407,7 @@ git commit -m "feat(server)!: remove gen-key/list-keys/rotate-key/revoke-key"
 - Modify: `sapphire-journal-server/src/serve.rs`（`build_router`, `run_until`）
 - Modify: `sapphire-journal-server/tests/harness/mod.rs`
 - Modify: `sapphire-journal-server/tests/retire.rs`
+- Modify: `sapphire-journal-server/tests/no_keys.rs`（起動ガードの文言だけ）
 - Create: `sapphire-journal-server/tests/device_auth.rs`
 
 **Interfaces:**
@@ -1833,6 +1834,11 @@ async fn check(
 
 を置き、`build_router(..., allowed_hosts, device_auth)` にする。
 
+`tests/no_keys.rs` の既存テスト `run_refuses_to_start_with_no_usable_key` は
+`message.contains("no usable API key")` を見ている。Step 7 でこの文言が消えるので、
+**このタスクの中で** `message.contains("no usable device key")` に直すこと
+（テストを足すのは Task 5）。ここを後回しにすると Step 10 の全体テストが落ちる。
+
 `tests/retire.rs` は 2 箇所で `build_router` を呼ぶ。**どちらも台帳は
 `journal_dir` 側のものを使う**（2 つ目の世代は journal を別に持つが、台帳と鍵は
 共有物）。それぞれの呼び出しの前に同じ形で `DeviceAuth::load(&keys_path,
@@ -2072,8 +2078,9 @@ git commit -m "feat(server)!: authenticate through the device table, fail-closed
 //! 確かめる。
 ```
 
-既存の `run_refuses_to_start_with_no_usable_key` の assert を
-`message.contains("no usable device key")` に変える。そして足す:
+既存の `run_refuses_to_start_with_no_usable_key` の assert は Task 4 で
+`message.contains("no usable device key")` に直っているはず。直っていなければ
+ここで直す。そして足す:
 
 ```rust
 /// 鍵はあるが、どのデバイスも指していない状態 —— 移行前の `gen-key` で作られた
