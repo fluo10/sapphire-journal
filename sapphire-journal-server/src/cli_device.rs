@@ -414,6 +414,56 @@ mod tests {
         assert_eq!(keys.entries()[0].device_id, Some(id), "行の id が変わった");
     }
 
+    /// 鍵の無い行に `--description` / `--user` を付けて `add` を再実行すると、
+    /// `devices.purge` → `devices.add` の 2 回書きで行を作り直す。反映される
+    /// ことと、鍵が 1 本だけ発行されることをここで固定する。
+    #[test]
+    fn device_add_resuming_a_keyless_row_applies_description_and_user() {
+        let f = files();
+        let old_id = Devices::load(&f.devices)
+            .unwrap()
+            .add("laptop", None, None)
+            .unwrap()
+            .id;
+        run_user(
+            UserCommand::Add { name: "fluo".into(), description: None },
+            &f.users,
+        )
+        .unwrap();
+        let user_id = Users::load(&f.users).unwrap().resolve("fluo").unwrap().id;
+
+        run_device(
+            DeviceCommand::Add {
+                name: "laptop".into(),
+                description: Some("work laptop".into()),
+                user: Some("fluo".into()),
+                expires_in: None,
+            },
+            &f.devices,
+            &f.users,
+            &f.keys,
+        )
+        .unwrap();
+
+        let devices = Devices::load(&f.devices).unwrap();
+        let device = devices.resolve("laptop").unwrap();
+        assert_eq!(
+            device.description.as_deref(),
+            Some("work laptop"),
+            "description が反映されていない"
+        );
+        assert_eq!(device.user_id, Some(user_id), "user が反映されていない");
+        assert_ne!(device.id, old_id, "purge + add で行の id は変わるはず");
+
+        let keys = KeyStore::load(&f.keys).unwrap();
+        assert_eq!(keys.entries().len(), 1, "鍵が複数発行されている");
+        assert_eq!(
+            keys.entries()[0].device_id,
+            Some(device.id),
+            "鍵が作り直した行を指していない"
+        );
+    }
+
     #[test]
     fn device_add_refuses_a_name_that_already_holds_a_key() {
         let f = files();
@@ -498,6 +548,33 @@ mod tests {
         assert_eq!(keys.entries().len(), 1);
         assert_eq!(keys.entries()[0].id, key_id, "別の鍵を作ってしまっている");
         assert!(keys.entries()[0].rotated_at.is_some(), "鍵が差し替わっていない");
+    }
+
+    #[test]
+    fn device_rotate_refuses_a_retired_row() {
+        let f = files();
+        add(&f, "laptop").unwrap();
+        run_device(
+            DeviceCommand::Retire { selector: "laptop".into(), purge: false },
+            &f.devices,
+            &f.users,
+            &f.keys,
+        )
+        .unwrap();
+
+        let err = run_device(
+            DeviceCommand::Rotate { selector: "laptop".into(), expires_in: None },
+            &f.devices,
+            &f.users,
+            &f.keys,
+        )
+        .unwrap_err()
+        .to_string();
+
+        // retired なデバイスは認証で必ず弾かれるので、rotate しても意味が
+        // ない。「成功したのに何も通らないトークン」を作らせない。
+        assert!(err.contains("retired"), "{err}");
+        assert!(err.contains("--purge"), "逃げ道を示していない: {err}");
     }
 
     #[test]
