@@ -64,9 +64,12 @@ loopback with no `--allowed-host`, and rmcp logs `rejected request with
 disallowed Host header` for each such request; the startup line also prints
 the full allowlist it ended up with.
 
-The server refuses to bind at all if it has no usable API key configured —
-see the next section. There is no "start it open and lock it down later";
-an unauthenticated listener is never a state this process will sit in.
+The server refuses to bind at all if it has no usable device key
+configured — see the next section. A key file with only expired keys and a
+key file whose keys all point to no live device row get the exact same
+treatment: neither leaves the server anything it can authenticate a request
+with. There is no "start it open and lock it down later"; an
+unauthenticated listener is never a state this process will sit in.
 
 ## Keys
 
@@ -153,7 +156,7 @@ description, never a secret. Splitting the two this way is what lets a
 device's key live only on the machine that needs it while every synced
 peer still sees the same device list.
 
-## What "no usable key" means
+## What "no usable device key" means
 
 A key file can exist and still leave the server with nothing usable in it
 — empty, holding only keys that have expired, or (new since the device
