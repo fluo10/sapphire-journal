@@ -46,6 +46,25 @@ async fn main() -> anyhow::Result<()> {
             let users_path = serve::default_users_path(&journal_dir)?;
             sapphire_journal_server::cli_device::run_user(command, &users_path)
         }
+        // `device` は台帳と鍵ファイルの両方に書くので、`--journal-dir`（台帳の
+        // 位置）が必須。鍵ファイルだけは `--keys` で上書きできる。
+        Some(Command::Device { command }) => {
+            let journal_dir = journal.ok_or_else(|| {
+                anyhow::anyhow!("{JOURNAL_DIR_REQUIRED} to locate the device table")
+            })?;
+            let devices_path = serve::default_devices_path(&journal_dir)?;
+            let users_path = serve::default_users_path(&journal_dir)?;
+            let keys_path = match keys {
+                Some(p) => p,
+                None => serve::default_keys_path(&journal_dir)?,
+            };
+            sapphire_journal_server::cli_device::run_device(
+                command,
+                &devices_path,
+                &users_path,
+                &keys_path,
+            )
+        }
         Some(command) => {
             let keys_path = keys_path_for_key_command(keys.as_deref(), journal.as_deref())?;
             sapphire_journal_server::keys::run(command, &keys_path)

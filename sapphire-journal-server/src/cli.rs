@@ -90,6 +90,11 @@ pub enum Command {
         #[command(subcommand)]
         command: crate::cli_device::UserCommand,
     },
+    /// Manage the devices that authenticate to this server.
+    Device {
+        #[command(subcommand)]
+        command: crate::cli_device::DeviceCommand,
+    },
 }
 
 #[cfg(test)]
@@ -206,6 +211,47 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::User { command: crate::cli_device::UserCommand::List })
+        ));
+    }
+
+    #[test]
+    fn device_add_requires_a_name() {
+        assert!(Cli::try_parse_from(["sapphire-journal-server", "device", "add"]).is_err());
+
+        let cli = Cli::try_parse_from([
+            "sapphire-journal-server",
+            "device",
+            "add",
+            "--name",
+            "laptop",
+            "--expires-in",
+            "90d",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Device {
+                command: crate::cli_device::DeviceCommand::Add {
+                    ref name,
+                    expires_in: Some(ref d),
+                    ..
+                }
+            }) if name == "laptop" && d == "90d"
+        ));
+    }
+
+    #[test]
+    fn device_rotate_and_retire_require_a_selector() {
+        assert!(Cli::try_parse_from(["sapphire-journal-server", "device", "rotate"]).is_err());
+        assert!(Cli::try_parse_from(["sapphire-journal-server", "device", "retire"]).is_err());
+
+        let cli =
+            Cli::try_parse_from(["sapphire-journal-server", "device", "retire", "laptop"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Device {
+                command: crate::cli_device::DeviceCommand::Retire { ref selector, purge: false }
+            }) if selector == "laptop"
         ));
     }
 }

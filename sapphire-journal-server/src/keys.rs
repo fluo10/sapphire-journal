@@ -96,7 +96,9 @@ fn format_key_line(
 /// するので、`parse_duration` を通った値でもまだ落ちうる（chrono の
 /// `Duration` の上限は `DateTime` の上限よりずっと緩い）。打ち間違いで
 /// プロセスが異常終了しないこと。
-fn absolute_expiry(expires_in: Option<&str>) -> anyhow::Result<Option<chrono::DateTime<Utc>>> {
+pub fn absolute_expiry(
+    expires_in: Option<&str>,
+) -> anyhow::Result<Option<chrono::DateTime<Utc>>> {
     expires_in
         .map(parse_duration)
         .transpose()?
@@ -169,9 +171,11 @@ pub fn run(command: Command, keys_path: &Path) -> anyhow::Result<()> {
                 "a running server keeps accepting this token until it reloads this file"
             );
         }
-        // `user` は鍵に触らない別系統のサブコマンドで、main.rs がここへ渡す前に
-        // `cli_device::run_user` へ振り分ける。ここに来ることはない。
+        // `user` / `device` は鍵ファイルだけでなく台帳にも書く別系統の
+        // サブコマンドで、main.rs がここへ渡す前に `cli_device::run_user` /
+        // `cli_device::run_device` へ振り分ける。ここに来ることはない。
         Command::User { .. } => unreachable!("user command is routed before keys::run"),
+        Command::Device { .. } => unreachable!("device command is routed before keys::run"),
     }
     Ok(())
 }
