@@ -21,13 +21,13 @@ async fn run_returns_when_the_shutdown_future_resolves() {
     sapphire_journal_core::init_app_context();
     harness::init_journal(&journal_dir);
 
-    // `run` は有効な鍵が 1 本も無いと bind 前に諦めるので、1 本発行しておく。
-    // ここで諦めて戻られると、shutdown の配線を確かめたつもりで
-    // 「鍵が無いから戻った」を見ることになる。
+    // `run` は生きたデバイスを指す鍵が 1 本も無いと bind 前に諦めるので、
+    // `device add` を通して 1 台登録しておく。ここで諦めて戻られると、
+    // shutdown の配線を確かめたつもりで「鍵が無いから戻った」を見ることに
+    // なる。鍵だけを直に生成しても足りない —— 台帳を経由しない鍵は
+    // `DeviceAuth` が 0 本として数える。
     let keys_path = tmp.path().join("keys.toml");
-    let mut keys = sapphire_framework::remote_server::KeyStore::load(&keys_path).unwrap();
-    keys.generate(sapphire_journal_server::keys::TOKEN_PREFIX, None, None, None, None)
-        .unwrap();
+    harness::mint_device_key(&journal_dir, &keys_path, "shutdown");
 
     let journal_state = sapphire_journal_server::serve::open_journal_state(&journal_dir).unwrap();
     let state = sapphire_journal_server::serve::build_state(

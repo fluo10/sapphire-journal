@@ -1,6 +1,7 @@
 //! コマンドライン引数。
 //!
-//! `serve` は既定動作なのでサブコマンドを持たない。鍵の管理だけがサブコマンド。
+//! `serve` は既定動作なのでサブコマンドを持たない。サブコマンドはデバイスと
+//! ユーザーの台帳管理だけ。
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -14,7 +15,9 @@ use clap::{Parser, Subcommand};
     version
 )]
 pub struct Cli {
-    /// Journal root (the directory containing `.sapphire-journal/`). Required to serve.
+    /// Journal root (the directory containing `.sapphire-journal/`). Required by
+    /// every command: it locates the journal to serve, and the device and user
+    /// tables the `device` and `user` subcommands read and write.
     #[arg(long, env = "SAPPHIRE_JOURNAL_SERVER_DIR", value_name = "DIR")]
     pub journal_dir: Option<PathBuf>,
 
@@ -26,7 +29,7 @@ pub struct Cli {
     )]
     pub addr: SocketAddr,
 
-    /// Path to the API key file. Defaults to `<journal cache dir>/keys.toml`.
+    /// Path to the device key file. Defaults to `<journal cache dir>/keys.toml`.
     #[arg(long, env = "SAPPHIRE_JOURNAL_SERVER_KEYS", value_name = "FILE")]
     pub keys: Option<PathBuf>,
 
@@ -47,43 +50,15 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Generate a new API key and print it.
-    GenKey {
-        /// A note for you — which host or person this key is for.
-        label: Option<String>,
-        /// Expire the key after this long, e.g. `90d`, `12h`.
-        #[arg(long, value_name = "DURATION")]
-        expires_in: Option<String>,
+    /// Manage the users devices belong to.
+    User {
+        #[command(subcommand)]
+        command: crate::cli_device::UserCommand,
     },
-    /// List the keys, with tokens masked.
-    ListKeys,
-    /// Re-issue a key's token, keeping its id, label and created_at.
-    ///
-    /// The old token stops working immediately in this process, but a
-    /// running server only picks the change up when it next reloads the
-    /// key file (e.g. on restart) — `ServerState` holds a snapshot taken
-    /// at start-up and has no reload path.
-    RotateKey {
-        /// The key's UUID, or its label when that is unambiguous.
-        selector: String,
-        /// Expire the new token after this long, e.g. `90d`, `12h`.
-        ///
-        /// This REPLACES the expiry rather than keeping it: omitting the
-        /// flag makes the key non-expiring, it does not carry the old
-        /// expiry over. Re-issuing an expired key with its old expiry
-        /// would produce a token that is already unusable.
-        #[arg(long, value_name = "DURATION")]
-        expires_in: Option<String>,
-    },
-    /// Remove a key by id or label.
-    ///
-    /// The key stops working immediately in this process, but a running
-    /// server only picks the change up when it next reloads the key file
-    /// (e.g. on restart) — `ServerState` holds a snapshot taken at
-    /// start-up and has no reload path.
-    RevokeKey {
-        /// The key's UUID, or its label when that is unambiguous.
-        selector: String,
+    /// Manage the devices that authenticate to this server.
+    Device {
+        #[command(subcommand)]
+        command: crate::cli_device::DeviceCommand,
     },
 }
 
@@ -135,41 +110,37 @@ mod tests {
     }
 
     #[test]
-    fn gen_key_takes_an_optional_label() {
-        let cli = Cli::try_parse_from(["sapphire-journal-server", "gen-key"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::GenKey { label: None, .. })
-        ));
+    fn user_add_requires_a_name() {
+        assert!(Cli::try_parse_from(["sapphire-journal-server", "user", "add"]).is_err());
 
-        let cli = Cli::try_parse_from(["sapphire-journal-server", "gen-key", "laptop"]).unwrap();
+        let cli =
+            Cli::try_parse_from(["sapphire-journal-server", "user", "add", "--name", "fluo"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Command::GenKey { label: Some(ref l), .. }) if l == "laptop"
+            Some(Command::User {
+                command: crate::cli_device::UserCommand::Add { ref name, description: None }
+            }) if name == "fluo"
         ));
     }
 
     #[test]
-    fn revoke_key_requires_a_selector() {
-        assert!(Cli::try_parse_from(["sapphire-journal-server", "revoke-key"]).is_err());
-    }
-
-    #[test]
-    fn rotate_key_requires_a_selector() {
-        assert!(Cli::try_parse_from(["sapphire-journal-server", "rotate-key"]).is_err());
-    }
-
-    #[test]
-    fn rotate_key_takes_a_selector_and_an_optional_expiry() {
-        let cli = Cli::try_parse_from(["sapphire-journal-server", "rotate-key", "laptop"]).unwrap();
+    fn user_list_parses() {
+        let cli = Cli::try_parse_from(["sapphire-journal-server", "user", "list"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Command::RotateKey { ref selector, expires_in: None }) if selector == "laptop"
+            Some(Command::User { command: crate::cli_device::UserCommand::List })
         ));
+    }
+
+    #[test]
+    fn device_add_requires_a_name() {
+        assert!(Cli::try_parse_from(["sapphire-journal-server", "device", "add"]).is_err());
 
         let cli = Cli::try_parse_from([
             "sapphire-journal-server",
-            "rotate-key",
+            "device",
+            "add",
+            "--name",
             "laptop",
             "--expires-in",
             "90d",
@@ -177,7 +148,28 @@ mod tests {
         .unwrap();
         assert!(matches!(
             cli.command,
-            Some(Command::RotateKey { expires_in: Some(ref d), .. }) if d == "90d"
+            Some(Command::Device {
+                command: crate::cli_device::DeviceCommand::Add {
+                    ref name,
+                    expires_in: Some(ref d),
+                    ..
+                }
+            }) if name == "laptop" && d == "90d"
+        ));
+    }
+
+    #[test]
+    fn device_rotate_and_retire_require_a_selector() {
+        assert!(Cli::try_parse_from(["sapphire-journal-server", "device", "rotate"]).is_err());
+        assert!(Cli::try_parse_from(["sapphire-journal-server", "device", "retire"]).is_err());
+
+        let cli =
+            Cli::try_parse_from(["sapphire-journal-server", "device", "retire", "laptop"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Device {
+                command: crate::cli_device::DeviceCommand::Retire { ref selector, purge: false }
+            }) if selector == "laptop"
         ));
     }
 }

@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use axum::Router;
+use crate::device_auth::{DeviceAuth, require_device};
 use sapphire_framework::remote_server::{
     KeyStore, ReconcileReport, ServerState, WsStore, WsStoreConfig, protect, router,
 };
@@ -70,6 +71,21 @@ pub fn workspace_id(journal_dir: &Path) -> anyhow::Result<String> {
 pub fn default_keys_path(journal_dir: &Path) -> anyhow::Result<std::path::PathBuf> {
     let journal = Journal::from_root(journal_dir.to_path_buf())?;
     Ok(journal.cache_dir()?.join("keys.toml"))
+}
+
+/// デバイス台帳の位置。鍵ファイルと違い、**journal ルートの中**（マーカー
+/// ディレクトリ）に置く —— `updated_by` として content に焼かれた device_id を
+/// 別のホストで名前に逆引きするには、台帳が content と一緒に同期される必要が
+/// ある。秘密は入らない（トークンは `keys.toml` に留まる）。
+pub fn default_devices_path(journal_dir: &Path) -> anyhow::Result<std::path::PathBuf> {
+    let journal = Journal::from_root(journal_dir.to_path_buf())?;
+    Ok(journal.journal_dir().join("devices.toml"))
+}
+
+/// ユーザー台帳の位置。[`default_devices_path`] と同じディレクトリ。
+pub fn default_users_path(journal_dir: &Path) -> anyhow::Result<std::path::PathBuf> {
+    let journal = Journal::from_root(journal_dir.to_path_buf())?;
+    Ok(journal.journal_dir().join("users.toml"))
 }
 
 /// journal のキャッシュを開く。MCP と同期の両方がこの 1 つを共有する。
@@ -170,11 +186,15 @@ pub fn allowed_hosts(addr: std::net::SocketAddr, extra: &[String]) -> Vec<String
 /// 警告している「綴りが 1 文字ずれると全部の書き込みが黙って落ちる」は、
 /// まさにその 2 つがずれ得たから起きる —— 同じ 1 つから引けば、ずれようが
 /// ない。
+///
+/// `device_auth` は台帳を通した検査（fail-closed）。`state` の鍵だけでは
+/// 「移行前に発行された、どのデバイスにも属さない鍵」が通ってしまう。
 pub fn build_router(
     state: Arc<ServerState>,
     journal_state: Arc<Mutex<JournalState>>,
     cancel: CancellationToken,
     allowed_hosts: &[String],
+    device_auth: Arc<DeviceAuth>,
 ) -> anyhow::Result<Router> {
     let (ws, origin) = {
         let guard = lock_journal(&journal_state);
@@ -186,9 +206,13 @@ pub fn build_router(
 
     let mcp =
         sapphire_journal_mcp::http::mcp_router(journal_state, cancel, Some(observer), allowed_hosts);
-    // `router()` は認証適用済み。`/mcp` は自分で protect に通す — 片方だけ
-    // 守られている状態を作らない。
-    Ok(router(Arc::clone(&state)).merge(protect(state, mcp)))
+    // 認証は 3 枚重ね: framework の `protect`（鍵）が内側、その外に台帳の検査。
+    // merge した後に 1 回だけ被せる —— 片方のルートだけ守られている状態を
+    // 作らない。
+    Ok(require_device(
+        device_auth,
+        router(Arc::clone(&state)).merge(protect(state, mcp)),
+    ))
 }
 
 /// MCP が書いたパスを change log に載せる。
@@ -305,11 +329,13 @@ pub fn spawn_tick(
 
 /// listener を開いて待ち受ける。
 ///
-/// 有効な鍵が 1 件も無ければ bind の前に拒否する。framework の
-/// `remote_server::serve` は同じチェックを内蔵しているが、こちらは `/mcp` を
-/// 1 つの Router に merge するため `axum::serve` を自前で呼んでおり、その
-/// チェックを経由しない —— ここで明示的に行う。認証なしで待ち受ける状態を
-/// 作らない、という不変条件はどちらの経路でも同じにする。
+/// 生きたデバイスを指す有効な鍵が 1 件も無ければ bind の前に拒否する。
+/// framework の `remote_server::serve` は「有効な鍵が 1 件以上あるか」だけの
+/// 同じ形のチェックを内蔵しているが、こちらは `/mcp` を 1 つの Router に
+/// merge するため `axum::serve` を自前で呼んでおり、そのチェックを経由しない
+/// —— ここで明示的に行う。しかも認証は台帳を通す（[`crate::device_auth`]）
+/// ので、鍵があるだけでは通れない。誰も通れないサーバが黙って上がらない、
+/// という不変条件を満たすには、ガードも台帳を見る側に揃える必要がある。
 pub async fn run(
     addr: std::net::SocketAddr,
     journal_dir: &Path,
@@ -385,21 +411,31 @@ pub async fn run_until(
     extra_allowed_hosts: &[String],
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> anyhow::Result<()> {
-    match state.keys() {
-        Some(keys) if keys.has_usable_key() => {}
-        // `state.keys() == None` can't actually happen here — `build_state`
-        // always calls `.with_keys(...)`, so `state` never reaches `run`
-        // without a `KeyStore` installed (possibly just an empty one).
-        // Handled anyway, defensively, for symmetry with framework's own
-        // `remote_server::serve`, whose check this mirrors — not because
-        // there's a path that reaches it. Don't go looking for one.
-        _ => {
-            anyhow::bail!(
-                "no usable API key configured in {}; run `sapphire-journal-server gen-key` \
-                 first (an expired-only key file counts as none)",
-                keys_path.display()
-            );
-        }
+    let device_auth = Arc::new(DeviceAuth::load(
+        keys_path,
+        &default_devices_path(journal_dir)?,
+    )?);
+    if !device_auth.has_usable_device_key() {
+        // 鍵が 0 本のときと同じ扱い。認証を通れる資格情報が無い状態で
+        // 待ち受けると、誰も繋がらないサーバが黙って上がる。
+        anyhow::bail!(
+            "no usable device key configured in {}; run `sapphire-journal-server \
+             --journal-dir {} device add --name <NAME>` first (a key that names no device, \
+             names a device that is not in the table, or has expired counts as none)",
+            keys_path.display(),
+            journal_dir.display()
+        );
+    }
+    let orphans = device_auth.orphan_key_count();
+    if orphans > 0 {
+        // `list-keys` を消した以上、放置された旧鍵に気づく口はここだけ。
+        tracing::warn!(
+            count = orphans,
+            path = %keys_path.display(),
+            "key file holds keys that reach no live device row — they name no device, name \
+             a device that is not in the table, or name a retired one. They authenticate \
+             to nothing and can be deleted by hand"
+        );
     }
 
     let cancel = CancellationToken::new();
@@ -416,6 +452,7 @@ pub async fn run_until(
         Arc::clone(&journal_state),
         cancel.clone(),
         &mcp_hosts,
+        Arc::clone(&device_auth),
     )?;
 
     // build_router がこの ws に対する WsStore を既に開いている
@@ -531,5 +568,39 @@ mod tests {
         // しか返さないため、`ip()` 側を別に入れておく必要がある。
         let hosts = allowed_hosts("[::1]:8080".parse().unwrap(), &[]);
         assert!(hosts.contains(&"::1".to_owned()), "{hosts:?}");
+    }
+
+    #[test]
+    fn the_registry_files_live_in_the_journal_marker_dir() {
+        // 台帳は同期に乗る場所（`.sapphire-journal/`）に置く。鍵ファイルだけが
+        // キャッシュ側に残る —— この 2 つが同じ親に並んだら、トークンが同期で
+        // クライアントに配られる。
+        let tmp = tempfile::tempdir().unwrap();
+        let journal_dir = tmp.path().join("journal");
+        sapphire_journal_core::init_app_context();
+        std::fs::create_dir_all(journal_dir.join(".sapphire-journal")).unwrap();
+        std::fs::write(
+            journal_dir.join(".sapphire-journal").join("config.toml"),
+            "",
+        )
+        .unwrap();
+
+        let devices = default_devices_path(&journal_dir).unwrap();
+        let users = default_users_path(&journal_dir).unwrap();
+
+        assert_eq!(devices.file_name().unwrap(), "devices.toml");
+        assert_eq!(users.file_name().unwrap(), "users.toml");
+        assert_eq!(devices.parent(), users.parent());
+        assert_eq!(
+            devices.parent().unwrap().file_name().unwrap(),
+            ".sapphire-journal",
+            "台帳がマーカーディレクトリの外に出ている"
+        );
+        let keys = default_keys_path(&journal_dir).unwrap();
+        assert_ne!(
+            keys.parent(),
+            devices.parent(),
+            "鍵ファイルが台帳と同じ（同期される）場所にある"
+        );
     }
 }

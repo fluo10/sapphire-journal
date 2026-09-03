@@ -5140,6 +5140,7 @@ version = "0.1.0"
 source = "git+https://github.com/fluo10/sapphire-framework?branch=main#076d12961f90447751cf4cc2c30e516b4eb04f4e"
 dependencies = [
  "sapphire-framework-blob",
+ "sapphire-framework-registry",
  "sapphire-framework-remote-server",
  "sapphire-framework-rpc",
 ]
@@ -5151,6 +5152,18 @@ source = "git+https://github.com/fluo10/sapphire-framework?branch=main#076d12961
 dependencies = [
  "sha2",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "sapphire-framework-registry"
+version = "0.1.0"
+source = "git+https://github.com/fluo10/sapphire-framework?branch=main#076d12961f90447751cf4cc2c30e516b4eb04f4e"
+dependencies = [
+ "chrono",
+ "grain-id 0.16.0",
+ "serde",
+ "thiserror 2.0.18",
+ "toml",
 ]
 
 [[package]]

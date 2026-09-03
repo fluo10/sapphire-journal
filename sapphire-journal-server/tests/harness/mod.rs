@@ -58,11 +58,7 @@ pub async fn spawn_with_allowed_hosts(allowed_hosts: &[String], mcp_host: &str) 
     init_journal(&journal_dir);
 
     let keys_path = tmp.path().join("keys.toml");
-    let mut store = sapphire_framework::remote_server::KeyStore::load(&keys_path).unwrap();
-    let token = store
-        .generate(sapphire_journal_server::keys::TOKEN_PREFIX, None, None, Some("test".into()), None)
-        .unwrap()
-        .token;
+    let token = mint_device_key(&journal_dir, &keys_path, "test");
 
     let journal_state = sapphire_journal_server::serve::open_journal_state(&journal_dir).unwrap();
     let state = sapphire_journal_server::serve::build_state(
@@ -72,11 +68,19 @@ pub async fn spawn_with_allowed_hosts(allowed_hosts: &[String], mcp_host: &str) 
     )
     .unwrap();
     let ws = sapphire_journal_server::serve::workspace_id(&journal_dir).unwrap();
+    let device_auth = std::sync::Arc::new(
+        sapphire_journal_server::device_auth::DeviceAuth::load(
+            &keys_path,
+            &sapphire_journal_server::serve::default_devices_path(&journal_dir).unwrap(),
+        )
+        .unwrap(),
+    );
     let router = sapphire_journal_server::serve::build_router(
         Arc::clone(&state),
         Arc::clone(&journal_state),
         CancellationToken::new(),
         allowed_hosts,
+        device_auth,
     )
     .unwrap();
     // `build_router` が `state.workspace(&ws)` で既に開いている。`workspace`
@@ -115,6 +119,40 @@ pub fn init_journal(root: &std::path::Path) {
     )
     .unwrap();
     std::fs::write(journal_dir.join(".gitignore"), "cache/\n").unwrap();
+}
+
+/// `device add` を通してデバイス行と鍵を作り、トークンを返す。
+///
+/// 本物のサブコマンドを通す。トークンは stdout に出て掴まえられないので、
+/// 鍵ファイルから読み直す —— 運用者が「なくしたら鍵ファイルを見ればいい」と
+/// 案内されているのと同じ経路。
+pub fn mint_device_key(
+    journal_dir: &std::path::Path,
+    keys_path: &std::path::Path,
+    name: &str,
+) -> String {
+    let devices_path = sapphire_journal_server::serve::default_devices_path(journal_dir).unwrap();
+    let users_path = sapphire_journal_server::serve::default_users_path(journal_dir).unwrap();
+    sapphire_journal_server::cli_device::run_device(
+        sapphire_journal_server::cli_device::DeviceCommand::Add {
+            name: name.to_owned(),
+            description: None,
+            user: None,
+            expires_in: None,
+        },
+        &devices_path,
+        &users_path,
+        keys_path,
+    )
+    .unwrap();
+    let store = sapphire_framework::remote_server::KeyStore::load(keys_path).unwrap();
+    store
+        .entries()
+        .iter()
+        .find(|k| k.label.as_deref() == Some(name))
+        .expect("いま発行した鍵が見つからない")
+        .token
+        .clone()
 }
 
 /// エントリのフィクスチャを、アプリ本体と同じ `parse_entry` → `render_entry`

@@ -7,6 +7,8 @@
 //! 持たない。認証は共有の bearer トークンだけで、鍵は平文で保存される。
 
 pub mod cli;
+pub mod cli_device;
 pub mod dedupe;
+pub mod device_auth;
 pub mod keys;
 pub mod serve;
