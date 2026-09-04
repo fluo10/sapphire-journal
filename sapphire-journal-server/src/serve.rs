@@ -143,8 +143,8 @@ pub fn build_state(
 /// bind アドレスと `--allowed-host` から、MCP に渡す `Host` 許可リストを作る。
 ///
 /// rmcp は `Host` ヘッダを許可リストで検査する（DNS リバインディング対策）。
-/// `--addr 0.0.0.0:8080` で待ち受けても、クライアントが送ってくる `Host` は
-/// `0.0.0.0` ではなく **そのクライアントが URL に書いた名前** —— `10.0.0.5:8080`
+/// `--addr 0.0.0.0:3172` で待ち受けても、クライアントが送ってくる `Host` は
+/// `0.0.0.0` ではなく **そのクライアントが URL に書いた名前** —— `10.0.0.5:3172`
 /// だったり `box.tailnet.ts.net` だったり —— なので、bind アドレスから機械的に
 /// 導けるのはせいぜい「同じマシンから bind アドレスを直接叩く」場合だけ。残りは
 /// 運用者が `--allowed-host` で名指しするしかない。だから両方を足す。
@@ -533,19 +533,19 @@ mod tests {
 
     #[test]
     fn allowed_hosts_covers_the_bind_address_with_and_without_its_port() {
-        let hosts = allowed_hosts("10.0.0.5:8080".parse().unwrap(), &[]);
+        let hosts = allowed_hosts("10.0.0.5:3172".parse().unwrap(), &[]);
         assert!(hosts.contains(&"10.0.0.5".to_owned()));
-        assert!(hosts.contains(&"10.0.0.5:8080".to_owned()));
+        assert!(hosts.contains(&"10.0.0.5:3172".to_owned()));
     }
 
     #[test]
     fn allowed_hosts_keeps_the_names_the_operator_named() {
         let hosts = allowed_hosts(
-            "0.0.0.0:8080".parse().unwrap(),
-            &["box.tailnet.ts.net".to_owned(), "nas.local:8080".to_owned()],
+            "0.0.0.0:3172".parse().unwrap(),
+            &["box.tailnet.ts.net".to_owned(), "nas.local:3172".to_owned()],
         );
         assert!(hosts.contains(&"box.tailnet.ts.net".to_owned()));
-        assert!(hosts.contains(&"nas.local:8080".to_owned()));
+        assert!(hosts.contains(&"nas.local:3172".to_owned()));
     }
 
     #[test]
@@ -554,7 +554,7 @@ mod tests {
         // で空文字が混ざる。rmcp 側は空文字を無視するが、許可リストの中身は
         // 起動ログに出るので、ここで落としておく。
         let hosts = allowed_hosts(
-            "127.0.0.1:8080".parse().unwrap(),
+            "127.0.0.1:3172".parse().unwrap(),
             &[String::new(), "  ".to_owned(), " keep.example ".to_owned()],
         );
         assert!(hosts.iter().all(|h| !h.trim().is_empty()));
@@ -563,10 +563,10 @@ mod tests {
 
     #[test]
     fn allowed_hosts_uses_the_bare_form_for_ipv6() {
-        // rmcp は `Host: [::1]:8080` の角括弧を外して比較するので、許可リスト
+        // rmcp は `Host: [::1]:3172` の角括弧を外して比較するので、許可リスト
         // 側も角括弧なしの形が要る。`SocketAddr::to_string` は角括弧つきの形
         // しか返さないため、`ip()` 側を別に入れておく必要がある。
-        let hosts = allowed_hosts("[::1]:8080".parse().unwrap(), &[]);
+        let hosts = allowed_hosts("[::1]:3172".parse().unwrap(), &[]);
         assert!(hosts.contains(&"::1".to_owned()), "{hosts:?}");
     }
 

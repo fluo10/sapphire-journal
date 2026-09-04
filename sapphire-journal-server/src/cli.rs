@@ -25,7 +25,7 @@ pub struct Cli {
     #[arg(
         long,
         env = "SAPPHIRE_JOURNAL_SERVER_ADDR",
-        default_value = "127.0.0.1:8080"
+        default_value = "127.0.0.1:3172"
     )]
     pub addr: SocketAddr,
 
@@ -34,7 +34,7 @@ pub struct Cli {
     pub keys: Option<PathBuf>,
 
     /// A hostname clients use to reach `/mcp`, e.g. `box.tailnet.ts.net` or
-    /// `nas.local:8080`. Repeatable. Loopback and `--addr` are always allowed;
+    /// `nas.local:3172`. Repeatable. Loopback and `--addr` are always allowed;
     /// anything else must be named here or MCP answers it with 403.
     #[arg(
         long = "allowed-host",
@@ -89,10 +89,10 @@ mod tests {
             "--allowed-host",
             "box.tailnet.ts.net",
             "--allowed-host",
-            "nas.local:8080",
+            "nas.local:3172",
         ])
         .unwrap();
-        assert_eq!(cli.allowed_host, ["box.tailnet.ts.net", "nas.local:8080"]);
+        assert_eq!(cli.allowed_host, ["box.tailnet.ts.net", "nas.local:3172"]);
     }
 
     #[test]

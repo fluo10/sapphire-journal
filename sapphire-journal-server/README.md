@@ -26,7 +26,7 @@ specifically so an operator watching the log sees it, not just this file.
 sapphire-journal-server --journal-dir /path/to/your/journal
 ```
 
-By default it binds `127.0.0.1:8080`; pass `--addr 0.0.0.0:8080` (or
+By default it binds `127.0.0.1:3172`; pass `--addr 0.0.0.0:3172` (or
 whatever your private network needs) to listen more broadly. `--journal-dir`
 can also come from the `SAPPHIRE_JOURNAL_SERVER_DIR` environment variable,
 and `--addr` from `SAPPHIRE_JOURNAL_SERVER_ADDR`, which is usually more
@@ -37,15 +37,15 @@ convenient for a service unit or a container than repeating flags.
 Binding beyond loopback is only half the job. `/mcp` sits behind rmcp's
 DNS-rebinding guard, which checks the `Host` header of every request against
 an allowlist that starts out holding loopback and the bind address only. A
-client that reaches the server as `http://box.tailnet.ts.net:8080/mcp` sends
-`Host: box.tailnet.ts.net:8080`, which is on no list, and gets `403
+client that reaches the server as `http://box.tailnet.ts.net:3172/mcp` sends
+`Host: box.tailnet.ts.net:3172`, which is on no list, and gets `403
 Forbidden` — no matter how valid its token is.
 
 So name each hostname your clients actually type:
 
 ```sh
 sapphire-journal-server --journal-dir /path/to/your/journal \
-  --addr 0.0.0.0:8080 \
+  --addr 0.0.0.0:3172 \
   --allowed-host box.tailnet.ts.net --allowed-host nas.local
 ```
 

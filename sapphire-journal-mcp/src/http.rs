@@ -14,7 +14,7 @@
 //! header is not on an allowlist, and its default list is loopback only
 //! (`localhost`, `127.0.0.1`, `::1`). That default is correct for a router
 //! bound to loopback and **wrong the moment the host binds anywhere else**: a
-//! client reaching the server as `http://10.0.0.5:8080/mcp` or
+//! client reaching the server as `http://10.0.0.5:3172/mcp` or
 //! `http://box.tailnet.ts.net/mcp` sends a `Host` that matches nothing and
 //! gets `403 Forbidden`. A host that widens its bind address without widening
 //! this list fails *partially*, and quietly: a sibling route with no such
