@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/fluo10/sapphire-journal/compare/core-v0.12.0...core-v0.13.0) - 2026-09-04
+
+### Added
+
+- [**breaking**] depend on sapphire-framework and drop the SQLite retrieve backend
+
+### Fixed
+
+- remove leftover lancedb artifacts and add missing comment
+- *(server)* stop letting a stale push delete the entry it collided with
+- *(core)* guard EntryRef::parse against an upstream grain-id panic on non-ASCII
+- *(core)* don't mint a new id when re-upserting a renamed entry
+- *(core)* accept CRLF frontmatter when parsing entries
+
+### Other
+
+- *(core)* [**breaking**] remove remaining lancedb references
+- *(features)* [**breaking**] drop the lancedb-store feature
+- *(core)* cover increment_until_free's id-collision check; use try_exists
+- drop stale git-sync references (removed tool + comment)
+- move framework deps to main
+- *(core)* drop SyncConfig from user config
+- *(core)* remove git/sync backend (framework #90)
+
 ## [0.12.0](https://github.com/fluo10/sapphire-journal/compare/core-v0.11.1...core-v0.12.0) - 2026-05-24
 
 ### Added

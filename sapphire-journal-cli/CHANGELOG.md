@@ -2,6 +2,25 @@
 
 All notable changes to `sapphire-journal` and `sapphire-journal-core` are documented here.
 
+## [0.13.0](https://github.com/fluo10/sapphire-journal/compare/cli-v0.12.0...cli-v0.13.0) - 2026-09-04
+
+### Added
+
+- [**breaking**] depend on sapphire-framework and drop the SQLite retrieve backend
+
+### Fixed
+
+- address code-review findings on key-api catch-up branch
+- remove leftover lancedb artifacts and add missing comment
+
+### Other
+
+- *(core)* [**breaking**] remove remaining lancedb references
+- *(features)* [**breaking**] drop the lancedb-store feature
+- drop stale git-sync references (removed tool + comment)
+- *(cli)* drop residual git-sync references
+- *(cli)* fix install.ps1 binary name and document uninstall
+
 ## [0.11.1] - 2026-04-13
 
 ### Fixed

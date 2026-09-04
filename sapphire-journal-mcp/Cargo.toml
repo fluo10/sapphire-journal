@@ -1,7 +1,7 @@
 [package]
 name = "sapphire-journal-mcp"
 edition.workspace = true
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server library for sapphire-journal"
 license.workspace = true
 repository.workspace = true
@@ -18,7 +18,7 @@ fastembed-embed = ["sapphire-journal-core/fastembed-embed"]
 http-server = ["rmcp/transport-streamable-http-server", "dep:axum", "dep:tokio-util"]
 
 [dependencies]
-sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.12.0", default-features = false, features = ["text-input"] }
+sapphire-journal-core = { path = "../sapphire-journal-core", version = "0.13.0", default-features = false, features = ["text-input"] }
 rmcp.workspace = true
 tokio = { workspace = true, features = ["full"] }
 serde.workspace = true
