@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/fluo10/sapphire-journal/compare/mcp-v0.1.0...mcp-v0.2.0) - 2026-09-04
+
+### Added
+
+- *(server)* default the server to port 3172 ([#285](https://github.com/fluo10/sapphire-journal/pull/285))
+- *(mcp)* expose entry_new/entry_modify for driving outside the crate
+- *(mcp)* expose the MCP service as a Router
+- *(mcp)* notify an observer after a tool writes
+- [**breaking**] depend on sapphire-framework and drop the SQLite retrieve backend
+
+### Fixed
+
+- *(server)* fold in the whole-branch review's minor findings
+- *(server)* wire shutdown, survive a poisoned lock, and stop testing fixtures that never parse
+- *(mcp)* widen the Host allowlist so /mcp answers non-loopback clients
+- *(mcp)* use EmptyObject for zero-arg tool input schemas
+
+### Other
+
+- *(features)* [**breaking**] drop the lancedb-store feature
+- *(mcp)* keep entry_new/entry_modify and their params private again
+- *(mcp)* cover entry_fix's rename notification
+- *(mcp)* drive real handlers, use tempfile for test journals
+- *(mcp)* periodic re-index instead of git sync; drop git_sync tool
+- *(mcp)* add LICENSE-MIT and LICENSE-APACHE files
+- *(sapphire-journal-mcp)* release v0.1.0
+
 ## [0.1.0](https://github.com/fluo10/sapphire-journal/releases/tag/mcp-v0.1.0) - 2026-05-24
 
 ### Added
