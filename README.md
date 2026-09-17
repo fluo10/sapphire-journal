@@ -2,7 +2,7 @@
 
 > Language: **English** | [日本語](README.ja.md)
 
-Markdown-based task and note manager for humans and AI agents — your data lives in plain text, timeless like fossils.
+A task, event and note management app built on [sapphire-framework](https://github.com/fluo10/sapphire-framework) — file-based, local-first, made for human-agent collaboration.
 
 ## Concept
 

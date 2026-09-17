@@ -9,7 +9,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-description = "Markdown-based task and note manager that keeps your data alive as plain text - timeless like fossils"
+description = "A task, event and note management app built on sapphire-framework - file-based, local-first, made for human-agent collaboration"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/fluo10/sapphire-journal"
 edition = "2024"
