@@ -2,6 +2,17 @@
 
 All notable changes to `sapphire-journal` and `sapphire-journal-core` are documented here.
 
+## [0.12.1](https://github.com/fluo10/sapphire-journal/compare/cli-v0.12.0...cli-v0.12.1) - 2026-09-17
+
+### Added
+
+- *(core,cli,mcp)* add stale/hidden filter with opt-in restoration (issue #288)
+
+### Other
+
+- *(core)* centralize stale threshold in STALE_AFTER_DAYS_DEFAULT and default EntryFilter to 30
+- adopt repo-layout and language conventions; add CONTRIBUTING and README.ja
+
 ## [0.11.1] - 2026-04-13
 
 ### Fixed
